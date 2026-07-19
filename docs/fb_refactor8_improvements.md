@@ -850,6 +850,31 @@ observations are the guarded shared-late boundary and the post-split fallback
 boundary; they have different execution semantics and must be characterized
 separately.
 
+## Shared-late reconciliation characterization
+
+The next result is the guarded shared-late static-shape reconciliation. Its
+existing predicate combines nine mutation-result dictionaries with a tensor-
+count decrease that covers cleanup-only pruning. The result has no default and
+no consumer.
+
+The dedicated contract fixes the exact evidence order, tensor-count boundary,
+guard, `model_ir` argument, `include_mutation_count=True`, immediate late-
+binary successor, and absence of loads. A strict expected failure requires a
+stable `shape_reconciliation.primary.shared_late` record. Existing runtime
+coverage independently forces each positive evidence dictionary and the
+prune-only path. No production source changed.
+
+Validation completed sequentially under core-only `uv`:
+
+- dedicated characterization contract: `1 passed, 1 xfailed in 0.15s`;
+- characterization plus runtime, terminal, and architecture boundary
+  contracts: `4 passed, 1 xfailed in 0.72s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The sole expected failure is the intentionally unimplemented result-destination
+migration.
+
 ## Primary final cleanup reconciliation implementation
 
 The final PReLU and consecutive-Reshape reconciliation results now record as:

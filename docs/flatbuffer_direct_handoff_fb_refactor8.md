@@ -965,3 +965,28 @@ shared-late and post-split fallback static-shape observations remain
 unconsumed. Characterize these separately before changing either destination;
 their guards and execution semantics differ. Never create, update, or reopen a
 pull request.
+
+## Shared-late reconciliation characterization
+
+The guarded shared-late result has been characterized independently from the
+post-split fallback boundary. Its predicate retains all nine ordered mutation
+results plus the tensor-count decrease for prune-only cleanup. The result has
+no zero default and no consumer.
+
+The contract fixes the evidence owners and order, guard, `model_ir` argument,
+`include_mutation_count=True`, preceding tensor-count snapshot, following
+late-binary tensor-count snapshot, and absence of loads. Its strict expected
+failure requires `shape_reconciliation.primary.shared_late`.
+
+Validation completed sequentially under core-only `uv`: the dedicated result
+is `1 passed, 1 xfailed in 0.15s`; the characterization plus runtime, terminal,
+and architecture boundary contracts are `4 passed, 1 xfailed in 0.72s`;
+targeted Ruff, bytecode compilation, and whitespace checks pass. No production
+source changed.
+
+Commit and push this characterization before replacing only the guarded result
+destination. Preserve the exact evidence predicate and both tensor-count
+boundaries. Then update terminal, architecture, and bounded-store contracts,
+validate, document, commit, and push. Do not alter the post-split fallback
+boundary in the same implementation checkpoint, and never create, update, or
+reopen a pull request.
