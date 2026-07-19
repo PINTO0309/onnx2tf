@@ -2963,3 +2963,25 @@ context identity, and lowerer integration. Commit and push this checkpoint. At
 resume, characterize the adjacent pre-terminal affine/InstanceNorm decision
 boundary before production changes. Continue with commits and pushes only;
 never create, update, or reopen a pull request.
+
+## Pre-terminal InstanceNorm layout composite characterization
+
+Three adjacent InstanceNorm layout owners run after the optional late-binary
+recovery decision and before the first terminal-affine tensor-count snapshot.
+They share one ModelIR/LayoutState argument policy and return three independent,
+unconsumed mappings.
+
+`tests/test_flatbuffer_direct_pre_terminal_instancenorm_layout_orchestration.py`
+fixes their targets, order, argument identity, predecessor, successor, and
+absence of result consumers. Its strict xfail requires one ordered composite
+owner outside the full store. The owner may absorb only these three calls and
+must preserve each mapping without aggregation. No production source changed.
+
+Sequential characterization under core-only `uv` completed with
+`1 passed, 1 xfailed in 0.14s`; targeted Ruff, bytecode compilation, and
+whitespace checks passed.
+
+Commit and push this characterization before implementation. Keep the store
+at 128/128. On resume, add the direct pass-module owner, update owner-aware
+InstanceNorm/terminal-affine contracts, validate sequentially, then document,
+commit, and push. Never create, update, or reopen a pull request.

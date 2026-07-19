@@ -1967,6 +1967,36 @@ pre-terminal affine/InstanceNorm decision boundary before production changes.
 Continue with commits and pushes only; never create, update, or reopen a pull
 request.
 
+## Pre-terminal InstanceNorm layout composite characterization
+
+The next source-order cluster runs three InstanceNorm layout repairs directly
+after optional late-binary layout recovery: post-bias, residual-Mul/Concat,
+and dual-stat residual-Add/Resize. All three receive the same ModelIR and
+conversion-local LayoutState. Their result mappings are retained only in
+lowerer locals and have no consumers.
+
+The focused characterization fixes the three targets, exact pass order,
+model/layout argument policy, late-binary recovery predecessor, first
+terminal-affine tensor-count successor, and absence of result loads. A strict
+expected failure requires one ordered
+`run_pre_terminal_instancenorm_layout_cleanup(shared_model_ir_pass_context)`
+composite result outside the full phase store.
+
+The future owner must import the three pass-module owners directly, preserve
+their independent mappings in a fixed tuple, and forward the identical
+ModelIR/LayoutState objects to every call. It must not summarize counters,
+record phase evidence, or absorb either neighboring decision. No production
+source changed in this checkpoint.
+
+Sequential characterization under core-only `uv` completed with
+`1 passed, 1 xfailed in 0.14s`; the sole xfail is the intentionally absent
+composite owner. Targeted Ruff, bytecode compilation, and whitespace checks
+passed.
+
+Commit and push this characterization before production changes. Keep the
+store at 128/128 and continue with commits and pushes only; never create,
+update, or reopen a pull request.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:
