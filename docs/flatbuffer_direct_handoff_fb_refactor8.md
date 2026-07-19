@@ -1608,3 +1608,25 @@ No root-model conversion was required for this observation-only destination
 migration. Commit and push this implementation as a self-contained unit. The
 next refactor unit must begin with a fresh characterize-first audit and must
 not create, update, or reopen a pull request.
+
+## Terminal normalization cleanup characterization
+
+The next unit is restricted to five consecutive unconditional results between
+terminal Swish QDQ-island cleanup and the terminal boundary-layout composite:
+InstanceNorm post-bias, normalization Pad, InstanceNorm residual Add,
+InstanceNorm residual Mul/Concat, and InstanceNorm dual-stat cleanup. All five
+owners return bounded integer mappings; the locals have no defaults or loads.
+
+The strict contract fixes exact owner expressions and keywords, adjacency,
+both outer boundaries, and the five proposed `cleanup.terminal.*` phase IDs.
+No production source changed.
+
+Validation completed sequentially under core-only `uv`: the related baseline
+is `97 passed in 2.59s`; characterization plus related contracts is
+`98 passed, 1 xfailed in 2.59s`; targeted Ruff, bytecode compilation, and
+whitespace checks pass.
+
+Commit and push the characterization before replacing only these five mapping
+destinations. Preserve both boundaries and source order, update all
+representation-dependent terminal contracts, run the sequential gates,
+document, commit, and push. Never create, update, or reopen a pull request.

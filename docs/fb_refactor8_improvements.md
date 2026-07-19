@@ -962,6 +962,31 @@ No root-model corpus conversion was run because this is an
 observation-destination-only change and the synthetic runtime suite exercises
 the terminal path.
 
+## Terminal normalization cleanup characterization
+
+The next bounded family contains five consecutive unconditional mapping
+observations after terminal activation cleanup: InstanceNorm post-bias,
+normalization Pad, InstanceNorm residual Add, InstanceNorm residual
+Mul/Concat, and InstanceNorm dual-stat cleanup.
+
+Existing owner tests fix each bounded integer schema. None of the five locals
+has a default or consumer. The characterization fixes all owner expressions,
+arguments and keywords, five-statement adjacency, the preceding Swish
+QDQ-island phase, the following terminal boundary-layout composite, and
+absence of loads. A strict expected failure requires five stable
+`cleanup.terminal.*` records. No production source changed.
+
+Validation completed sequentially under core-only `uv`:
+
+- related terminal baseline: `97 passed in 2.59s`;
+- characterization plus the related terminal contracts:
+  `98 passed, 1 xfailed in 2.59s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The sole expected failure is the intentionally unimplemented five-result
+destination migration.
+
 ## Primary final SiNet reconciliation implementation
 
 The six ordered SiNet results now record under:
