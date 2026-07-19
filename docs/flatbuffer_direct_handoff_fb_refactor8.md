@@ -791,6 +791,29 @@ context policy, characterize it before implementation, and keep every `uv`
 test sequential and single-process. Commit and push only; never create,
 update, reopen, or otherwise modify a pull request.
 
+## Terminal activation-bridge composite characterization checkpoint
+
+The refreshed inventory selected indexed Split/Conv/Concat bridge,
+HardSwish-SE summary, and late hard-activation summary immediately after the
+terminal QKV composite. All three are unconditional and unconsumed. Their
+argument policy is shared model/LayoutState, shared model, and shared context
+plus the layout option, respectively. Absolute-final pre-ConCat cleanup is the
+fixed successor.
+
+The strict contract preserves exact call order, argument and context identity,
+both layout-option schemas, outer boundaries, and raw mapping schemas of
+lengths `(1, 2, 8)`. Focused validation reports `3 passed, 1 xfailed` and
+affected validation reports `443 passed, 1 xfailed`. The sole expected failure
+requires `passes/terminal_activation_bridge_orchestration.py`.
+
+At resume, implement that module as a three-stage owner accepting the shared
+`ModelIRPassContext` and keyword-only `include_layout_transpose`. Forward the
+shared model/LayoutState to the Split bridge, the shared model to HardSwish-SE,
+and the context/option to hard activation. Return all raw mappings unchanged,
+replace only the three unconsumed locals, and retain both outer boundaries and
+all compatibility routes. Run affected and standard gates sequentially,
+commit, and push only. Never create or modify a pull request.
+
 ## Primary final layout-refresh reconciliation implementation
 
 The final ConvInteger, InstanceNorm, and broadcast reconciliations now use

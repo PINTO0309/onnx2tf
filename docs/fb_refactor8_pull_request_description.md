@@ -1177,3 +1177,11 @@ identity, and outer boundaries. The later shape-extract call and raw QKV
 wrappers remain independent. Runtime identity coverage, 445 affected tests,
 and all standard sequential gates pass; public behavior, dependency isolation,
 and the 128-ID/128-owner store remain unchanged.
+
+The next characterization selects the adjacent indexed Split/Conv/Concat,
+HardSwish-SE, and late hard-activation terminal results. It preserves shared
+model/LayoutState/context identity, the existing layout option, complete raw
+schemas and order, terminal QKV and absolute-final pre-ConCat boundaries, and
+the 128-ID/128-owner store. Production remains unchanged pending a separate
+three-stage context owner. Focused and affected validation report
+`3 passed, 1 xfailed` and `443 passed, 1 xfailed`.

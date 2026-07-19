@@ -5435,6 +5435,36 @@ tests. Ruff, bytecode compilation, and whitespace checks passed. The store
 remains exactly 128 IDs and 128 owners. No real-model conversion was repeated
 for this straight-line ownership extraction.
 
+## Terminal activation-bridge composite characterization
+
+The post-QKV inventory selected three adjacent unconditional and unconsumed
+terminal observations: indexed Split/Conv/Concat bridge cleanup, HardSwish-SE
+summary, and late hard-activation summary. The first receives the shared model
+and LayoutState, the second receives the shared model, and the third receives
+the exact shared context plus the existing layout-Transpose option. The
+terminal QKV composite and absolute-final pre-ConCat cleanup define the outer
+boundaries.
+
+The strict characterization fixes current child order and arguments, shared
+context alias identity, both outer boundaries, absence of consumers, both
+layout-option variants, and complete empty-model schemas with lengths
+`(1, 2, 8)`. Its expected failure requires one context owner that forwards
+`context.model_ir`/`context.layout_state` exactly, preserves the option, and
+returns all three raw mapping objects unchanged.
+
+Sequential characterization under core-only `uv` completed with
+`3 passed, 1 xfailed in 0.59s` focused and
+`443 passed, 1 xfailed in 19.02s` across indexed Split bridge, HardSwish-SE,
+late hard activation, pre-ConCat boundary, shared-context, terminal
+validation, architecture, result, and phase-store contracts. The sole expected
+failure is the intentionally absent composite. Ruff and whitespace checks
+passed.
+
+No production callback, graph mutation, option, schema, context identity,
+pass order, public API, artifact, dependency, TensorFlow boundary, or store
+entry changed. No real-model conversion was run; the store remains exactly
+128 IDs and 128 owners.
+
 ## Pre-terminal cleanup composite implementation
 
 `passes/pre_terminal_cleanup_orchestration.py` now owns the characterized
