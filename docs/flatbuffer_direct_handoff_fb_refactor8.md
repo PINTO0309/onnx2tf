@@ -6553,3 +6553,46 @@ callback identities, child schemas, and independent routes before changing
 production. Continue with sequential `uv` validation and complete checkpoint
 commits/pushes only. Do not create, update, reopen, or otherwise modify a pull
 request.
+
+## Terminal boundary/optional mean-attention characterization checkpoint
+
+The refreshed inventory selects `_terminal_boundary_layout_results`, followed
+by the `optimize_layout_transpose_chains` guard whose first statement retains
+`_terminal_mean_attention_results`. Both lowerer wrappers delegate through
+aliases of the exact `shared_model_ir_pass_context`. Terminal mean/attention
+retains `include_conv_attention=False`.
+
+The characterization fixes the complete five-slot boundary schema, complete
+five-slot mean schema, unconditional boundary execution, conditional mean
+execution, shared context, option policy, observation-only results, and both
+compatibility wrappers. Recorded `cleanup.terminal.instancenorm_dualstats`
+remains the predecessor. On the enabled path, recorded
+`cleanup.terminal.batchmatmul_affine_input` remains the successor. On the
+disabled path, the guard performs no child work and the existing terminal
+Clamp/SiNet assignment remains next.
+
+Production is unchanged pending
+`passes/terminal_boundary_mean_attention_orchestration.py` and
+`run_terminal_boundary_mean_attention_cleanup()`. The owner must always call
+`run_terminal_boundary_layout(context)`, conditionally call
+`run_mean_attention(context, include_conv_attention=False)` only when
+`include_mean_attention=True`, and return the raw boundary tuple plus either
+the raw mean tuple or `None`. The lowerer must replace only the two selected
+locals with `_terminal_boundary_mean_attention_results`, passing the exact
+shared context and `optimize_layout_transpose_chains` flag. The remaining
+guarded terminal phases and both wrappers must remain intact.
+
+Focused sequential validation reports `2 passed, 1 xfailed`; complete
+reference-based affected validation reports `417 passed, 1 xfailed`. The sole
+expected failure requires the intentionally absent owner. Production, both
+flag paths, the 40-result inventory, and the exactly 128-ID/128-owner phase
+store are unchanged. No real-model conversion was repeated for this
+characterization.
+
+At resume, implement only this characterized optional owner and lowerer
+replacement, convert the strict xfail to runtime true/false order, context,
+option, non-call, and result-identity coverage, and update only structural
+expectations made stale by the new outer route. Run affected and standard
+gates sequentially under `uv`, confirm the expected inventory reduction from
+40 to 39, then commit and push the complete unit. Do not create, update,
+reopen, or otherwise modify a pull request.

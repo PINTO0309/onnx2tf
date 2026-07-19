@@ -7036,3 +7036,24 @@ coverage. Sequential validation passes: focused `4`, affected `426`, and
 standard `92 / 55 / 196 / 2 / 11`. Ruff, bytecode compilation, and whitespace
 checks pass. The phase store remains exactly 128 IDs and 128 owners, while the
 unconsumed lowerer-result inventory decreases from 41 to 40.
+
+## Characterize terminal boundary/optional mean-attention recovery
+
+The refreshed 40-result inventory selects terminal boundary-layout recovery
+and the immediately following guarded terminal mean/attention recovery. Both
+use the exact shared `ModelIRPassContext`; the second child retains
+`include_conv_attention=False` and must run only when layout optimization is
+enabled.
+
+The strict contract fixes the five-slot schemas of both children, the
+unconditional/conditional call order, option and context identity, both
+compatibility wrappers, and observation-only results. The recorded terminal
+InstanceNorm-dualstats phase remains the predecessor. With layout optimization
+enabled, the recorded BatchMatMul-affine-input phase remains the successor;
+with it disabled, the existing terminal Clamp/SiNet route remains next.
+
+Production remains unchanged pending one optional two-child owner. Focused and
+reference-based affected sequential validation report
+`2 passed, 1 xfailed` and `417 passed, 1 xfailed`; the sole expected failure is
+the deliberately absent owner module. The characterized inventory remains 40,
+and the phase-result store remains exactly 128 IDs and 128 owners.

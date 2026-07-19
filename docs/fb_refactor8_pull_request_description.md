@@ -1812,3 +1812,16 @@ isolation remain unchanged. Focused `4`, affected `426`, and standard
 `92 / 55 / 196 / 2 / 11` sequential tests pass. The phase store remains
 exactly 128 IDs and 128 owners, and the unconsumed-result inventory decreases
 from 41 to 40.
+
+The next characterization fixes unconditional terminal boundary-layout
+recovery followed by optional terminal mean/attention recovery before any
+production edit. Both children must receive the exact shared pass context; the
+mean child retains `include_conv_attention=False` and executes only when
+layout optimization is enabled. Both complete five-slot results remain
+unchanged when present.
+
+Focused and reference-based affected sequential validation report
+`2 passed, 1 xfailed` and `417 passed, 1 xfailed`; the sole expected failure is
+the deliberately absent future owner. Production behavior, both flag paths,
+dependencies, TensorFlow isolation, the 40-result inventory, and the exactly
+128-ID/128-owner phase store remain unchanged.
