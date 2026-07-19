@@ -4,7 +4,6 @@ import ast
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
@@ -113,14 +112,17 @@ def test_terminal_expand_squeeze_reconciliation_contract_is_explicit() -> None:
     } == {"layout_state": "session.layout_state"}
 
     reconciliation = lowerer.body[expand_index + 1]
-    assert isinstance(reconciliation, ast.Expr)
+    assert _single_target(reconciliation) == RECONCILE_RESULT_TARGET
     assert _call_name(reconciliation) == "_reconcile_static_tensor_shapes"
     reconcile_call = _statement_call(reconciliation)
     assert reconcile_call is not None
     assert [ast.unparse(argument) for argument in reconcile_call.args] == [
         "model_ir"
     ]
-    assert reconcile_call.keywords == []
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in reconcile_call.keywords
+    } == {"include_mutation_count": "True"}
     assert _call_name(lowerer.body[expand_index + 2]) == "_advance_post_progress"
 
 
@@ -142,10 +144,6 @@ def test_terminal_reconciliation_is_required_after_zero_expand_rewrites() -> Non
     assert model_ir.tensors["output"].shape_signature == [1, 4]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the terminal reconciliation result is still discarded",
-)
 def test_terminal_reconciliation_retains_complete_observation_result() -> None:
     lowerer = _lowerer()
     expand_index = next(

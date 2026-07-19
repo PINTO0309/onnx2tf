@@ -62,3 +62,34 @@ import: `test_flatbuffer_direct_shape_resolution.py` still imported
 The test now imports the canonical owner used throughout production pass
 modules. No lowerer compatibility alias is restored, and no production code or
 runtime behavior changes in this repair.
+
+## Terminal Expand/Squeeze reconciliation result retention
+
+The unconditional terminal reconciliation now retains its complete result as
+`_terminal_expand_squeeze_static_shape_stats`. The call requests
+`include_mutation_count=True`, so parameter-only and metadata mutations remain
+observable in addition to legacy tensor-shape updates.
+
+The result is intentionally unconsumed. No guard was added because preceding
+late-layout owners can require reconciliation even when the immediately
+adjacent Expand/Squeeze owner reports zero. Call order, graph mutation,
+reconciliation work, progress reporting, layout state, and artifact behavior
+are unchanged. No graph index or additional scan is introduced.
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated result contract: `3 passed in 0.55s`;
+- focused Expand/Squeeze, shape reconciliation, surrounding orchestration,
+  core, pass-efficiency, architecture, and TensorFlow-import-blocked gate:
+  `381 passed in 27.03s`;
+- all files changed by this branch's implementation and inherited test repair:
+  `17 passed in 0.68s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The first focused run produced `380 passed, 1 failed` because one existing AST
+test still required the raw reconciliation expression. Its structural
+expectation was updated to require the new observation target and complete
+schema; the unchanged gate then passed. No model-corpus conversion was run
+because assigning an already-computed dictionary cannot affect ModelIR or an
+artifact.

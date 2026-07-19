@@ -5642,7 +5642,12 @@ def lower_onnx_to_ir(
         model_ir,
         layout_state=session.layout_state,
     )
-    _reconcile_static_tensor_shapes(model_ir)
+    _terminal_expand_squeeze_static_shape_stats = (
+        _reconcile_static_tensor_shapes(
+            model_ir,
+            include_mutation_count=True,
+        )
+    )
     _advance_post_progress()
 
     _late_orphan_recurrent_repair_stats = (

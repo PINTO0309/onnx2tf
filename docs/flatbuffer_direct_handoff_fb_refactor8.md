@@ -56,3 +56,32 @@ and push the characterization checkpoint. Then implement only the selected
 assignment, remove the xfail marker, repeat the focused and branch-wide gates,
 record the results here and in `docs/fb_refactor8_improvements.md`, commit, and
 push. Do not create or update a pull request.
+
+## Terminal Expand/Squeeze reconciliation implementation checkpoint
+
+The unconditional reconciliation now retains its opt-in complete dictionary
+as `_terminal_expand_squeeze_static_shape_stats`. The target is unconsumed and
+observation-only. No guard, index, scan, mutation, pass, order, progress,
+dependency, public API, or TensorFlow behavior changed.
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated contract: `3 passed in 0.55s`;
+- focused affected-owner, core, architecture, pass-efficiency, and
+  TensorFlow-import-blocked gate: `381 passed in 27.03s`;
+- implementation/test-repair changed files: `17 passed in 0.68s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The first focused run found one stale AST expectation and was `380 passed, 1
+failed`; after updating that structural contract, the identical gate passed.
+An attempted all-direct glob was not used as evidence because it included the
+entire PyTorch exporter suite and its detached execution output could not be
+recovered reliably. No model conversion was necessary for this
+observation-only assignment.
+
+At resume, inventory the next raw result-returning post-lowering boundary
+without changing production behavior. Prefer a local assignment-only or
+shared-index opportunity whose current mutation and cleanup evidence can be
+fully characterized. Continue with commits and pushes only; do not create,
+reopen, or update a pull request.
