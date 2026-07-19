@@ -236,3 +236,33 @@ boundary test still required a raw reconciliation expression. Its structural
 expectation now requires the new observation target and complete schema. No
 model conversion was run because the result assignment does not affect ModelIR
 or artifacts.
+
+## Topology/layout refresh characterization
+
+The post-lowering pipeline contains twenty-one raw topological-sort calls.
+Six of them are immediately followed by logical-layout inference: two in the
+recursive fallback and four in the primary absolute-final repair sequence.
+The other fifteen sort-only boundaries have different successors and are not
+included in this unit.
+
+Topological sort returns the small fixed schema `reordered_operators` and
+`cycle_detected`. Logical-layout inference returns a full tensor-name-to-layout
+dictionary while also mutating tensor layout annotations and public-layout
+metadata. Retaining that full dictionary in the lowerer would unnecessarily
+extend its memory lifetime.
+
+The selected design is a focused `run_topology_layout_refresh(model_ir)` owner
+that executes the existing sort and layout inference in order, discards the
+large layout-map return after its side effects, and returns only the unchanged
+two-key sort result. The six call sites retain small observation-only results.
+No sort-only site, layout algorithm, graph mutation, condition, or following
+owner changes.
+
+Characterization validation completed sequentially under `uv`:
+
+- dedicated family contract: `2 passed, 1 xfailed in 0.56s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The sole expected failure is the absent shared owner and six assignments. No
+production source changed in this checkpoint.

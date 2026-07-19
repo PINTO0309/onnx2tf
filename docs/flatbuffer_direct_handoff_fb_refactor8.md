@@ -226,3 +226,30 @@ fallback `_reconcile_static_tensor_shapes(fallback_ir)` inside the positive
 adapter and singleton/consecutive-Reshape results, complete mutation schema,
 and unconditional topological sort must be fixed before implementation.
 Continue with commits and pushes only; do not create or update a pull request.
+
+## Topology/layout refresh characterization
+
+The family audit found twenty-one raw topological-sort calls and six adjacent
+`_topologically_sort_operators(...)` / `infer_model_ir_logical_layouts(...)`
+pairs. The selected six are the fallback post-dynamic-rank-one boundary,
+fallback broadcast-positive boundary, absolute-final primary boundary, and the
+positive ConvInteger, InstanceNorm, and broadcast repair boundaries.
+
+Topological sort returns two integer counters. Layout inference returns a full
+layout map in addition to its required tensor/metadata mutations, so retaining
+that map would unnecessarily increase live memory. The strict expected-failure
+contract instead requires `run_topology_layout_refresh()` to preserve both
+operations and return only the original sort dictionary. The six lowerer calls
+retain small, unconsumed phase-specific results. Fifteen sort-only sites remain
+unchanged.
+
+Before implementation, preserve the exact six model arguments, predecessor
+targets, conditions, mutation order, and layout effects. Do not return or
+retain the full layout map, add a graph scan, alter sort cycle handling, or
+touch sort-only boundaries.
+
+Characterization validation completed sequentially under `uv`: the dedicated
+family contract is `2 passed, 1 xfailed in 0.56s`, and targeted Ruff, bytecode
+compilation, and whitespace checks pass. The sole expected failure is the
+absent owner and assignments. Commit and push this characterization before
+changing production code; do not create or update a pull request.
