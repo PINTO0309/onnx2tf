@@ -1225,3 +1225,11 @@ independent routes remain available. Runtime identity coverage, 406 affected
 tests, and all standard sequential gates pass; public behavior, graph
 rewrites, TensorFlow isolation, and the exactly 128-ID/128-owner store are
 unchanged.
+
+The next characterization selects the adjacent late
+input/affine/normalization and very-late dynamic-adapter composites. It fixes
+their exact shared-context identity, nested raw tuple schemas and order,
+progress predecessor, phase-recorded final static-shape reconciliation
+successor, and following Split fallback. Production remains unchanged pending
+a two-stage owner. Focused and affected validation report
+`1 passed, 1 xfailed` and `399 passed, 1 xfailed`.

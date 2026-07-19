@@ -5869,3 +5869,29 @@ checks passed. No graph rewrite, guard, phase result, public API, artifact,
 dependency, or TensorFlow boundary changed; the store remains exactly 128 IDs
 and 128 owners. No real-model conversion was repeated for this straight-line
 ownership extraction.
+
+## Final input/dynamic composite characterization
+
+The next inventory selected the smallest remaining adjacent cluster after the
+terminal progress update: the already-composite late
+input/affine/normalization cleanup followed by the already-composite very-late
+dynamic adapter cleanup. Both receive the exact same
+`shared_model_ir_pass_context`; their observation-only nested result tuples
+have fixed lengths four and six.
+
+`tests/test_flatbuffer_direct_final_input_dynamic_orchestration.py` fixes the
+two-child order, exact shared-context arguments, absence of consumers,
+complete nested empty-model schemas, `_advance_post_progress` predecessor,
+phase-recorded `shape_reconciliation.primary.very_late_final` successor, and
+following Split fallback boundary. The proposed owner must return both raw
+child tuples unchanged and must not absorb or condition the reconciliation or
+Split fallback.
+
+Sequential characterization under core-only `uv` completed with
+`1 passed, 1 xfailed in 0.59s` focused and
+`399 passed, 1 xfailed in 19.24s` across late-input repair, recurrent alias,
+unbound-input repair, normalization, dynamic adapter, shared-context,
+terminal validation, architecture, shape-phase, and phase-store contracts.
+The sole expected failure requires one new shared-context owner. Production,
+public behavior, dependency boundaries, and the exactly 128-ID/128-owner
+phase store remain unchanged.

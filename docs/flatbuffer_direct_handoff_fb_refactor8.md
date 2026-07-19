@@ -5080,3 +5080,28 @@ results. Select the next smallest source-adjacent, semantically closed cluster
 whose children already have pass-module owners, characterize it before
 production changes, and keep every test sequential and single-process under
 `uv`. Commit and push only; never create, update, or reopen a pull request.
+
+## Final input/dynamic composite characterization checkpoint
+
+The next two-stage candidate is characterized but not implemented. It joins
+the existing late input/affine/normalization composite with the existing
+very-late dynamic adapter composite. Both receive the exact same shared
+`ModelIRPassContext`; their raw nested tuple lengths are four and six.
+
+The fixed predecessor is `_advance_post_progress`. The fixed successor is the
+phase-recorded complete static-shape reconciliation
+`shape_reconciliation.primary.very_late_final`, followed immediately by the
+Split fallback assignment. The new owner must not absorb either successor or
+change any child schema, state identity, order, or result object.
+
+Focused characterization reports `1 passed, 1 xfailed`; complete affected
+characterization reports `399 passed, 1 xfailed`. The only xfail is the
+intentionally absent `passes/final_input_dynamic_orchestration.py`. Production
+and the 128-ID/128-owner phase store are unchanged.
+
+At resume, implement `run_final_input_dynamic_cleanup(context)` as a
+straight-line two-child owner, return both raw nested tuples unchanged, and
+replace only the two unconsumed lowerer locals. Preserve progress,
+reconciliation, Split fallback, all child owners, and all independent routes.
+Run affected and standard gates sequentially, then commit and push only. Never
+create, update, or reopen a pull request.
