@@ -55,6 +55,21 @@ def _expression_path(node: ast.expr) -> Any:
     raise AssertionError(f"unexpected expression: {ast.dump(node)}")
 
 
+def _phase_result_owner(statement: ast.stmt, phase_id: str) -> ast.Call:
+    assert isinstance(statement, ast.Expr)
+    record = statement.value
+    assert isinstance(record, ast.Call)
+    assert isinstance(record.func, ast.Attribute)
+    assert isinstance(record.func.value, ast.Name)
+    assert record.func.value.id == "session"
+    assert record.func.attr == "record_phase_result"
+    assert len(record.args) == 2
+    assert ast.literal_eval(record.args[0]) == phase_id
+    owner = record.args[1]
+    assert isinstance(owner, ast.Call)
+    return owner
+
+
 def _context(*, use_layout_state: bool) -> TerminalBoundaryLayoutContext:
     model_ir = ModelIR("terminal_boundary_layout_test")
     return TerminalBoundaryLayoutContext(
@@ -255,10 +270,14 @@ def test_terminal_boundary_propagates_ordered_results_to_primary(
     assert invocation.value.keywords == []
 
     predecessor = lowerer.body[invocation_index - 1]
-    assert isinstance(predecessor, ast.Assign)
-    assert len(predecessor.targets) == 1
-    assert isinstance(predecessor.targets[0], ast.Name)
-    assert predecessor.targets[0].id == "_terminal_instancenorm_dualstats_stats"
+    predecessor_owner = _phase_result_owner(
+        predecessor,
+        "cleanup.terminal.instancenorm_dualstats",
+    )
+    assert isinstance(predecessor_owner.func, ast.Name)
+    assert predecessor_owner.func.id == (
+        "_optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains"
+    )
     successor = lowerer.body[invocation_index + 1]
     assert isinstance(successor, ast.If)
     assert isinstance(successor.test, ast.Name)
@@ -295,15 +314,12 @@ def test_terminal_boundary_preserves_outer_boundaries() -> None:
     )
 
     previous_boundary = lowerer.body[invocation_index - 1]
-    assert isinstance(previous_boundary, ast.Assign)
-    assert len(previous_boundary.targets) == 1
-    assert isinstance(previous_boundary.targets[0], ast.Name)
-    assert previous_boundary.targets[0].id == (
-        "_terminal_instancenorm_dualstats_stats"
+    previous_owner = _phase_result_owner(
+        previous_boundary,
+        "cleanup.terminal.instancenorm_dualstats",
     )
-    assert isinstance(previous_boundary.value, ast.Call)
-    assert isinstance(previous_boundary.value.func, ast.Name)
-    assert previous_boundary.value.func.id == (
+    assert isinstance(previous_owner.func, ast.Name)
+    assert previous_owner.func.id == (
         "_optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains"
     )
 

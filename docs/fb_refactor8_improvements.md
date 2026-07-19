@@ -683,6 +683,43 @@ Validation completed sequentially under core-only `uv`:
 The sole expected failure is the intentionally unimplemented five-result
 destination migration.
 
+## Terminal normalization cleanup implementation
+
+The five characterized observations now record under:
+
+- `cleanup.terminal.instancenorm_post_bias`;
+- `cleanup.terminal.normalization_pad`;
+- `cleanup.terminal.instancenorm_residual_add`;
+- `cleanup.terminal.instancenorm_residual_mul_concat`;
+- `cleanup.terminal.instancenorm_dualstats`.
+
+Only the unused local destinations changed. Owner calls, arguments, keywords,
+unconditional execution, evaluation count, five-statement order, the
+preceding Swish QDQ-island record, the following terminal boundary-layout
+composite, ModelIR mutations, public outputs, reports, artifacts,
+dependencies, and TensorFlow isolation are unchanged. The bounded store now
+covers 106 of 128 phase slots, leaving 22.
+
+Seventeen representation-dependent assertions expected the migrated terminal
+call to be an outer assignment. They now unwrap the record and continue to
+verify exact phase IDs, owners, arguments, keywords, call counts, later
+non-migrated assignments, and both outer boundaries. Production behavior was
+not implicated.
+
+Validation completed sequentially under core-only `uv`:
+
+- focused normalization/store/terminal/boundary contracts:
+  `100 passed in 2.81s`;
+- synthetic core runtime contracts: `55 passed in 1.03s`;
+- broader result and phase-result contracts: `188 passed in 8.64s`;
+- lowerer architecture contracts: `258 passed in 18.46s`;
+- targeted Ruff, Python bytecode compilation, AST capacity audit, and
+  whitespace validation: passed.
+
+No root-model corpus conversion was run because this is an
+observation-destination-only change and the synthetic runtime suite exercises
+the terminal path.
+
 ## Layout pass-set 1 affine cleanup implementation
 
 The five characterized observations now record under stable

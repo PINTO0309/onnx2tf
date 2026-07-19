@@ -1630,3 +1630,32 @@ Commit and push the characterization before replacing only these five mapping
 destinations. Preserve both boundaries and source order, update all
 representation-dependent terminal contracts, run the sequential gates,
 document, commit, and push. Never create, update, or reopen a pull request.
+
+## Terminal normalization cleanup implementation
+
+The five characterized results now use stable `cleanup.terminal.*` records in
+their original source order. Only their unconsumed local destinations changed.
+Owner calls, arguments, keywords, unconditional execution, evaluation count,
+the preceding Swish QDQ-island record, the following terminal boundary-layout
+composite, graph behavior, public contracts, dependencies, and TensorFlow
+isolation remain unchanged.
+
+The bounded store now contains 106/128 records, leaving 22 slots. Composite
+`*_results` stay outside the integer mapping store. Seventeen stale structural
+assertions were updated to unwrap the record while preserving exact phase,
+owner, call-count, later-assignment, and boundary checks.
+
+Validation completed sequentially under core-only `uv`:
+
+- focused normalization/store/terminal/boundary contracts:
+  `100 passed in 2.81s`;
+- synthetic core runtime contracts: `55 passed in 1.03s`;
+- broader result contracts: `188 passed in 8.64s`;
+- lowerer architecture contracts: `258 passed in 18.46s`;
+- targeted Ruff, bytecode compilation, AST capacity audit, and whitespace
+  checks: passed.
+
+No root-model conversion was required for this observation-only destination
+migration. Commit and push this implementation as a self-contained unit. The
+next unit must begin with a fresh characterize-first audit and must never
+create, update, or reopen a pull request.

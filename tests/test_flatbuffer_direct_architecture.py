@@ -5540,16 +5540,22 @@ def test_lowerer_terminal_boundary_layout_cluster_reuses_pass_state_scope() -> N
         and statement.value.func.id == helper_name
     )
     previous_boundary = lowerer.body[invocation_index - 1]
-    assert isinstance(previous_boundary, ast.Assign)
-    assert len(previous_boundary.targets) == 1
-    assert isinstance(previous_boundary.targets[0], ast.Name)
-    assert previous_boundary.targets[0].id == (
-        "_terminal_instancenorm_dualstats_stats"
+    assert isinstance(previous_boundary, ast.Expr)
+    record = previous_boundary.value
+    assert isinstance(record, ast.Call)
+    assert isinstance(record.func, ast.Attribute)
+    assert isinstance(record.func.value, ast.Name)
+    assert record.func.value.id == "session"
+    assert record.func.attr == "record_phase_result"
+    assert len(record.args) == 2
+    assert ast.literal_eval(record.args[0]) == (
+        "cleanup.terminal.instancenorm_dualstats"
     )
-    assert isinstance(previous_boundary.value, ast.Call)
-    assert isinstance(previous_boundary.value.func, ast.Name)
+    previous_owner = record.args[1]
+    assert isinstance(previous_owner, ast.Call)
+    assert isinstance(previous_owner.func, ast.Name)
     assert (
-        previous_boundary.value.func.id
+        previous_owner.func.id
         == "_optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains"
     )
     next_boundary = lowerer.body[invocation_index + 1]

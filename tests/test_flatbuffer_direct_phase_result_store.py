@@ -64,6 +64,11 @@ EXPECTED_RESULT_TARGETS = (
     "_terminal_swish_residual_concat_closure_stats",
     "_terminal_dequant_logistic_mul_quantize_bridge_stats",
     "_terminal_swish_qdq_island_stats",
+    "_terminal_instancenorm_post_bias_stats",
+    "_terminal_normalization_pad_stats",
+    "_terminal_instancenorm_residual_add_stats",
+    "_terminal_instancenorm_residual_mul_concat_stats",
+    "_terminal_instancenorm_dualstats_stats",
     "_no_layout_safe_transpose_reduction_stats",
     "_very_late_broadcast_static_shape_stats",
     "_shared_late_static_shape_stats",
@@ -167,6 +172,11 @@ EXPECTED_OWNERS = (
     "_optimize_transpose_swish_residual_concat_closure_nhwc_chains",
     "_optimize_transpose_dequant_logistic_mul_quantize_bridges",
     "_optimize_transpose_swish_qdq_nhwc_islands",
+    "_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains",
+    "run_normalization_pad_layout_cleanup",
+    "_optimize_transpose_instancenorm_residual_add_to_single_post_adapter_nhwc_chains",
+    "_optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains",
+    "_optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains",
     "_apply_safe_transpose_reduction_lite",
     "_reconcile_static_tensor_shapes",
     "_reconcile_static_tensor_shapes",
@@ -219,7 +229,7 @@ EXPECTED_OWNERS = (
     "run_topology_layout_validation",
 )
 EXPECTED_MODEL_ARGUMENTS = (
-    *("model_ir",) * 59,
+    *("model_ir",) * 64,
     *("fallback_ir",) * 14,
     *("model_ir",) * 28,
 )
@@ -275,6 +285,11 @@ EXPECTED_PHASE_IDS = (
     "cleanup.terminal.swish_residual_concat_closure",
     "cleanup.terminal.dequant_logistic_mul_quantize_bridge",
     "cleanup.terminal.swish_qdq_island",
+    "cleanup.terminal.instancenorm_post_bias",
+    "cleanup.terminal.normalization_pad",
+    "cleanup.terminal.instancenorm_residual_add",
+    "cleanup.terminal.instancenorm_residual_mul_concat",
+    "cleanup.terminal.instancenorm_dualstats",
     "layout.no_layout.safe_transpose_reduction",
     "shape_reconciliation.primary.very_late_broadcast",
     "shape_reconciliation.primary.shared_late",
@@ -365,7 +380,7 @@ def _session() -> ConversionSession:
     )
 
 
-def test_one_hundred_one_observations_use_the_bounded_session_store() -> None:
+def test_one_hundred_six_observations_use_the_bounded_session_store() -> None:
     lowerer = _lowerer()
     records = sorted(
         [
@@ -376,7 +391,7 @@ def test_one_hundred_one_observations_use_the_bounded_session_store() -> None:
         key=lambda node: node.lineno,
     )
 
-    assert len(records) == 101
+    assert len(records) == 106
     assert tuple(
         ast.literal_eval(_statement_call(node).args[0]) for node in records
     ) == EXPECTED_PHASE_IDS

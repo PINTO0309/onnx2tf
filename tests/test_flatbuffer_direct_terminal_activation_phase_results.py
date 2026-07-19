@@ -27,7 +27,7 @@ EXPECTED_OWNER_EXPRESSIONS = (
     "_optimize_transpose_swish_qdq_nhwc_islands(model_ir)",
 )
 PREDECESSOR_TARGET = "_terminal_slice_concat_recovery_results"
-SUCCESSOR_TARGET = "_terminal_instancenorm_post_bias_stats"
+SUCCESSOR_PHASE_ID = "cleanup.terminal.instancenorm_post_bias"
 
 
 def _lowerer() -> ast.FunctionDef:
@@ -81,7 +81,7 @@ def test_terminal_activation_results_use_phase_result_store() -> None:
     ) == EXPECTED_OWNER_EXPRESSIONS
     assert indices == list(range(indices[0], indices[0] + 4))
     assert _single_target(lowerer.body[indices[0] - 1]) == PREDECESSOR_TARGET
-    assert _single_target(lowerer.body[indices[-1] + 1]) == SUCCESSOR_TARGET
+    assert _phase_id(lowerer.body[indices[-1] + 1]) == SUCCESSOR_PHASE_ID
     assert not any(
         isinstance(node, ast.Name) and node.id in EXPECTED_RESULT_TARGETS
         for node in ast.walk(lowerer)

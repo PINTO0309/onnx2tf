@@ -4929,34 +4929,41 @@ def lower_onnx_to_ir(
         _optimize_transpose_swish_qdq_nhwc_islands(model_ir),
     )
     # Late recovery passes can recreate Conv->InstNorm(NCHW)->Pad wrappers.
-    _terminal_instancenorm_post_bias_stats = (
+    session.record_phase_result(
+        "cleanup.terminal.instancenorm_post_bias",
         _optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains(
             model_ir,
             layout_state=session.layout_state,
-        )
+        ),
     )
-    _terminal_normalization_pad_stats = run_normalization_pad_layout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
+    session.record_phase_result(
+        "cleanup.terminal.normalization_pad",
+        run_normalization_pad_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        ),
     )
-    _terminal_instancenorm_residual_add_stats = (
+    session.record_phase_result(
+        "cleanup.terminal.instancenorm_residual_add",
         _optimize_transpose_instancenorm_residual_add_to_single_post_adapter_nhwc_chains(
             model_ir,
             layout_state=session.layout_state,
-        )
+        ),
     )
-    _terminal_instancenorm_residual_mul_concat_stats = (
+    session.record_phase_result(
+        "cleanup.terminal.instancenorm_residual_mul_concat",
         _optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains(
             model_ir,
             layout_state=session.layout_state,
-        )
+        ),
     )
-    _terminal_instancenorm_dualstats_stats = (
+    session.record_phase_result(
+        "cleanup.terminal.instancenorm_dualstats",
         _optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains(
             model_ir,
             layout_state=session.layout_state,
-        )
+        ),
     )
     _terminal_boundary_layout_results = (
         _run_terminal_boundary_layout_pass_cluster()

@@ -50,6 +50,21 @@ def _expression_path(node: ast.expr) -> Any:
     raise AssertionError(f"unexpected call expression: {ast.dump(node)}")
 
 
+def _phase_result_owner(statement: ast.stmt, phase_id: str) -> ast.Call:
+    assert isinstance(statement, ast.Expr)
+    record = statement.value
+    assert isinstance(record, ast.Call)
+    assert isinstance(record.func, ast.Attribute)
+    assert isinstance(record.func.value, ast.Name)
+    assert record.func.value.id == "session"
+    assert record.func.attr == "record_phase_result"
+    assert len(record.args) == 2
+    assert ast.literal_eval(record.args[0]) == phase_id
+    owner = record.args[1]
+    assert isinstance(owner, ast.Call)
+    return owner
+
+
 def _context() -> TerminalAffineConcatSplitRecoveryContext:
     model_ir = ModelIR("terminal_affine_concat_split_recovery_test")
     return TerminalAffineConcatSplitRecoveryContext(
@@ -628,10 +643,13 @@ def test_pre_terminal_affine_dualstats_captures_complete_mutation_evidence() -> 
         )
     ]
     assert len(direct_statements) == 3
-    assert isinstance(direct_statements[0], ast.Assign)
-    assert isinstance(direct_statements[0].targets[0], ast.Name)
-    assert direct_statements[0].targets[0].id == (
-        "_terminal_instancenorm_dualstats_stats"
+    terminal_owner = _phase_result_owner(
+        direct_statements[0],
+        "cleanup.terminal.instancenorm_dualstats",
+    )
+    assert isinstance(terminal_owner.func, ast.Name)
+    assert terminal_owner.func.id == (
+        "_optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains"
     )
     assert isinstance(direct_statements[1], ast.Assign)
     assert isinstance(direct_statements[1].targets[0], ast.Name)
@@ -708,10 +726,13 @@ def test_pre_terminal_affine_residual_mul_concat_captures_mutation_evidence() ->
         )
     ]
     assert len(direct_statements) == 3
-    assert isinstance(direct_statements[0], ast.Assign)
-    assert isinstance(direct_statements[0].targets[0], ast.Name)
-    assert direct_statements[0].targets[0].id == (
-        "_terminal_instancenorm_residual_mul_concat_stats"
+    terminal_owner = _phase_result_owner(
+        direct_statements[0],
+        "cleanup.terminal.instancenorm_residual_mul_concat",
+    )
+    assert isinstance(terminal_owner.func, ast.Name)
+    assert terminal_owner.func.id == (
+        "_optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains"
     )
     assert isinstance(direct_statements[1], ast.Assign)
     assert isinstance(direct_statements[1].targets[0], ast.Name)
@@ -778,10 +799,13 @@ def test_pre_terminal_affine_post_bias_captures_mutation_evidence() -> None:
         )
     ]
     assert len(direct_statements) == 4
-    assert isinstance(direct_statements[0], ast.Assign)
-    assert isinstance(direct_statements[0].targets[0], ast.Name)
-    assert direct_statements[0].targets[0].id == (
-        "_terminal_instancenorm_post_bias_stats"
+    terminal_owner = _phase_result_owner(
+        direct_statements[0],
+        "cleanup.terminal.instancenorm_post_bias",
+    )
+    assert isinstance(terminal_owner.func, ast.Name)
+    assert terminal_owner.func.id == (
+        "_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains"
     )
     assert isinstance(direct_statements[1], ast.Assign)
     assert isinstance(direct_statements[1].targets[0], ast.Name)
