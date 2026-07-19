@@ -5084,3 +5084,28 @@ Final sequential validation under core-only `uv`:
 No real-model conversion was repeated because this is a straight-line owner
 move and dedicated runtime injection covers every callback, flag, shared-state
 identity, raw result, and both neighboring boundaries.
+
+## Unbound-input repair owner characterization
+
+The next prerequisite checkpoint fixes the remaining lowerer-local mapping
+wrapper before any larger orphan/unbound/affine group is composed. The wrapper
+calls `repair_unbound_nonconstant_inputs_with_layout_transpose(model_ir,
+graph_index=graph_index)`, conditionally reconciles static shapes with the
+returned graph index when `result.repaired > 0`, and returns exactly
+`repaired_unbound_nonconstant_inputs_with_layout_transpose: int(result.repaired)`.
+Its two production callers remain the primary `model_ir` path and the
+`fallback_ir` safety path.
+
+`tests/test_flatbuffer_direct_unbound_input_repair_owner.py` first locks the
+current lowerer behavior, then uses one strict expected failure to require a
+pass-module owner plus a one-return lowerer compatibility adapter. Sequential
+focused validation completed with `1 passed, 1 xfailed in 0.15s`. After an
+independent owner-aware repair to the inherited very-late dynamic-adapter AST
+contracts, the full affected set completed with
+`392 passed, 1 xfailed in 19.37s`; the sole expected failure is the deliberately
+absent pass-module owner.
+
+This characterization changes no production callback, graph mutation,
+reconciliation guard, result schema, caller, pass order, API, artifact,
+dependency, or TensorFlow boundary. No real-model conversion was run. The
+phase-result store remains exactly 128 IDs and 128 owners.

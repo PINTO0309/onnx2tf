@@ -4498,3 +4498,24 @@ another fully owned source-adjacent cluster if available; otherwise
 characterize that wrapper extraction separately before composing the group.
 Keep validation sequential, the store at 128/128, and never create, update, or
 reopen a pull request.
+
+## Unbound-input repair owner characterization
+
+The deferred prerequisite is now characterized without production changes.
+The lowerer-local wrapper performs one indexed unbound-input layout repair,
+reconciles static shapes only when its repaired count is positive using the
+returned graph index, and normalizes the result to the existing one-key mapping.
+Both callers remain fixed: primary `model_ir` and safety-path `fallback_ir`.
+
+The focused contract completed with `1 passed, 1 xfailed`; the affected suite
+completed with `392 passed, 1 xfailed`. The strict expected failure requires
+`passes/unbound_input_repair_orchestration.py` and a one-return compatibility
+wrapper. Production, public behavior, TensorFlow isolation, and the full
+128-ID/128-owner phase-result store are unchanged; no model conversion was
+run.
+
+At resume, implement only this mechanical owner extraction. Preserve the
+lowerer wrapper and both callers, keep the repair → conditional reconciliation
+order and graph-index identity exact, then run focused, affected, and standard
+gates sequentially before considering the larger adjacent result group. Do
+not create, update, or reopen a pull request.

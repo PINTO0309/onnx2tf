@@ -999,3 +999,11 @@ It moves the six callbacks without changing flags or argument policy, retains
 all wrappers and independent callers, removes one now-unused lowerer import,
 and preserves mandatory reconciliation, split fallback, raw result identity,
 and the full 128/128 store. Runtime injection proves all six stages directly.
+
+The next characterization fixes the remaining lowerer-local unbound-input
+repair mapping contract. It preserves indexed repair, mutation-positive static
+shape reconciliation with the returned graph index, the exact one-key result
+schema, and both primary/fallback callers. One strict expected failure requires
+a pass-module owner and one-return compatibility wrapper; production and the
+full 128-ID/128-owner store remain unchanged. Sequential affected validation
+completed with `392 passed, 1 xfailed`, and no model conversion was run.
