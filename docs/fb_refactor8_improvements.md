@@ -748,3 +748,27 @@ Validation completed sequentially under core-only `uv`:
 
 No real-model conversion was run because this is a result-destination-only
 change at already-characterized owner boundaries.
+
+## Primary final cleanup reconciliation characterization
+
+The next generic primary family is limited to the final PReLU and
+consecutive-Reshape cleanup boundaries. Both use an unconsumed two-counter
+zero default followed by a guarded
+`_reconcile_static_tensor_shapes(model_ir, include_mutation_count=True)` call.
+The PReLU guard includes both the rewrite counter and cleanup-only tensor
+pruning; the consecutive-Reshape guard includes all three mutation counters.
+
+The characterization fixes both targets, their source order, zero schema,
+owner arguments, keyword arguments, and absence of consumers. A strict
+expected failure requires stable `shape_reconciliation.primary.final_prelu`
+and `shape_reconciliation.primary.final_consecutive_reshape` records while
+preserving the existing guards. No production source changed.
+
+Validation completed sequentially under core-only `uv`:
+
+- dedicated pair contract: `1 passed, 1 xfailed in 0.15s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The sole expected failure is the intentionally unimplemented bounded-store
+migration.

@@ -738,3 +738,26 @@ remaining SiNet-specific final repair chain should not be migrated together
 with generic placeholder, PReLU, or consecutive-Reshape boundaries. Preserve
 all guards and do not use observations to skip work without separate
 differential characterization. Never create, update, or reopen a pull request.
+
+## Primary final cleanup reconciliation characterization
+
+The next selected primary family contains only final PReLU and
+consecutive-Reshape reconciliation. Both have the same complete two-counter
+owner and unconsumed zero defaults. Their guards differ intentionally: PReLU
+also observes cleanup-only tensor pruning, while consecutive Reshape sums its
+three declared mutation counters.
+
+The new contract fixes both targets, source order, zero schema, owner call,
+`include_mutation_count=True`, and absence of consumers. Its strict expected
+failure requires stable `shape_reconciliation.primary.final_*` records without
+changing either guard.
+
+Validation completed sequentially under core-only `uv`: the dedicated test is
+`1 passed, 1 xfailed in 0.15s`, and targeted Ruff, bytecode compilation, and
+whitespace checks pass. No production source changed.
+
+Commit and push this characterization before replacing only these two guarded
+assignments and removing their defaults. Update the terminal and architecture
+contracts that currently require the old locals, then repeat the bounded-store,
+focused, and architecture gates. Never create, update, or reopen a pull
+request.
