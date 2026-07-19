@@ -4855,49 +4855,56 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         ),
     )
-    _terminal_pre_argmax_stats = (
+    session.record_phase_result(
+        "cleanup.terminal.pre_argmax",
         _optimize_transpose_pre_argmax_nhwc_terminal_chains(
             model_ir,
             layout_state=session.layout_state,
-        )
+        ),
     )
-    _terminal_transpose_gather_channel_fanout_stats = (
+    session.record_phase_result(
+        "cleanup.terminal.transpose_gather_channel_fanout",
         run_transpose_gather_channel_fanout_cleanup(
             model_ir,
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
-        )
+        ),
     )
-    _terminal_softmax_transpose_stats = (
+    session.record_phase_result(
+        "cleanup.terminal.softmax_transpose",
         _optimize_terminal_softmax_transpose_after_nhwc_propagation(
             model_ir,
             layout_state=session.layout_state,
-        )
+        ),
     )
-    _terminal_boundary_input_normalization_stats = (
+    session.record_phase_result(
+        "cleanup.terminal.boundary_input_normalization",
         run_boundary_input_normalization_cleanup(
             model_ir,
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
-        )
+        ),
     )
-    _terminal_boundary_input_channel_slice_stats = (
+    session.record_phase_result(
+        "cleanup.terminal.boundary_input_channel_slice",
         _optimize_boundary_input_transpose_channel_slice_blocks(
             model_ir,
             layout_state=session.layout_state,
-        )
+        ),
     )
-    _terminal_internal_channel_slice_stats = (
+    session.record_phase_result(
+        "cleanup.terminal.internal_channel_slice",
         _optimize_internal_transpose_channel_slice_nhwc_propagation_chains(
             model_ir,
             layout_state=session.layout_state,
-        )
+        ),
     )
-    _terminal_channel_slice_muladd_bridge_stats = (
+    session.record_phase_result(
+        "cleanup.terminal.channel_slice_muladd_bridge",
         _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(
             model_ir,
             layout_state=session.layout_state,
-        )
+        ),
     )
     _terminal_slice_concat_recovery_results = (
         _run_terminal_slice_concat_layout_recovery_sequence()

@@ -1930,6 +1930,18 @@ def test_lowerer_terminal_slice_concat_recovery_has_one_ordered_owner() -> None:
             previous_target = previous.targets[0].id
         previous_call = previous.value
         assert isinstance(previous_call, ast.Call)
+        if (
+            isinstance(previous_call.func, ast.Attribute)
+            and isinstance(previous_call.func.value, ast.Name)
+            and previous_call.func.value.id == "session"
+            and previous_call.func.attr == "record_phase_result"
+            and len(previous_call.args) == 2
+            and isinstance(previous_call.args[1], ast.Call)
+        ):
+            assert ast.literal_eval(previous_call.args[0]) == (
+                "cleanup.terminal.channel_slice_muladd_bridge"
+            )
+            previous_call = previous_call.args[1]
         assert isinstance(previous_call.func, ast.Name)
         assert (
             previous_call.func.id
@@ -1952,7 +1964,7 @@ def test_lowerer_terminal_slice_concat_recovery_has_one_ordered_owner() -> None:
         next_targets.append(next_target)
         next_call_names.append(following_call.func.id)
     assert previous_targets == [
-        "_terminal_channel_slice_muladd_bridge_stats",
+        None,
         "_final_channel_slice_muladd_bridge_stats",
     ]
     assert previous_keyword_names == [["layout_state"], []]

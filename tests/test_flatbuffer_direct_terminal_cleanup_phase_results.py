@@ -91,8 +91,8 @@ def test_terminal_cleanup_results_are_unconditional_and_unconsumed() -> None:
     assert ast.unparse(lowerer.body[indices[0] - 1]) == (
         "_set_post_progress_desc('terminal cleanup passes')"
     )
-    assert _single_target(lowerer.body[indices[-1] + 1]) == (
-        "_terminal_pre_argmax_stats"
+    assert _phase_id(lowerer.body[indices[-1] + 1]) == (
+        "cleanup.terminal.pre_argmax"
     )
     assert not any(
         isinstance(node, ast.Name)

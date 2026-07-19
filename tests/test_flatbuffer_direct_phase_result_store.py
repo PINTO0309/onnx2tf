@@ -53,6 +53,13 @@ EXPECTED_RESULT_TARGETS = (
     "_terminal_cleanup_terminal_qdq_stats",
     "_terminal_cleanup_conv_affine_stats",
     "_terminal_cleanup_conv_activation_stats",
+    "_terminal_pre_argmax_stats",
+    "_terminal_transpose_gather_channel_fanout_stats",
+    "_terminal_softmax_transpose_stats",
+    "_terminal_boundary_input_normalization_stats",
+    "_terminal_boundary_input_channel_slice_stats",
+    "_terminal_internal_channel_slice_stats",
+    "_terminal_channel_slice_muladd_bridge_stats",
     "_no_layout_safe_transpose_reduction_stats",
     "_very_late_broadcast_static_shape_stats",
     "_shared_late_static_shape_stats",
@@ -145,6 +152,13 @@ EXPECTED_OWNERS = (
     "run_terminal_quantize_dequantize_cleanup",
     "_optimize_fold_conv_mul_add_affine_chains",
     "_optimize_fuse_conv_activation_chains",
+    "_optimize_transpose_pre_argmax_nhwc_terminal_chains",
+    "run_transpose_gather_channel_fanout_cleanup",
+    "_optimize_terminal_softmax_transpose_after_nhwc_propagation",
+    "run_boundary_input_normalization_cleanup",
+    "_optimize_boundary_input_transpose_channel_slice_blocks",
+    "_optimize_internal_transpose_channel_slice_nhwc_propagation_chains",
+    "_optimize_transpose_channel_slice_muladd_nhwc_bridge_chains",
     "_apply_safe_transpose_reduction_lite",
     "_reconcile_static_tensor_shapes",
     "_reconcile_static_tensor_shapes",
@@ -197,7 +211,7 @@ EXPECTED_OWNERS = (
     "run_topology_layout_validation",
 )
 EXPECTED_MODEL_ARGUMENTS = (
-    *("model_ir",) * 48,
+    *("model_ir",) * 55,
     *("fallback_ir",) * 14,
     *("model_ir",) * 28,
 )
@@ -242,6 +256,13 @@ EXPECTED_PHASE_IDS = (
     "cleanup.terminal.qdq",
     "cleanup.terminal.conv_affine",
     "cleanup.terminal.conv_activation",
+    "cleanup.terminal.pre_argmax",
+    "cleanup.terminal.transpose_gather_channel_fanout",
+    "cleanup.terminal.softmax_transpose",
+    "cleanup.terminal.boundary_input_normalization",
+    "cleanup.terminal.boundary_input_channel_slice",
+    "cleanup.terminal.internal_channel_slice",
+    "cleanup.terminal.channel_slice_muladd_bridge",
     "layout.no_layout.safe_transpose_reduction",
     "shape_reconciliation.primary.very_late_broadcast",
     "shape_reconciliation.primary.shared_late",
@@ -332,7 +353,7 @@ def _session() -> ConversionSession:
     )
 
 
-def test_ninety_observations_use_the_bounded_session_store() -> None:
+def test_ninety_seven_observations_use_the_bounded_session_store() -> None:
     lowerer = _lowerer()
     records = sorted(
         [
@@ -343,7 +364,7 @@ def test_ninety_observations_use_the_bounded_session_store() -> None:
         key=lambda node: node.lineno,
     )
 
-    assert len(records) == 90
+    assert len(records) == 97
     assert tuple(
         ast.literal_eval(_statement_call(node).args[0]) for node in records
     ) == EXPECTED_PHASE_IDS

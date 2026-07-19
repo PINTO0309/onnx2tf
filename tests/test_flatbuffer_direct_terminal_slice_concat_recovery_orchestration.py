@@ -335,6 +335,18 @@ def test_terminal_slice_concat_recovery_preserves_outer_boundaries() -> None:
             previous_target = previous.targets[0].id
         previous_call = previous.value
         assert isinstance(previous_call, ast.Call)
+        if (
+            isinstance(previous_call.func, ast.Attribute)
+            and isinstance(previous_call.func.value, ast.Name)
+            and previous_call.func.value.id == "session"
+            and previous_call.func.attr == "record_phase_result"
+            and len(previous_call.args) == 2
+            and isinstance(previous_call.args[1], ast.Call)
+        ):
+            assert ast.literal_eval(previous_call.args[0]) == (
+                "cleanup.terminal.channel_slice_muladd_bridge"
+            )
+            previous_call = previous_call.args[1]
         assert isinstance(previous_call.func, ast.Name)
         assert isinstance(following, (ast.Assign, ast.Expr))
         following_target: str | None = None
@@ -357,7 +369,7 @@ def test_terminal_slice_concat_recovery_preserves_outer_boundaries() -> None:
 
     assert observed == [
         (
-            "_terminal_channel_slice_muladd_bridge_stats",
+            None,
             "_optimize_transpose_channel_slice_muladd_nhwc_bridge_chains",
             ("layout_state",),
             "_terminal_boundary_stridedslice_qdq_concat_stats",

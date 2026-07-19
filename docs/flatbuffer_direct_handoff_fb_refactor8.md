@@ -1523,3 +1523,30 @@ Commit and push this characterization before replacing only the seven mapping
 destinations. Preserve adjacency and both boundaries, then update terminal
 orchestration and bounded-store contracts, validate, document, commit, and
 push. Never create, update, or reopen a pull request.
+
+## Terminal boundary cleanup implementation
+
+The seven consecutive mapping results now use stable `cleanup.terminal.*`
+records. Their unconditional execution, owner expressions, adjacency,
+preceding Conv-activation phase, and following Slice/Concat composite remain
+unchanged. No default existed. The bounded store now covers 97 phase IDs.
+
+Expanded validation exposed 13 stale AST assertions that assumed assignment
+targets or outer owner calls. They now verify exact phase IDs/nested owners and
+preserve expectations for later non-migrated assignments. Targeted corrections
+are `11 passed in 1.13s`, `2 passed in 0.35s`, and `1 passed in 2.67s`;
+production behavior was not implicated.
+
+Validation completed sequentially under core-only `uv`:
+
+- terminal boundary and related contracts: `156 passed in 2.72s`;
+- synthetic core runtime contracts: `55 passed in 1.01s`;
+- broader result contracts: `186 passed in 9.83s`;
+- lowerer architecture contracts: `258 passed in 18.19s`;
+- targeted Ruff, bytecode compilation, and whitespace checks: passed.
+
+No root-model conversion was required because only observation destinations
+changed and the runtime suite exercises the terminal path. After committing
+and pushing, retain the 97/128 phase-cap audit and keep composite results
+outside the bounded integer mapping store. Never create, update, or reopen a
+pull request.
