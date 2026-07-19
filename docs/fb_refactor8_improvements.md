@@ -4238,3 +4238,27 @@ proves exact layout-state forwarding plus stable and prune-only schema
 preservation, while affected and architecture gates preserve the raw owner use
 count, both other production paths, reconciliation semantics, and neighboring
 boundaries.
+
+## Fallback norm-subgraph Pad summary characterization
+
+The next isolated boundary is the safety-fallback norm-only Pad layout cleanup.
+It snapshots tensor count, invokes `run_pad_layout_cleanup` with Pad and unary
+stages disabled, norm enabled, no layout state, and the conversion diagnostics,
+then extends the exact three-key raw mapping with prune evidence. Its existing
+guard consumes only the norm rewrite counter; prune-only evidence remains
+observational.
+
+`tests/test_flatbuffer_direct_fallback_norm_summary_orchestration.py` fixes the
+current count-plus-mapping representation, all fixed flags and arguments,
+recursive fallback predecessor, conditional reconciliation guard, dynamic
+rank-one successor, and future dedicated summary contract. Its strict expected
+failure requires `run_norm_subgraph_pad_layout_summary(model_ir,
+diagnostics=...)`. Other Pad-family callers and schemas remain independent. No
+production source, graph mutation, pass order, store entry, public API,
+artifact, dependency, or TensorFlow boundary changed.
+
+Sequential characterization under core-only `uv` completed with
+`300 passed, 1 xfailed in 18.26s` across the dedicated contract and related
+fallback, Pad result/orchestration, norm reconciliation, singleton-Reshape,
+phase-store, and architecture contracts. The sole expected failure is the
+intentionally absent summary owner. Targeted Ruff and whitespace checks passed.

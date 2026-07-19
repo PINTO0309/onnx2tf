@@ -736,3 +736,10 @@ The latest checkpoint implements that dedicated final PRELU summary owner. It
 removes the tensor snapshot, adds bounded prune evidence to the raw mapping,
 and uses the existing positive-count predicate while retaining the raw wrapper,
 both other PRELU paths, neighboring boundaries, and the full 128/128 store.
+
+The next characterization fixes the safety-fallback norm-only Pad cleanup
+count-plus-mapping boundary. It preserves the fixed stage flags, diagnostics
+forwarding, conditional norm reconciliation, recursive fallback predecessor,
+dynamic rank-one successor, and every other Pad-family caller. Production
+remains unchanged until its dedicated prune-aware summary owner is implemented
+separately.

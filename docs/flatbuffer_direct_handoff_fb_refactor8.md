@@ -3750,3 +3750,29 @@ Final sequential validation under core-only `uv`:
 Commit and push this implementation checkpoint. At resume, characterize the
 next compatible repeated evidence family before production changes. Continue
 with commits and pushes only; never create, update, or reopen a pull request.
+
+## Fallback norm-subgraph Pad summary characterization
+
+The next selected boundary is the safety-fallback norm-only Pad layout cleanup.
+It uses the shared Pad owner with `include_pad=False`, `include_unary=False`,
+`include_norm=True`, no layout state, and conversion diagnostics, then records
+prune-only evidence beside the raw schema.
+
+The focused contract fixes the current representation, fixed flags and
+arguments, recursive fallback predecessor, conditional norm reconciliation,
+dynamic rank-one successor, and distinct ownership from all other Pad callers.
+One strict xfail requires
+`run_norm_subgraph_pad_layout_summary(model_ir, diagnostics=...)`.
+
+Sequential validation under core-only `uv` completed with
+`300 passed, 1 xfailed in 18.26s` across the new characterization and related
+fallback, Pad result/orchestration, norm reconciliation, singleton-Reshape,
+phase-store, and architecture contracts. The sole expected failure is the
+unimplemented dedicated summary owner. Targeted Ruff and whitespace checks
+passed.
+
+Commit and push this characterization separately. At resume, implement only
+the dedicated norm-subgraph Pad summary owner and fallback site, leave all
+other Pad callers unchanged, update owner-aware structural contracts, and
+validate sequentially. Continue with commits and pushes only; never create,
+update, or reopen a pull request.
