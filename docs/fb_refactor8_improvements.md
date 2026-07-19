@@ -5204,3 +5204,40 @@ mutation, pass order, GraphIndex policy, or result schema changed. The store
 remains exactly 128 IDs and 128 owners. No real-model conversion was repeated
 because runtime injection and affected direct/PyTorch synthetic coverage prove
 the complete mechanical owner move.
+
+## Late input/affine/normalization composite characterization
+
+With both result-normalization prerequisites extracted, the refreshed
+inventory selected four adjacent unconditional mappings immediately after the
+post-progress boundary and before the existing very-late dynamic-adapter
+composite:
+
+1. recurrent-alias repair summary;
+2. unbound-input layout-repair summary;
+3. affine post-Add cleanup with LayoutState;
+4. prune-aware gather/constant/normalization summary.
+
+All four use the same `shared_model_ir_pass_context`; the former dedicated
+very-late normalization context is already an identity alias of that object.
+Every result is unconsumed, and each child now has a pass-module owner.
+
+`tests/test_flatbuffer_direct_late_input_affine_normalization_orchestration.py`
+fixes exact source adjacency, progress predecessor, dynamic-adapter successor,
+raw mapping schemas, callback order, ModelIR/LayoutState argument policy,
+shared-context identity, and the absence of result consumers. Its strict
+expected failure requires one context owner returning the four raw mapping
+objects as an ordered tuple and one replacement lowerer target.
+
+Sequential characterization under core-only `uv` completed with
+`1 passed, 1 xfailed in 0.57s` focused and
+`394 passed, 1 xfailed in 17.86s` across late input repair, recurrent/unbound
+indexed repair, affine post-Add, very-late normalization/dynamic adapter,
+shared-context, architecture, and phase-store contracts. The sole expected
+failure is the intentionally absent composite. An inherited normalization
+test's stale pre-composite successor was corrected independently before this
+checkpoint. Ruff and whitespace checks passed.
+
+No production callback, graph mutation, result schema, context identity,
+pass order, API, artifact, dependency, TensorFlow boundary, or store entry
+changed. No real-model conversion was run; the phase-result store remains
+exactly 128 IDs and 128 owners.

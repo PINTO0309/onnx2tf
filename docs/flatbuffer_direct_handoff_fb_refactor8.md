@@ -4577,3 +4577,23 @@ normalization sequence, whose individual mapping boundaries are now all
 pass-module-owned. Preserve its progress predecessor and dynamic-adapter
 successor, validate sequentially, and never create, update, or reopen a pull
 request.
+
+## Late input/affine/normalization composite characterization
+
+The now-fully-owned late prefix contains four adjacent unconditional mappings:
+recurrent alias, unbound-input repair, affine post-Add, and prune-aware
+normalization. They share the existing `ModelIRPassContext`, have no consumers,
+follow `_advance_post_progress()`, and directly precede the very-late dynamic-
+adapter composite.
+
+The focused contract reports `1 passed, 1 xfailed`; the affected sequential
+suite reports `394 passed, 1 xfailed`. The strict expected failure requires a
+four-stage context owner and one replacement lowerer result. Production,
+TensorFlow isolation, and the 128-ID/128-owner store remain unchanged; no
+model conversion was run.
+
+At resume, implement the straight-line owner without flattening or copying any
+mapping. Pass ModelIR to the two repair summaries, ModelIR plus LayoutState to
+affine cleanup, and the exact shared context to normalization. Preserve the
+progress predecessor and dynamic-adapter successor, then run affected and
+standard gates sequentially. Never create, update, or reopen a pull request.

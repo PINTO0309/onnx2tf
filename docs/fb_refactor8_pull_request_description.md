@@ -1031,3 +1031,11 @@ one-key integer result. The lowerer keeps its compatibility wrapper and sole
 caller; PyTorch behavior, GraphIndex identity, result schemas, pass order, and
 the 128-ID/128-owner store are unchanged. Focused, affected, and standard
 sequential gates all pass.
+
+The next characterization fixes the fully pass-module-owned late prefix:
+recurrent-alias summary, unbound-input repair summary, affine post-Add cleanup,
+and prune-aware gather/constant/normalization cleanup. It preserves exact raw
+schemas and order, shared ModelIR/LayoutState/context identity, the progress
+predecessor, the dynamic-adapter successor, and the full 128-ID/128-owner
+store. Production remains unchanged until the separate context-owner
+implementation.
