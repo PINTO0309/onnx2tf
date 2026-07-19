@@ -6779,3 +6779,19 @@ validation passes: focused `3`, affected `375`, and standard
 `92 / 55 / 196 / 2 / 11`. Ruff, bytecode compilation, and whitespace checks
 pass. The phase store remains exactly 128 IDs and 128 owners, while the
 unconsumed lowerer-result inventory decreases from 48 to 47.
+
+## Characterize the post-binary quantized suffix and safe-binary boundary
+
+The 47-result inventory next exposes the first layout-pass-set-1 post-binary
+pair: the complete layout/attention/quantized suffix followed immediately by
+safe-binary recovery. Characterization covers both duplicate-Transpose policy
+values, the exact shared pass context, all three suffix callback identities,
+the complete 13-slot nested suffix schema, the safe-binary schema, and the
+recorded affine and dequant-Mean phase neighbors.
+
+The later final suffix, transpose-unary, and final safe-binary sequence is
+explicitly retained as a distinct three-stage boundary and is outside the
+planned extraction. Production remains unchanged pending one two-child owner.
+Focused and reference-based affected validation report `2 passed, 1 xfailed`
+and `426 passed, 1 xfailed`; the sole expected failure is the intentionally
+absent owner. Ruff, bytecode compilation, and whitespace validation pass.

@@ -6066,3 +6066,40 @@ raw-result identity requirement, phase neighbors, observation-only status,
 and independent routes. The expected inventory reduction after a correct
 implementation is 47 to 46. No production or test change was made during this
 audit.
+
+## Post-binary quantized-suffix/safe-binary characterization checkpoint
+
+The strict characterization now covers both values of
+`include_duplicate_transpose`. It fixes the current two wrapper calls and their
+source adjacency, the exact normalized option expression, the shared session
+pass context, `quantized_recovery_context` alias identity, and the suffix
+context's mean, attention/gate/QDQ, and duplicate-PRELU callback identities.
+
+The schema contract includes all 13 suffix slots and recursively freezes the
+six-result mean tuple, ten-result attention/gate/QDQ tuple, option-dependent
+two-result duplicate/PRELU tuple, and all remaining quantized mappings. It also
+freezes the one-result safe-binary tuple. The recorded post-binary affine phase
+and dequant-Mean phase remain the immediate outer boundaries, and the later
+final suffix/transpose-unary/final-safe sequence remains a distinct contiguous
+three-stage route.
+
+Production is unchanged pending
+`passes/layout_pass_set_1_attention_quantized_safe_binary_orchestration.py`.
+The planned owner must accept the existing suffix context plus the normalized
+duplicate-Transpose option, call the public suffix owner first, call
+`run_safe_binary_recovery(context.pass_context)` second, and return both raw
+results unchanged. Both lowerer wrappers and every independent route must
+remain available.
+
+Sequential validation passes: focused `2 passed, 1 xfailed` and complete
+reference-based affected `426 passed, 1 xfailed`. The sole expected failure
+requires the intentionally absent owner. Ruff, bytecode compilation, and
+whitespace validation pass. The inventory remains 47 and the phase store is
+unchanged.
+
+At resume, implement the straight-line owner, replace only the first suffix
+and safe-binary locals with one composite result, convert the xfail to runtime
+order/context/option/result-identity injection, and update only stale entry
+assertions. Run affected and standard gates sequentially under `uv`, then
+confirm the 46-result inventory. Commit and push only; do not create, update,
+reopen, or otherwise modify a pull request.

@@ -1653,3 +1653,12 @@ artifacts, and TensorFlow isolation are unchanged. Focused `3`, affected
 `375`, and standard `92 / 55 / 196 / 2 / 11` sequential tests pass. The phase
 store remains exactly 128 IDs and 128 owners, and the unconsumed-result
 inventory decreases from 48 to 47.
+
+The next characterization selects the first post-binary
+layout/attention/quantized suffix and immediately following safe-binary
+recovery. It freezes both duplicate-Transpose policies, exact embedded
+pass-context and callback identities, every nested schema, the recorded affine
+and dequant-Mean outer phases, and the separate later suffix/transpose-unary/
+safe-binary route. Production remains unchanged. Focused and affected
+sequential validation report `2 passed, 1 xfailed` and
+`426 passed, 1 xfailed`; the sole expected failure is the absent owner.
