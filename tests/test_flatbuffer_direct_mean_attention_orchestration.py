@@ -81,8 +81,16 @@ def _expression_path(node: ast.expr) -> Any:
 def _direct_call_name(statement: ast.stmt) -> str:
     assert isinstance(statement, (ast.Assign, ast.Expr))
     assert isinstance(statement.value, ast.Call)
-    assert isinstance(statement.value.func, ast.Name)
-    return statement.value.func.id
+    call = statement.value
+    if (
+        isinstance(call.func, ast.Attribute)
+        and ast.unparse(call.func) == "session.record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        call = call.args[1]
+    assert isinstance(call.func, ast.Name)
+    return call.func.id
 
 
 def _context(*, use_layout_state: bool = False) -> MeanAttentionContext:

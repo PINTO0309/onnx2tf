@@ -5695,10 +5695,33 @@ def test_unbound_input_layout_repair_has_one_indexed_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert [
-        call.args[0].id
-        for call in sorted(invocations, key=lambda candidate: candidate.lineno)
-    ] == ["fallback_ir"]
+    assert invocations == []
+    fallback_owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "fallback_precision_unbound_orchestration.py"
+    )
+    fallback_owner_tree = ast.parse(
+        fallback_owner_path.read_text(encoding="utf-8")
+    )
+    fallback_owner = next(
+        node
+        for node in fallback_owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_fallback_precision_unbound_cleanup"
+    )
+    fallback_unbound_calls = [
+        node
+        for node in ast.walk(fallback_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id
+        == "repair_unbound_nonconstant_operator_inputs_with_layout_transpose"
+    ]
+    assert len(fallback_unbound_calls) == 1
+    assert ast.unparse(fallback_unbound_calls[0].args[0]) == "context.model_ir"
     assert _late_input_affine_normalization_call_count(wrapper_name) == 1
 
 
@@ -14493,7 +14516,35 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == "_run_precision_cleanup_sequence"
     ]
-    assert len(precision_sequence_invocations) == 2
+    assert len(precision_sequence_invocations) == 1
+    fallback_precision_owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "fallback_precision_unbound_orchestration.py"
+    )
+    fallback_precision_owner_tree = ast.parse(
+        fallback_precision_owner_path.read_text(encoding="utf-8")
+    )
+    fallback_precision_owner = next(
+        node
+        for node in fallback_precision_owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_fallback_precision_unbound_cleanup"
+    )
+    fallback_precision_sequence_invocations = [
+        node
+        for node in ast.walk(fallback_precision_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_precision_cleanup_sequence"
+    ]
+    assert len(fallback_precision_sequence_invocations) == 1
+    precision_sequence_invocation_count = (
+        len(precision_sequence_invocations)
+        + len(fallback_precision_sequence_invocations)
+    )
     very_late_runner_calls = [
         call
         for name in runner_names
@@ -14502,7 +14553,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     assert (
         len(calls)
         + len(summarized_runner_calls)
-        + len(precision_runner_calls) * len(precision_sequence_invocations)
+        + len(precision_runner_calls) * precision_sequence_invocation_count
         + _no_layout_final_cleanup_call_count(
             "run_se_fc_layout_cleanup"
         )

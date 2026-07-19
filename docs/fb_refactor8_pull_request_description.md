@@ -1626,3 +1626,16 @@ final-primary precision route remain intact. Focused `3`, affected `31`, and
 standard `92 / 55 / 196 / 2 / 11` sequential tests pass. TensorFlow isolation,
 default direct conversion, `-cotof`, and the exactly 128-ID/128-owner phase
 store are unchanged; the unconsumed-result inventory decreases from 49 to 48.
+
+The next characterization selects the adjacent layout-pass-set-1
+mean/attention and attention/gate/QDQ observations. It freezes their exact
+order, LayerNorm-enabled/default-Conv policy, shared pass-context identity,
+gate and transpose-unary callback identities, complete nested schemas, and
+the recorded mean-affine and quantized-PRELU outer phase boundaries.
+Production remains unchanged pending one straight-line context owner.
+
+The expanded reference-based suite also updates six stale structural
+assertions to follow the already-extracted fallback precision/unbound owner
+and bounded phase records. Focused and affected sequential validation report
+`1 passed, 1 xfailed` and `373 passed, 1 xfailed`; the sole expected failure is
+the intentionally absent owner.

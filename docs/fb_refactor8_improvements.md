@@ -6736,3 +6736,24 @@ wrappers and the independent final-primary precision route are unchanged.
 Focused `3`, affected `31`, and standard `92 / 55 / 196 / 2 / 11` sequential
 tests pass. The phase store remains 128 IDs and 128 owners, and the
 characterized unconsumed lowerer-result inventory decreases from 49 to 48.
+
+## Characterize layout-pass-set-1 mean/attention and gate/QDQ cleanup
+
+The refreshed 48-result inventory identifies two adjacent observation-only
+results inside the first layout-recovery guard. The first runs mean/attention
+cleanup with LayerNorm enabled and the default enabled Conv-attention policy;
+the second runs the existing attention/gate/QDQ recovery context. The new
+characterization freezes their order, both policy defaults, the exact shared
+`ModelIRPassContext`, all callback identities, every nested result schema, the
+recorded mean-affine predecessor, and the recorded quantized-PRELU successor.
+
+Six pre-existing structural assertions were also brought forward to the
+already-extracted fallback precision/unbound owner and bounded phase-result
+records. These test-only corrections follow the current public owner routes
+and do not change production behavior.
+
+Production remains unchanged pending one straight-line context owner. Focused
+and complete reference-based affected validation report `1 passed, 1 xfailed`
+and `373 passed, 1 xfailed`; the sole expected failure is the intentionally
+absent owner module. Ruff, bytecode compilation, and whitespace validation
+pass.

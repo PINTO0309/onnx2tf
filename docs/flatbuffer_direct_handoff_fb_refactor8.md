@@ -5946,3 +5946,46 @@ characterization covering the two policy defaults, embedded pass-context and
 callback identity, child schemas, outer phase IDs, observation-only status,
 and independent wrapper routes. No production or test change was made during
 this audit.
+
+## Layout-pass-set-1 mean/attention gate characterization checkpoint
+
+The strict characterization now fixes the current two-assignment boundary.
+It proves that both calls remain consecutive inside the sole
+`optimize_layout_transpose_chains` guard, are observation-only, and are
+surrounded immediately by the recorded
+`cleanup.layout_pass_set_1.mean_affine_prepost` and
+`cleanup.layout_pass_set_1.quantized_prelu` phases. Mean/attention receives
+`include_layernorm=True` while omitting `include_conv_attention`, thereby
+retaining its enabled default. Attention/gate/QDQ receives the existing
+`AttentionRecoveryContext` with the exact session pass context and original
+mean, gate, and transpose-unary callback identities.
+
+The empty-ModelIR schema probe freezes all seven mean/attention mappings and
+all ten attention/gate/QDQ slots, including the eight-result gate-layout and
+three-result transpose-unary nested tuples. The proposed owner must call
+`run_mean_attention(context.pass_context, include_layernorm=True)` and then
+`run_attention_gate_qdq_recovery(context)`, return both raw tuples unchanged,
+and replace only the two characterized lowerer locals. Both lowerer wrappers
+and every independent route must remain available.
+
+The expanded reference-based suite initially exposed six stale tests from
+completed earlier work: two still counted direct fallback precision/unbound
+wrappers after their composite extraction, while four assumed phase-recorded
+owners were raw lowerer calls. Their expectations now follow the existing
+fallback composite owner and unwrap `session.record_phase_result` only for
+structural boundary inspection. No production source changed.
+
+Sequential validation passes: focused `1 passed, 1 xfailed` and complete
+affected `373 passed, 1 xfailed`. The sole expected failure requires the
+intentionally absent
+`passes/layout_pass_set_1_mean_attention_gate_orchestration.py`. Ruff,
+bytecode compilation, and whitespace validation pass. The inventory remains
+48, and the phase-result store remains unchanged.
+
+At resume, implement the owner with direct public child imports, replace only
+the two layout-pass-set-1 locals with
+`_layout_pass_set_1_mean_attention_gate_results`, and convert the strict xfail
+to runtime order/context/result-identity coverage. Update only stale structural
+entry assertions, then run affected and standard gates sequentially under
+`uv`. Commit and push only; do not create, update, reopen, or otherwise modify
+a pull request.
