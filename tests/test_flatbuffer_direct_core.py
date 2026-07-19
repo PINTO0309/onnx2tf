@@ -1749,29 +1749,16 @@ def test_final_se_fc_gather_reconciles_after_rewrite_or_prune(monkeypatch) -> No
         assert run_with_outcome(outcome) == unchanged_count + 1
 
 
-def test_late_binary_repair_reconciles_after_change_or_prune(monkeypatch) -> None:
-    signature_counter = "sanitized_static_shape_signature_consistency"
-    exact_counter = "inserted_rank4_binary_layout_fix_transpose"
-    singleton_counter = (
-        "repaired_rank4_binary_singleton_broadcast_layout_mismatch"
-    )
-    probe_name = "unused_late_binary_repair_probe"
+def test_late_binary_repair_boolean_controls_reconciliation_record(
+    monkeypatch,
+) -> None:
     original_reconcile = lowering_module._reconcile_static_tensor_shapes
     reconcile_count = 0
-    signature_invocations = 0
-    adapter_invocations = 0
 
     def counted_reconcile(model_ir, *args, **kwargs):
         nonlocal reconcile_count
         reconcile_count += 1
-        result = original_reconcile(model_ir, *args, **kwargs)
-        model_ir.tensors[probe_name] = TensorIR(
-            name=probe_name,
-            dtype="FLOAT32",
-            shape=[1],
-            shape_signature=[1],
-        )
-        return result
+        return original_reconcile(model_ir, *args, **kwargs)
 
     monkeypatch.setattr(
         lowering_module,
@@ -1779,62 +1766,32 @@ def test_late_binary_repair_reconciles_after_change_or_prune(monkeypatch) -> Non
         counted_reconcile,
     )
 
-    def run_with_outcome(outcome: str) -> int:
+    def run_with_outcome(needs_reconciliation: bool) -> int:
         nonlocal reconcile_count
-        nonlocal signature_invocations, adapter_invocations
         reconcile_count = 0
-        signature_invocations = 0
-        adapter_invocations = 0
+        owner_invocations = 0
 
-        def signature_result(*args, **kwargs):
-            nonlocal signature_invocations
-            signature_invocations += 1
-            return {
-                signature_counter: int(
-                    signature_invocations == 1 and outcome == "signature"
-                )
-            }
-
-        def adapter_result(model_ir, *args, **kwargs):
-            nonlocal adapter_invocations
-            adapter_invocations += 1
-            is_late_boundary = adapter_invocations == 1
-            if is_late_boundary and outcome == "prune":
-                assert model_ir.tensors.pop(probe_name, None) is not None
-            return (
-                {
-                    exact_counter: int(
-                        is_late_boundary and outcome == "exact"
-                    )
-                },
-                {
-                    singleton_counter: int(
-                        is_late_boundary and outcome == "singleton"
-                    )
-                },
-            )
+        def decision_result(*args, **kwargs):
+            nonlocal owner_invocations
+            owner_invocations += 1
+            return needs_reconciliation
 
         monkeypatch.setattr(
             lowering_module,
-            "_sanitize_static_shape_signature_consistency",
-            signature_result,
-        )
-        monkeypatch.setattr(
-            lowering_module,
-            "run_indexed_binary_layout_adapter_cleanup",
-            adapter_result,
+            "run_late_binary_repair_cleanup",
+            decision_result,
         )
         lower_onnx_to_ir(
             _add_onnx_model(),
-            output_file_name=f"late_binary_reconcile_{outcome}",
+            output_file_name=(
+                f"late_binary_reconcile_{needs_reconciliation}"
+            ),
         )
-        assert signature_invocations == 2
-        assert adapter_invocations >= 1
+        assert owner_invocations == 1
         return reconcile_count
 
-    unchanged_count = run_with_outcome("unchanged")
-    for outcome in ("signature", "exact", "singleton", "prune"):
-        assert run_with_outcome(outcome) == unchanged_count + 1
+    unchanged_count = run_with_outcome(False)
+    assert run_with_outcome(True) == unchanged_count + 1
 
 
 def test_placeholder_matmul_repairs_reconcile_after_change_or_prune(

@@ -299,6 +299,9 @@ from onnx2tf.tflite_builder.passes.very_late_layout_broadcast_orchestration impo
 from onnx2tf.tflite_builder.passes.shared_late_reconciliation_orchestration import (
     run_shared_late_reconciliation_cleanup,
 )
+from onnx2tf.tflite_builder.passes.late_binary_repair_orchestration import (
+    run_late_binary_repair_cleanup,
+)
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     run_channel_shuffle_gather,
 )
@@ -5276,35 +5279,10 @@ def lower_onnx_to_ir(
                 include_mutation_count=True,
             ),
         )
-    late_binary_repair_tensor_count = len(model_ir.tensors)
-    late_signature_stats = _sanitize_static_shape_signature_consistency(
-        model_ir
+    _late_binary_repair_requires_reconciliation = (
+        run_late_binary_repair_cleanup(shared_model_ir_pass_context)
     )
-    late_binary_adapter_stats, late_singleton_adapter_stats = (
-        run_indexed_binary_layout_adapter_cleanup(model_ir)
-    )
-    if (
-        int(
-            late_signature_stats.get(
-                "sanitized_static_shape_signature_consistency",
-                0,
-            )
-        )
-        + int(
-            late_binary_adapter_stats.get(
-                "inserted_rank4_binary_layout_fix_transpose",
-                0,
-            )
-        )
-        + int(
-            late_singleton_adapter_stats.get(
-                "repaired_rank4_binary_singleton_broadcast_layout_mismatch",
-                0,
-            )
-        )
-        > 0
-        or len(model_ir.tensors) < late_binary_repair_tensor_count
-    ):
+    if _late_binary_repair_requires_reconciliation:
         session.record_phase_result(
             "shape_reconciliation.primary.late_binary_repair",
             _reconcile_static_tensor_shapes(

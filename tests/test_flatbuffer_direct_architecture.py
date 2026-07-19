@@ -125,6 +125,9 @@ from onnx2tf.tflite_builder.passes.very_late_layout_broadcast_orchestration impo
 from onnx2tf.tflite_builder.passes.shared_late_reconciliation_orchestration import (
     SHARED_LATE_RECONCILIATION_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.late_binary_repair_orchestration import (
+    LATE_BINARY_REPAIR_PASS_IDS,
+)
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     CHANNEL_SHUFFLE_GATHER_BASE_PASS_IDS,
     CHANNEL_SHUFFLE_GATHER_DEFAULT_PASS_IDS,
@@ -215,6 +218,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *VERY_LATE_PAD_INSTANCENORM_LAYOUT_PASS_IDS,
     *VERY_LATE_LAYOUT_BROADCAST_PASS_IDS,
     *SHARED_LATE_RECONCILIATION_PASS_IDS,
+    *LATE_BINARY_REPAIR_PASS_IDS,
     *CHANNEL_SHUFFLE_GATHER_PASS_IDS,
     *MEAN_ATTENTION_PASS_IDS,
     *SINGLETON_RESHAPE_PASS_IDS,
@@ -3235,7 +3239,10 @@ def test_static_shape_signature_sanitizer_has_one_module_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 2
+    assert (
+        len(production_calls) + _orchestrated_pass_count(wrapper_name)
+        == 2
+    )
 
     owner_path = (
         REPO_ROOT
@@ -9609,6 +9616,76 @@ def test_absolute_final_prelu_reconciles_only_after_rewrite_or_prune() -> None:
 
 
 def test_late_binary_repair_reconciles_only_after_change_or_prune() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "late_binary_repair_orchestration.py"
+    )
+    owner_tree = ast.parse(owner_path.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_late_binary_repair_cleanup"
+    )
+    assert LATE_BINARY_REPAIR_PASS_IDS == (
+        "_sanitize_static_shape_signature_consistency",
+        "run_indexed_binary_layout_adapter_cleanup",
+    )
+    owner_call_names = (
+        "sanitize_static_shape_signature_consistency",
+        "run_indexed_binary_layout_adapter_cleanup",
+    )
+    owner_calls = sorted(
+        (
+            node
+            for node in ast.walk(owner)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in owner_call_names
+        ),
+        key=lambda node: node.lineno,
+    )
+    assert tuple(call.func.id for call in owner_calls) == owner_call_names
+    assert all(
+        ast.unparse(call.args[0]) == "context.model_ir"
+        for call in owner_calls
+    )
+    initial_count = next(
+        statement
+        for statement in owner.body
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "initial_tensor_count"
+    )
+    assert ast.unparse(initial_count.value) == "len(context.model_ir.tensors)"
+    expected_counters = {
+        "sanitized_static_shape_signature_consistency",
+        "inserted_rank4_binary_layout_fix_transpose",
+        "repaired_rank4_binary_singleton_broadcast_layout_mismatch",
+    }
+    get_calls = [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+    ]
+    assert {
+        str(call.args[0].value)
+        for call in get_calls
+        if call.args and isinstance(call.args[0], ast.Constant)
+    } == expected_counters
+    assert len(get_calls) == len(expected_counters)
+    owner_return = owner.body[-1]
+    assert isinstance(owner_return, ast.Return)
+    assert ast.unparse(owner_return.value) == (
+        "mutation_count > 0 or "
+        "len(context.model_ir.tensors) < initial_tensor_count"
+    )
+
     lowerer_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
@@ -9618,73 +9695,24 @@ def test_late_binary_repair_reconciles_only_after_change_or_prune() -> None:
         for node in lowerer_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
-    sanitizer_name = "_sanitize_static_shape_signature_consistency"
-    runner_name = "run_indexed_binary_layout_adapter_cleanup"
-    expected_counters = {
-        "sanitized_static_shape_signature_consistency",
-        "inserted_rank4_binary_layout_fix_transpose",
-        "repaired_rank4_binary_singleton_broadcast_layout_mismatch",
-    }
-    sanitizer_index = next(
-        index
-        for index, statement in enumerate(lowerer.body)
+    decision = next(
+        statement
+        for statement in lowerer.body
         if isinstance(statement, ast.Assign)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == sanitizer_name
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        == "_late_binary_repair_requires_reconciliation"
     )
-
-    count_assignment = lowerer.body[sanitizer_index - 1]
-    assert isinstance(count_assignment, ast.Assign)
-    assert len(count_assignment.targets) == 1
-    count_target = count_assignment.targets[0]
-    assert isinstance(count_target, ast.Name)
-    assert isinstance(count_assignment.value, ast.Call)
-    assert isinstance(count_assignment.value.func, ast.Name)
-    assert count_assignment.value.func.id == "len"
-
-    repair_assignment = lowerer.body[sanitizer_index + 1]
-    assert isinstance(repair_assignment, ast.Assign)
-    assert len(repair_assignment.targets) == 1
-    repair_targets = repair_assignment.targets[0]
-    assert isinstance(repair_targets, ast.Tuple)
-    assert [
-        target.id
-        for target in repair_targets.elts
-        if isinstance(target, ast.Name)
-    ] == ["late_binary_adapter_stats", "late_singleton_adapter_stats"]
-    assert isinstance(repair_assignment.value, ast.Call)
-    assert isinstance(repair_assignment.value.func, ast.Name)
-    assert repair_assignment.value.func.id == runner_name
-
-    guard = lowerer.body[sanitizer_index + 2]
+    decision_index = lowerer.body.index(decision)
+    assert ast.unparse(decision.value) == (
+        "run_late_binary_repair_cleanup(shared_model_ir_pass_context)"
+    )
+    guard = lowerer.body[decision_index + 1]
     assert isinstance(guard, ast.If)
+    assert ast.unparse(guard.test) == (
+        "_late_binary_repair_requires_reconciliation"
+    )
     assert guard.orelse == []
-    get_calls = [
-        node
-        for node in ast.walk(guard.test)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "get"
-    ]
-    assert {
-        str(call.args[0].value)
-        for call in get_calls
-        if len(call.args) >= 1 and isinstance(call.args[0], ast.Constant)
-    } == expected_counters
-    assert len(get_calls) == len(expected_counters)
-    guard_names = {
-        node.id for node in ast.walk(guard.test) if isinstance(node, ast.Name)
-    }
-    assert count_target.id in guard_names
-    tensor_len_calls = [
-        node
-        for node in ast.walk(guard.test)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "len"
-    ]
-    assert len(tensor_len_calls) == 1
     assert len(guard.body) == 1
     reconcile = guard.body[0]
     assert isinstance(reconcile, ast.Expr)
@@ -9693,6 +9721,12 @@ def test_late_binary_repair_reconciles_only_after_change_or_prune() -> None:
         "'shape_reconciliation.primary.late_binary_repair', "
         "_reconcile_static_tensor_shapes(model_ir, "
         "include_mutation_count=True))"
+    )
+    successor = lowerer.body[decision_index + 2]
+    assert isinstance(successor, ast.If)
+    assert ast.unparse(successor.test) == (
+        "optimize_layout_transpose_chains or "
+        "apply_safe_transpose_reduction_lite_on_no_layout_opt"
     )
 
 
@@ -9905,7 +9939,10 @@ def test_shared_late_reconciliation_uses_all_mutation_results() -> None:
     successor = lowerer.body[decision_index + 2]
     assert isinstance(successor, ast.Assign)
     assert isinstance(successor.targets[0], ast.Name)
-    assert successor.targets[0].id == "late_binary_repair_tensor_count"
+    assert (
+        successor.targets[0].id
+        == "_late_binary_repair_requires_reconciliation"
+    )
 
 
 def test_window_partition_rewrite_has_indexed_owner() -> None:

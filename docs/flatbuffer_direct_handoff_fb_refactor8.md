@@ -2871,3 +2871,36 @@ owner. Targeted Ruff, bytecode compilation, and whitespace checks passed.
 
 Commit and push this characterization before production changes. Keep the
 store at 128/128 and never create, update, or reopen a pull request.
+
+## Late-binary repair decision implementation
+
+The new `run_late_binary_repair_cleanup` pass owner preserves the original
+static-signature sanitizer and indexed binary adapter order, model identity,
+three exact counter keys, and tensor-pruning fallback. It returns one boolean
+and does not perform reconciliation or record phase evidence.
+
+The lowerer now consumes that boolean and retains the existing conditional
+`shape_reconciliation.primary.late_binary_repair` record with its direct
+static-shape reconciliation call. Both guards around the following optional
+late-binary layout recovery are unchanged. Three evidence locals and one
+tensor-count snapshot left the lowerer, all compatibility wrappers remain,
+and the bounded store remains exactly 128/128.
+
+Final sequential validation under core-only `uv`:
+
+- focused owner contracts: `7 passed in 0.56s`;
+- affected boundary contracts: `132 passed in 2.78s`;
+- terminal-layout/pass-efficiency contracts: `92 passed in 1.88s`;
+- synthetic core runtime contracts: `55 passed in 0.92s`;
+- result contracts: `196 passed in 9.09s`;
+- architecture contracts: `258 passed in 19.02s`;
+- phase-store capacity contracts: `2 passed in 0.53s`;
+- Ruff, bytecode compilation, 128/128 capacity audit, and whitespace checks:
+  passed.
+
+No real-model conversion was required because the runtime matrix covers the
+stable path, all three evidence triggers, prune-only cleanup, and the lowerer
+integration branch. Commit and push this checkpoint. At resume, characterize
+the adjacent optional late-binary layout-recovery decision before production
+changes. Continue with coherent commits and pushes only; never create,
+update, or reopen a pull request.

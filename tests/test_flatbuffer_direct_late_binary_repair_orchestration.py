@@ -5,6 +5,14 @@ from pathlib import Path
 
 import pytest
 
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
+from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
+from onnx2tf.tflite_builder.passes import late_binary_repair_orchestration
+from onnx2tf.tflite_builder.passes.late_binary_repair_orchestration import (
+    LATE_BINARY_REPAIR_PASS_IDS,
+)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = (
@@ -57,44 +65,23 @@ def _single_target(statement: ast.stmt) -> str | None:
     return target.id if isinstance(target, ast.Name) else None
 
 
-def _repair_guard(lowerer: ast.FunctionDef) -> tuple[int, ast.If]:
-    index = next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.If)
-        and TENSOR_COUNT_TARGET in ast.unparse(statement.test)
-    )
-    guard = lowerer.body[index]
-    assert isinstance(guard, ast.If)
-    return index, guard
-
-
-def test_late_binary_repair_evidence_and_guard_are_fixed() -> None:
+def test_late_binary_repair_boolean_keeps_reconciliation_in_lowerer() -> None:
     lowerer = _lowerer()
-    guard_index, guard = _repair_guard(lowerer)
-    assert _single_target(lowerer.body[guard_index - 3]) == TENSOR_COUNT_TARGET
-    assert ast.unparse(lowerer.body[guard_index - 3].value) == (
-        "len(model_ir.tensors)"
+    assignment = next(
+        statement
+        for statement in lowerer.body
+        if _single_target(statement) == RESULT_TARGET
     )
-    assert _single_target(lowerer.body[guard_index - 2]) == EVIDENCE_TARGETS[0]
-    adapter_targets = lowerer.body[guard_index - 1].targets[0]
-    assert isinstance(adapter_targets, ast.Tuple)
-    assert tuple(
-        target.id
-        for target in adapter_targets.elts
-        if isinstance(target, ast.Name)
-    ) == EVIDENCE_TARGETS[1:]
-    guard_source = ast.unparse(guard.test)
-    for counter in (
-        "sanitized_static_shape_signature_consistency",
-        "inserted_rank4_binary_layout_fix_transpose",
-        "repaired_rank4_binary_singleton_broadcast_layout_mismatch",
-    ):
-        assert counter in guard_source
-    assert (
-        "len(model_ir.tensors) < late_binary_repair_tensor_count"
-        in guard_source
+    index = lowerer.body.index(assignment)
+    assert ast.unparse(assignment.value) == (
+        "run_late_binary_repair_cleanup(shared_model_ir_pass_context)"
     )
+    predecessor = lowerer.body[index - 1]
+    assert isinstance(predecessor, ast.If)
+    assert ast.unparse(predecessor.test) == PREDECESSOR_GUARD
+    guard = lowerer.body[index + 1]
+    assert isinstance(guard, ast.If)
+    assert ast.unparse(guard.test) == RESULT_TARGET
     assert guard.orelse == []
     assert len(guard.body) == 1
     assert ast.unparse(guard.body[0]) == (
@@ -103,15 +90,16 @@ def test_late_binary_repair_evidence_and_guard_are_fixed() -> None:
         "_reconcile_static_tensor_shapes(model_ir, "
         "include_mutation_count=True))"
     )
-    successor = lowerer.body[guard_index + 1]
+    successor = lowerer.body[index + 2]
     assert isinstance(successor, ast.If)
     assert ast.unparse(successor.test) == SUCCESSOR_GUARD
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id in (TENSOR_COUNT_TARGET, *EVIDENCE_TARGETS)
+        for node in ast.walk(lowerer)
+    )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="late-binary repair decision lacks a focused pass-module owner",
-)
 def test_late_binary_repair_uses_one_boolean_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -160,4 +148,75 @@ def test_late_binary_repair_uses_one_boolean_owner() -> None:
         isinstance(node, ast.Name)
         and node.id in (TENSOR_COUNT_TARGET, *EVIDENCE_TARGETS)
         for node in ast.walk(lowerer)
+    )
+
+
+@pytest.mark.parametrize("trigger_index", range(-1, 4))
+def test_late_binary_repair_owner_preserves_named_counters_and_prune_trigger(
+    monkeypatch: pytest.MonkeyPatch,
+    trigger_index: int,
+) -> None:
+    model_ir = ModelIR("late_binary_repair_owner")
+    model_ir.tensors["prune_probe"] = TensorIR(
+        name="prune_probe",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[1],
+    )
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
+    observed: list[tuple[str, object]] = []
+
+    def _signature_callback(candidate: ModelIR) -> dict[str, int]:
+        observed.append((PASS_IDS[0], candidate))
+        return {
+            "sanitized_static_shape_signature_consistency": int(
+                trigger_index == 0
+            )
+        }
+
+    def _adapter_callback(
+        candidate: ModelIR,
+    ) -> tuple[dict[str, int], dict[str, int]]:
+        observed.append((PASS_IDS[1], candidate))
+        if trigger_index == 3:
+            assert candidate.tensors.pop("prune_probe", None) is not None
+        return (
+            {
+                "inserted_rank4_binary_layout_fix_transpose": int(
+                    trigger_index == 1
+                )
+            },
+            {
+                "repaired_rank4_binary_singleton_broadcast_layout_mismatch": int(
+                    trigger_index == 2
+                )
+            },
+        )
+
+    monkeypatch.setattr(
+        late_binary_repair_orchestration,
+        PASS_IDS[0],
+        _signature_callback,
+    )
+    monkeypatch.setattr(
+        late_binary_repair_orchestration,
+        PASS_IDS[1],
+        _adapter_callback,
+    )
+
+    assert (
+        late_binary_repair_orchestration.run_late_binary_repair_cleanup(
+            context
+        )
+        is (trigger_index >= 0)
+    )
+    assert [entry[0] for entry in observed] == list(PASS_IDS)
+    assert all(entry[1] is context.model_ir for entry in observed)
+    assert LATE_BINARY_REPAIR_PASS_IDS == (
+        "_sanitize_static_shape_signature_consistency",
+        "run_indexed_binary_layout_adapter_cleanup",
     )

@@ -1854,6 +1854,46 @@ Sequential characterization under core-only `uv` completed with
 boolean owner. Targeted Ruff, bytecode compilation, and whitespace checks
 passed.
 
+## Late-binary repair decision implementation
+
+`run_late_binary_repair_cleanup` now owns the characterized signature
+sanitizer, indexed binary adapter pair, and their reconciliation decision. It
+captures the tensor count before either repair, calls both existing pass
+owners in the original order with the same ModelIR instance, and reduces the
+three exact mutation counters plus cleanup-only tensor pruning to one boolean.
+
+The lowerer replaces three consumed evidence mappings and one tensor-count
+snapshot with `_late_binary_repair_requires_reconciliation`. It continues to
+own the conditional `shape_reconciliation.primary.late_binary_repair` record
+and its direct `_reconcile_static_tensor_shapes(model_ir,
+include_mutation_count=True)` call. The following normalized option guard and
+the mutation-positive inner guard for late-binary layout recovery are
+unchanged. The phase-result store remains exactly 128/128.
+
+Final sequential validation under core-only `uv`:
+
+- focused stable, three-evidence, prune-only, order, and boundary contracts:
+  `7 passed in 0.56s`;
+- affected late-binary, shared-late, adapter, terminal, core, and store
+  contracts: `132 passed in 2.78s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.88s`;
+- synthetic core runtime contracts: `55 passed in 0.92s`;
+- result contracts: `196 passed in 9.09s`;
+- full architecture contracts: `258 passed in 19.02s`;
+- phase-store capacity contracts: `2 passed in 0.53s`;
+- Ruff, bytecode compilation, 128/128 capacity audit, and whitespace checks:
+  passed.
+
+No pass call, graph traversal, reconciliation trigger, ModelIR mutation,
+diagnostic, public API, artifact, dependency, or TensorFlow boundary changed.
+No real-model conversion was run because focused runtime tests exercise the
+stable path, each of the three evidence paths, and prune-only cleanup, while
+the lowerer integration test proves that the returned boolean adds exactly
+one reconciliation record. Commit and push this checkpoint. On resume,
+characterize the following optional late-binary layout-recovery decision
+before changing production code. Continue with commits and pushes only; never
+create, update, or reopen a pull request.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:

@@ -72,8 +72,12 @@ def test_shared_late_reconciliation_is_guarded_and_unconsumed() -> None:
         "shared_model_ir_pass_context)"
     )
     successor = lowerer.body[guard_index + 1]
-    assert _single_target(successor) == "late_binary_repair_tensor_count"
-    assert ast.unparse(successor.value) == "len(model_ir.tensors)"
+    assert _single_target(successor) == (
+        "_late_binary_repair_requires_reconciliation"
+    )
+    assert ast.unparse(successor.value) == (
+        "run_late_binary_repair_cleanup(shared_model_ir_pass_context)"
+    )
 
     assert not any(
         isinstance(node, ast.Name)

@@ -97,8 +97,8 @@ def test_two_late_binary_reconciliations_are_guarded_and_unconsumed() -> None:
 
     repair_guard = parents[records[0]]
     assert isinstance(repair_guard, ast.If)
-    assert "len(model_ir.tensors) < late_binary_repair_tensor_count" in (
-        ast.unparse(repair_guard.test)
+    assert ast.unparse(repair_guard.test) == (
+        "_late_binary_repair_requires_reconciliation"
     )
     recovery_guard = parents[records[1]]
     assert isinstance(recovery_guard, ast.If)

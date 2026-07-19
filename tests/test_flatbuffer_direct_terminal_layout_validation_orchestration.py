@@ -34,6 +34,17 @@ SHARED_LATE_OWNER_PATH = (
 )
 SHARED_LATE_OWNER = "run_shared_late_reconciliation_cleanup"
 SHARED_LATE_RESULT = "_shared_late_requires_reconciliation"
+LATE_BINARY_REPAIR_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "late_binary_repair_orchestration.py"
+)
+LATE_BINARY_REPAIR_OWNER = "run_late_binary_repair_cleanup"
+LATE_BINARY_REPAIR_RESULT = (
+    "_late_binary_repair_requires_reconciliation"
+)
 
 
 def _lowerer_body() -> list[ast.stmt]:
@@ -156,6 +167,46 @@ def _shared_late_assignment(body: list[ast.stmt]) -> ast.Assign:
     assert isinstance(assignment.value, ast.Call)
     assert isinstance(assignment.value.func, ast.Name)
     assert assignment.value.func.id == SHARED_LATE_OWNER
+    assert [ast.unparse(argument) for argument in assignment.value.args] == [
+        "shared_model_ir_pass_context"
+    ]
+    assert assignment.value.keywords == []
+    return assignment
+
+
+def _late_binary_repair_owner_call_count(function_name: str) -> int:
+    tree = ast.parse(
+        LATE_BINARY_REPAIR_OWNER_PATH.read_text(encoding="utf-8")
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == LATE_BINARY_REPAIR_OWNER
+    )
+    owner_function_name = function_name.removeprefix("_")
+    return sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == owner_function_name
+        for node in ast.walk(owner)
+    )
+
+
+def _late_binary_repair_assignment(
+    body: list[ast.stmt],
+) -> ast.Assign:
+    assignment = next(
+        statement
+        for statement in body
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == LATE_BINARY_REPAIR_RESULT
+    )
+    assert isinstance(assignment.value, ast.Call)
+    assert isinstance(assignment.value.func, ast.Name)
+    assert assignment.value.func.id == LATE_BINARY_REPAIR_OWNER
     assert [ast.unparse(argument) for argument in assignment.value.args] == [
         "shared_model_ir_pass_context"
     ]
@@ -982,7 +1033,8 @@ def test_primary_path_retains_absolute_final_boundary_signature_results() -> Non
     ]
     assert len(realign_indices) == 2
     assert _shared_late_owner_call_count(realign_name) == 1
-    assert len(sanitize_indices) == 2
+    assert len(sanitize_indices) == 1
+    assert _late_binary_repair_owner_call_count(sanitize_name) == 1
 
     expected_realign_targets = [
         "_absolute_final_boundary_signature_stats",
@@ -1000,7 +1052,6 @@ def test_primary_path_retains_absolute_final_boundary_signature_results() -> Non
         assert ast.unparse(statement.value) == f"{realign_name}(model_ir)"
 
     expected_sanitize_targets = [
-        "late_signature_stats",
         "_absolute_final_static_signature_stats",
     ]
     for index, target_name in zip(
@@ -1015,7 +1066,7 @@ def test_primary_path_retains_absolute_final_boundary_signature_results() -> Non
         assert ast.unparse(statement.value) == f"{sanitize_name}(model_ir)"
 
     absolute_realign_index = realign_indices[0]
-    absolute_sanitize_index = sanitize_indices[1]
+    absolute_sanitize_index = sanitize_indices[0]
     assert absolute_sanitize_index == absolute_realign_index + 1
     following = body[absolute_sanitize_index + 1]
     assert isinstance(following, ast.Assign)
@@ -1749,43 +1800,21 @@ def test_primary_path_retains_shared_late_shape_result() -> None:
     following = body[guard_index + 1]
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "late_binary_repair_tensor_count"
-    assert ast.unparse(following.value) == "len(model_ir.tensors)"
+    assert following.targets[0].id == LATE_BINARY_REPAIR_RESULT
+    assert ast.unparse(following.value) == (
+        "run_late_binary_repair_cleanup(shared_model_ir_pass_context)"
+    )
 
 
 def test_primary_path_retains_late_binary_repair_shape_result() -> None:
     body = _lowerer_body()
-    tensor_count_index = next(
-        index
-        for index, statement in enumerate(body)
-        if isinstance(statement, ast.Assign)
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "late_binary_repair_tensor_count"
-    )
-    guard_index = next(
-        index
-        for index in range(tensor_count_index + 1, len(body))
-        if isinstance(body[index], ast.If)
-        and "late_binary_repair_tensor_count" in ast.unparse(body[index].test)
-    )
+    decision = _late_binary_repair_assignment(body)
+    decision_index = body.index(decision)
+    guard_index = decision_index + 1
     guard = body[guard_index]
     assert isinstance(guard, ast.If)
     assert len(guard.body) == 1
-    guard_source = ast.unparse(guard.test)
-    for evidence_name in (
-        "late_signature_stats",
-        "late_binary_adapter_stats",
-        "late_singleton_adapter_stats",
-        "late_binary_repair_tensor_count",
-    ):
-        assert evidence_name in guard_source
-    for counter_name in (
-        "sanitized_static_shape_signature_consistency",
-        "inserted_rank4_binary_layout_fix_transpose",
-        "repaired_rank4_binary_singleton_broadcast_layout_mismatch",
-    ):
-        assert counter_name in guard_source
-    assert "len(model_ir.tensors) < late_binary_repair_tensor_count" in guard_source
+    assert ast.unparse(guard.test) == LATE_BINARY_REPAIR_RESULT
 
     statement = guard.body[0]
     _assert_phase_result_record(
