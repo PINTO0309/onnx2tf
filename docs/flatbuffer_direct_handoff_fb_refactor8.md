@@ -1830,3 +1830,28 @@ Commit and push the characterization before replacing only the top-level
 mapping destination. Preserve both composites and the nested result, update
 structural contracts, run sequential gates, document, commit, and push. Never
 create, update, or reopen a pull request.
+
+## Post-terminal indexed shape convergence implementation
+
+The top-level result now records under
+`shape_topology.terminal.indexed_convergence` in its original position. The
+owner, arguments, one-index convergence behavior, three-counter schema,
+nested result, singleton/SiNet composite boundaries, graph behavior, public
+contracts, dependencies, and TensorFlow isolation are unchanged.
+
+The bounded store now contains 113/128 records, leaving 15 slots. Four stale
+structural assertions now unwrap the record and preserve exact phase, owner,
+composite, and nested-result checks.
+
+Validation completed sequentially under core-only `uv`:
+
+- focused indexed-convergence/SiNet/store contracts: `12 passed in 0.81s`;
+- synthetic core runtime contracts: `55 passed in 1.02s`;
+- broader result contracts: `190 passed in 8.96s`;
+- lowerer architecture contracts: `258 passed in 19.09s`;
+- targeted Ruff, bytecode compilation, AST capacity audit, and whitespace
+  checks: passed.
+
+No root-model conversion was required because synthetic contracts exercise
+the owner. Commit and push this unit. Begin the next unit with a fresh
+characterize-first audit and never create, update, or reopen a pull request.

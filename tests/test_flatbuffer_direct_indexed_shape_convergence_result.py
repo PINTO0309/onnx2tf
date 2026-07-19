@@ -3,9 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 INDEXED_SHAPE_CONVERGENCE = "_run_indexed_shape_convergence_cleanup"
@@ -27,7 +24,17 @@ def _statement_call(statement: ast.stmt) -> ast.Call | None:
         return None
     if not isinstance(statement.value, ast.Call):
         return None
-    return statement.value
+    call = statement.value
+    if (
+        isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        return call.args[1]
+    return call
 
 
 def _single_target(statement: ast.stmt) -> str | None:
@@ -117,33 +124,6 @@ def test_indexed_shape_convergence_result_schema_and_forms_are_explicit() -> Non
     }
 
 
-def test_lowerer_retains_top_level_indexed_shape_convergence_result() -> None:
-    functions = _module_functions()
-    lowerer = functions["lower_onnx_to_ir"]
-    invocations = _direct_invocations(lowerer)
-    assert len(invocations) == 1
-    invocation = invocations[0]
-    assert _single_target(invocation) == (
-        "_post_terminal_indexed_shape_convergence_stats"
-    )
-
-    invocation_index = lowerer.body.index(invocation)
-    previous = lowerer.body[invocation_index - 1]
-    following = lowerer.body[invocation_index + 1]
-    assert _single_target(previous) == "_post_terminal_singleton_reshape_results"
-    assert _call_name(previous) == "_run_singleton_reshape_layout_pass_cluster"
-    assert _single_target(following) == "_very_late_sinet_layout_recovery_results"
-    assert _call_name(following) == "_run_sinet_terminal_layout_recovery_sequence"
-
-    nested_invocations = _direct_invocations(functions[FINAL_CONVERGENCE])
-    assert len(nested_invocations) == 1
-    assert _single_target(nested_invocations[0]) == "convergence_stats"
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="top-level indexed shape convergence has not moved to a phase record",
-)
 def test_top_level_indexed_shape_convergence_uses_phase_result_store() -> None:
     functions = _module_functions()
     lowerer = functions["lower_onnx_to_ir"]

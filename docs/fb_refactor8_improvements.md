@@ -914,6 +914,36 @@ Validation completed sequentially under core-only `uv`:
 The sole expected failure is the intentionally unimplemented top-level
 destination migration.
 
+## Post-terminal indexed shape convergence implementation
+
+The characterized top-level observation now records as
+`shape_topology.terminal.indexed_convergence` between its original singleton
+and very-late SiNet composites.
+
+Only the unused top-level local destination changed. The owner call, model and
+layout-state arguments, one-index convergence logic, three-counter schema,
+nested `convergence_stats` result, evaluation count, ModelIR mutations, public
+outputs, reports, artifacts, dependencies, and TensorFlow isolation remain
+unchanged. The bounded store now covers 113/128 phase IDs, leaving 15 slots.
+
+Four representation-dependent focused and architecture assertions now unwrap
+the record and verify the exact phase and owner while retaining both composite
+and nested-result checks. The temporary expected failure was converted in the
+existing focused module.
+
+Validation completed sequentially under core-only `uv`:
+
+- focused indexed-convergence/SiNet/store contracts: `12 passed in 0.81s`;
+- synthetic core runtime contracts: `55 passed in 1.02s`;
+- broader result and phase-result contracts: `190 passed in 8.96s`;
+- lowerer architecture contracts: `258 passed in 19.09s`;
+- targeted Ruff, Python bytecode compilation, AST capacity audit, and
+  whitespace validation: passed.
+
+No root-model corpus conversion was run because this is an
+observation-destination-only change and existing synthetic contracts exercise
+the indexed convergence owner.
+
 ## Layout pass-set 1 affine cleanup implementation
 
 The five characterized observations now record under stable

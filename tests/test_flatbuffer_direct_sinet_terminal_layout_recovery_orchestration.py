@@ -260,6 +260,9 @@ def test_sinet_terminal_layout_recovery_preserves_all_outer_boundaries() -> None
     assert _phase_id(lowerer.body[invocation_indexes[0] + 1]) == (
         "cleanup.terminal.sinet_hardswish_se"
     )
+    assert _phase_id(lowerer.body[invocation_indexes[1] - 1]) == (
+        "shape_topology.terminal.indexed_convergence"
+    )
 
     assert observed == [
         (
@@ -273,7 +276,6 @@ def test_sinet_terminal_layout_recovery_preserves_all_outer_boundaries() -> None
     ]
     assert assigned_boundary_targets == [
         "_terminal_clamp_unary_relu_results",
-        "_post_terminal_indexed_shape_convergence_stats",
         "_very_late_sinet_preadd_resize_results",
     ]
 
@@ -426,11 +428,11 @@ def test_sinet_terminal_layout_propagates_and_retains_ordered_results(
     assert _direct_call_name(first_following) == (
         "_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains"
     )
-    assert isinstance(second_previous, ast.Assign)
-    assert len(second_previous.targets) == 1
-    assert isinstance(second_previous.targets[0], ast.Name)
-    assert second_previous.targets[0].id == (
-        "_post_terminal_indexed_shape_convergence_stats"
+    assert _phase_id(second_previous) == (
+        "shape_topology.terminal.indexed_convergence"
+    )
+    assert _direct_call_name(second_previous) == (
+        "_run_indexed_shape_convergence_cleanup"
     )
     assert _direct_call_name(second_following) == SINET_PREADD_RESIZE
 

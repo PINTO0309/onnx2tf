@@ -2373,6 +2373,9 @@ def test_lowerer_sinet_terminal_layout_recovery_has_one_ordered_owner() -> None:
     assert _phase_aware_call(lowerer.body[invocation_indexes[0] + 1])[1] == (
         "cleanup.terminal.sinet_hardswish_se"
     )
+    assert _phase_aware_call(lowerer.body[invocation_indexes[1] - 1])[1] == (
+        "shape_topology.terminal.indexed_convergence"
+    )
     assert previous_call_names == [
         "_run_terminal_clamp_unary_relu_pass_cluster",
         "_run_indexed_shape_convergence_cleanup",
@@ -2383,7 +2386,6 @@ def test_lowerer_sinet_terminal_layout_recovery_has_one_ordered_owner() -> None:
     ]
     assert assigned_boundary_targets == [
         "_terminal_clamp_unary_relu_results",
-        "_post_terminal_indexed_shape_convergence_stats",
         "_very_late_sinet_preadd_resize_results",
     ]
 
@@ -2866,20 +2868,22 @@ def test_lowerer_indexed_shape_convergence_has_one_owner() -> None:
     invocation_indexes = [
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id
-        == "_post_terminal_indexed_shape_convergence_stats"
+        if isinstance(statement, ast.Expr)
         and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == helper_name
+        and isinstance(statement.value.func, ast.Attribute)
+        and isinstance(statement.value.func.value, ast.Name)
+        and statement.value.func.value.id == "session"
+        and statement.value.func.attr == "record_phase_result"
+        and len(statement.value.args) == 2
+        and ast.literal_eval(statement.value.args[0])
+        == "shape_topology.terminal.indexed_convergence"
     ]
     assert len(invocation_indexes) == 1
     invocation_index = invocation_indexes[0]
     invocation_statement = lowerer.body[invocation_index]
-    assert isinstance(invocation_statement, ast.Assign)
-    invocation = invocation_statement.value
+    invocation, phase_id = _phase_aware_call(invocation_statement)
+    assert phase_id == "shape_topology.terminal.indexed_convergence"
+    assert invocation.func.id == helper_name
     assert len(invocation.args) == 1
     assert isinstance(invocation.args[0], ast.Name)
     assert invocation.args[0].id == "model_ir"
