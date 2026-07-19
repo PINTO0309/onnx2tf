@@ -3778,10 +3778,20 @@ def test_stale_binary_layout_convergence_uses_one_graph_index() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
+    convergence_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "binary_layout_convergence.py"
+    )
     owner_source = owner_path.read_text(encoding="utf-8")
     owner_tree = ast.parse(owner_source)
     lowering_source = lowering_path.read_text(encoding="utf-8")
     lowering_tree = ast.parse(lowering_source)
+    convergence_tree = ast.parse(
+        convergence_path.read_text(encoding="utf-8")
+    )
     repair_name = "_repair_stale_nchw_to_nhwc_channelwise_binary_transposes"
     repair = next(
         node
@@ -3868,10 +3878,10 @@ def test_stale_binary_layout_convergence_uses_one_graph_index() -> None:
     assert isinstance(wrapper_index_keyword.value, ast.Name)
     assert wrapper_index_keyword.value.id == "graph_index"
 
-    helper_name = "_run_indexed_binary_layout_convergence"
+    helper_name = "run_indexed_binary_layout_convergence"
     helper = next(
         node
-        for node in lowering_tree.body
+        for node in convergence_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
     loop = next(node for node in helper.body if isinstance(node, ast.For))
@@ -3882,9 +3892,9 @@ def test_stale_binary_layout_convergence_uses_one_graph_index() -> None:
     assert isinstance(loop.iter.args[0], ast.Constant)
     assert loop.iter.args[0].value == 3
     expected_order = [
-        "_repair_rank4_channelwise_broadcast_constants_to_runtime_layout",
-        repair_name,
-        "_reconcile_static_tensor_shapes",
+        "repair_rank4_channelwise_broadcast_constants_to_runtime_layout",
+        "repair_stale_nchw_to_nhwc_channelwise_binary_transposes",
+        "reconcile_static_tensor_shapes",
     ]
     helper_calls = [
         node
@@ -3904,6 +3914,7 @@ def test_stale_binary_layout_convergence_uses_one_graph_index() -> None:
         assert isinstance(index_keyword.value, ast.Name)
         assert index_keyword.value.id == "graph_index"
 
+    wrapper_name = "_run_indexed_binary_layout_convergence"
     lowerer = next(
         node
         for node in lowering_tree.body
@@ -3914,7 +3925,7 @@ def test_stale_binary_layout_convergence_uses_one_graph_index() -> None:
         for node in ast.walk(lowerer)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id == helper_name
+        and node.func.id == wrapper_name
     ]
     assert len(invocations) == 2
     assert [
@@ -3924,6 +3935,19 @@ def test_stale_binary_layout_convergence_uses_one_graph_index() -> None:
         "fallback_ir",
         "model_ir",
     ]
+    wrapper = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    dispatches = [
+        node
+        for node in ast.walk(wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == helper_name
+    ]
+    assert len(dispatches) == 1
 
     summary_name = "run_stale_binary_adapter_repair_summary"
     summary_invocations = [
@@ -11754,6 +11778,16 @@ def test_rank4_channelwise_broadcast_constant_repair_has_one_module_owner() -> N
     )
     lowering_source = lowering_path.read_text(encoding="utf-8")
     lowering_tree = ast.parse(lowering_source)
+    convergence_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "binary_layout_convergence.py"
+    )
+    convergence_tree = ast.parse(
+        convergence_path.read_text(encoding="utf-8")
+    )
     wrapper_name = (
         "_repair_rank4_channelwise_broadcast_constants_to_runtime_layout"
     )
@@ -11793,16 +11827,16 @@ def test_rank4_channelwise_broadcast_constant_repair_has_one_module_owner() -> N
 
     convergence = next(
         node
-        for node in lowering_tree.body
+        for node in convergence_tree.body
         if isinstance(node, ast.FunctionDef)
-        and node.name == "_run_indexed_binary_layout_convergence"
+        and node.name == "run_indexed_binary_layout_convergence"
     )
     convergence_calls = [
         node
         for node in ast.walk(convergence)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id == wrapper_name
+        and node.func.id == wrapper_name.removeprefix("_")
     ]
     assert len(convergence_calls) == 1
     assert any(

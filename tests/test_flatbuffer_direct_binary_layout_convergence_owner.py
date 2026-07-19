@@ -3,9 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = (
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
@@ -87,9 +84,9 @@ def _assert_owner_contract(
     assert tuple(ast.literal_eval(key) for key in terminal.value.keys) == RESULT_KEYS
 
 
-def test_binary_layout_convergence_lowerer_contract_is_fixed() -> None:
+def test_binary_layout_convergence_pass_module_contract_is_fixed() -> None:
     functions = _functions(LOWERER_PATH)
-    _assert_owner_contract(functions[WRAPPER], ROUND_OWNERS)
+    _assert_owner_contract(_functions(OWNER_PATH)[OWNER], OWNER_ROUND_OWNERS)
 
     lowerer = functions["lower_onnx_to_ir"]
     calls = _ordered_calls(lowerer, (WRAPPER,))
@@ -101,14 +98,7 @@ def test_binary_layout_convergence_lowerer_contract_is_fixed() -> None:
     assert all(call.keywords == [] for call in calls)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="indexed binary-layout convergence is still implemented in the lowerer",
-)
-def test_binary_layout_convergence_has_one_pass_module_owner() -> None:
-    owner = _functions(OWNER_PATH)[OWNER]
-    _assert_owner_contract(owner, OWNER_ROUND_OWNERS)
-
+def test_binary_layout_convergence_lowerer_wrapper_is_compatible() -> None:
     wrapper = _functions(LOWERER_PATH)[WRAPPER]
     assert len(wrapper.body) == 2
     assert isinstance(wrapper.body[0], ast.Expr)

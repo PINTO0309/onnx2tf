@@ -106,8 +106,8 @@ text. Cycle behavior and stale-error removal are covered explicitly.
 
 ### Late composite orchestration owners
 
-Thirty-seven late lowerer clusters now have focused orchestration owners. The first
-combines adjacent NDHWC gate and cost-volume ScatterND cleanup into the final
+Thirty-eight late lowerer clusters now have focused orchestration owners. The
+first combines adjacent NDHWC gate and cost-volume ScatterND cleanup into the final
 bounded phase result while sharing one short-lived pass state. The second runs
 four late Concat/layout owners with one internal state scope and returns their
 independent mappings as an ordered composite tuple outside the full phase
@@ -302,6 +302,13 @@ mixed-attention owner with dynamic rank-one Unsqueeze/Reshape repair. It
 preserves the existing inner tuple plus raw rank-one mapping as a nested pair,
 shared context identity, callback order, all independent rank-one callers, and
 both neighboring boundaries while removing a lowerer-only closure and alias.
+
+The thirty-eighth owns indexed binary-layout convergence. It constructs one
+graph index, shares it across broadcast-constant repair, stale binary-adapter
+repair, and static-shape reconciliation, preserves that exact order, retains
+the three-round cap and stable-stop rule, and returns the unchanged ordered
+three-counter mapping. The lowerer compatibility wrapper and both fallback and
+primary callers remain intact.
 
 These extractions preserve callback order, model/layout/diagnostics identity,
 and result schemas while removing fifty-nine former unconsumed locals and three
@@ -917,3 +924,11 @@ adapter → shape-reconciliation order, the three-round cap and stable-stop rule
 three-counter schema, fallback and primary callers, and the full 128/128 store.
 Production remains unchanged until the pass-module owner is implemented
 separately.
+
+The latest checkpoint implements the indexed binary-layout convergence owner.
+The full loop moves mechanically to `passes/binary_layout_convergence.py`,
+while the private lowerer function becomes a one-return compatibility adapter
+and both production call sites remain unchanged. Runtime and structural tests
+fix single-index identity, callback order and forwarding, the stable-stop rule,
+three-round cap, ordered result schema, and fallback/primary arguments. The
+already-full phase-result store remains exactly 128 IDs and 128 owners.

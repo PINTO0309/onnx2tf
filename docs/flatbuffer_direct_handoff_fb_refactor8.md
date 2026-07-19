@@ -4286,3 +4286,35 @@ mechanically into the pass module, import the three raw pass owners directly,
 retain the lowerer wrapper and both call sites, redirect runtime monkeypatch
 tests to the new owner module, then validate sequentially. Keep the store at
 128/128 and never create, update, or reopen a pull request.
+
+## Indexed binary-layout convergence owner implementation
+
+`passes/binary_layout_convergence.py` now owns the full convergence loop. It
+constructs one `ModelIRGraphIndex`, forwards that same object to broadcast-
+constant repair, stale binary-adapter repair, and static-shape reconciliation,
+preserves that exact order, caps execution at three rounds, stops on the first
+stable round, and returns the unchanged ordered three-counter mapping.
+
+The lowerer retains `_run_indexed_binary_layout_convergence` as a one-return
+compatibility wrapper. Both existing callers remain in place and still pass
+`fallback_ir` followed later by primary `model_ir`. Runtime monkeypatch tests
+were redirected to the pass-module owner so callback order, index identity,
+stable stopping, and the hard round cap are exercised at the new ownership
+boundary. No phase result was added; the store remains exactly 128/128.
+
+Sequential validation under core-only `uv` completed with:
+
+- focused owner contracts: `2 passed in 0.15s`;
+- affected contracts: `400 passed in 18.70s`;
+- terminal-layout/pass-efficiency: `92 passed in 1.85s`;
+- core runtime: `55 passed in 0.95s`;
+- result contracts: `196 passed in 8.93s`;
+- phase-store capacity: `2 passed in 0.53s`;
+- TensorFlow isolation/default direct/`-cotof`: `11 passed in 9.53s`.
+
+On resume, characterize the adjacent terminal stabilization triple before any
+production edit: indexed binary-layout convergence, static high-rank binary
+coalescing, and dynamic boundary-signature realignment immediately before
+primary terminal topology/layout validation. Preserve the three independent
+raw mappings and both compatibility wrappers, keep the store at 128/128, and
+never create, update, or reopen a pull request.

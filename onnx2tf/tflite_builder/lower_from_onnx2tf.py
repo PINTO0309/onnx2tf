@@ -346,6 +346,9 @@ from onnx2tf.tflite_builder.passes.binary_layout_adapter import (
     run_indexed_binary_layout_adapter_cleanup,
     run_indexed_binary_layout_adapter_summary,
 )
+from onnx2tf.tflite_builder.passes.binary_layout_convergence import (
+    run_indexed_binary_layout_convergence,
+)
 from onnx2tf.tflite_builder.passes.conv_output_passthrough_layout import (
     optimize_transposeconv_output_channel1_terminal_transpose_chains as _optimize_transposeconv_output_channel1_terminal_transpose_chains_pass,
     optimize_transposeconv_output_nhwc_passthrough_chains as _optimize_transposeconv_output_nhwc_passthrough_chains_pass,
@@ -3451,57 +3454,7 @@ def _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(
 def _run_indexed_binary_layout_convergence(model_ir: ModelIR) -> Dict[str, int]:
     """Run up to three terminal binary-layout convergence rounds with one index."""
 
-    graph_index = ModelIRGraphIndex(model_ir)
-    repaired_constants = 0
-    removed_transposes = 0
-    reconciled_shapes = 0
-    for _ in range(3):
-        broadcast_stats = (
-            _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(
-                model_ir,
-                graph_index=graph_index,
-            )
-        )
-        transpose_stats = (
-            _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(
-                model_ir,
-                graph_index=graph_index,
-            )
-        )
-        reconcile_stats = _reconcile_static_tensor_shapes(
-            model_ir,
-            graph_index=graph_index,
-        )
-        repaired_constants += int(
-            broadcast_stats.get(
-                "repaired_rank4_channelwise_broadcast_constants",
-                0,
-            )
-        )
-        removed_transposes += int(
-            transpose_stats.get(
-                "repaired_stale_nchw_to_nhwc_channelwise_binary_transposes",
-                0,
-            )
-        )
-        reconciled_shapes += int(
-            reconcile_stats.get("reconciled_static_tensor_shapes", 0)
-        )
-        if not _stats_have_positive_count(
-            broadcast_stats,
-            transpose_stats,
-            reconcile_stats,
-        ):
-            break
-    return {
-        "repaired_rank4_channelwise_broadcast_constants": int(
-            repaired_constants
-        ),
-        "repaired_stale_nchw_to_nhwc_channelwise_binary_transposes": int(
-            removed_transposes
-        ),
-        "reconciled_static_tensor_shapes": int(reconciled_shapes),
-    }
+    return run_indexed_binary_layout_convergence(model_ir)
 
 
 def _optimize_nhwc_prefix_qlinear_silu_chains(

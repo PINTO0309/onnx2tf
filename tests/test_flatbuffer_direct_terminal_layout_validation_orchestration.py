@@ -78,6 +78,14 @@ ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_OWNER_PATH = (
 ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_OWNER = (
     "run_absolute_final_normalization_attention_rank1_cleanup"
 )
+BINARY_LAYOUT_CONVERGENCE_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "binary_layout_convergence.py"
+)
+BINARY_LAYOUT_CONVERGENCE_OWNER = "run_indexed_binary_layout_convergence"
 
 
 def _lowerer_body() -> list[ast.stmt]:
@@ -304,6 +312,25 @@ def _absolute_final_normalization_attention_owner_call_count(
         for node in tree.body
         if isinstance(node, ast.FunctionDef)
         and node.name == ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_OWNER
+    )
+    owner_name = function_name.removeprefix("_")
+    return sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == owner_name
+        for node in ast.walk(owner)
+    )
+
+
+def _binary_layout_convergence_owner_call_count(function_name: str) -> int:
+    tree = ast.parse(
+        BINARY_LAYOUT_CONVERGENCE_OWNER_PATH.read_text(encoding="utf-8")
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == BINARY_LAYOUT_CONVERGENCE_OWNER
     )
     owner_name = function_name.removeprefix("_")
     return sum(
@@ -1691,6 +1718,7 @@ def test_primary_path_retains_very_late_broadcast_constant_repair_result() -> No
     assert (
         len(module_calls)
         + _very_late_layout_broadcast_owner_call_count(callback_name)
+        + _binary_layout_convergence_owner_call_count(callback_name)
         == 4
     )
     assert sum(
@@ -1700,7 +1728,8 @@ def test_primary_path_retains_very_late_broadcast_constant_repair_result() -> No
             for keyword in call_node.keywords
         )
         for call_node in module_calls
-    ) == 1
+    ) == 0
+    assert _binary_layout_convergence_owner_call_count(callback_name) == 1
 
 
 def test_primary_path_retains_very_late_broadcast_shape_result() -> None:

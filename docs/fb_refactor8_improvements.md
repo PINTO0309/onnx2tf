@@ -4836,3 +4836,39 @@ This checkpoint changes no production source, graph-index lifetime, callback,
 round count, stable-stop rule, result schema, caller, store entry, API,
 artifact, dependency, or TensorFlow boundary. No real-model conversion was
 repeated.
+
+## Indexed binary-layout convergence owner implementation
+
+The complete indexed binary-layout convergence loop now lives in
+`passes/binary_layout_convergence.py`. The owner constructs exactly one
+`ModelIRGraphIndex`, shares it across broadcast-constant repair, stale
+binary-adapter repair, and static-shape reconciliation, and preserves the
+original stage order. It still executes no more than three rounds, stops after
+the first round with no positive mutation evidence, and returns the same three
+accumulated counters in the same order.
+
+The private lowerer function remains as a one-return compatibility adapter,
+and its safety-fallback and primary-terminal callers are unchanged. Runtime
+monkeypatch coverage now targets the pass-module owner, while structural tests
+verify the lowerer wrapper, both caller arguments, single-index lifetime,
+callback forwarding, stable-stop behavior, round cap, and result schema. The
+change adds no phase result: the bounded store remains exactly 128 phase IDs
+and 128 owners.
+
+Final sequential validation under core-only `uv`:
+
+- focused owner contracts: `2 passed in 0.15s`;
+- affected convergence, fallback, terminal-layout, binary-adapter,
+  stale-repair, phase-store, and architecture contracts:
+  `400 passed in 18.70s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.85s`;
+- synthetic core runtime contracts: `55 passed in 0.95s`;
+- result contracts: `196 passed in 8.93s`;
+- phase-store capacity contracts: `2 passed in 0.53s`;
+- TensorFlow/tf-keras import blocking, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.53s`.
+
+No real-model conversion was repeated for this mechanical ownership move.
+Dedicated runtime tests exercise the exact convergence behavior and shared
+graph-index identity, and the affected structural/runtime suite covers both
+production call paths.

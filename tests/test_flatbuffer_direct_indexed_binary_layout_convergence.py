@@ -5,7 +5,7 @@ from dataclasses import fields, is_dataclass
 from typing import Any
 
 import numpy as np
-import onnx2tf.tflite_builder.lower_from_onnx2tf as lowering_module
+import onnx2tf.tflite_builder.passes.binary_layout_convergence as convergence_owner
 import onnx2tf.tflite_builder.passes.stale_binary_adapter_repair as stale_binary_owner
 import pytest
 
@@ -393,18 +393,18 @@ def test_indexed_binary_layout_convergence_stops_after_stable_round(
         return {"reconciled_static_tensor_shapes": count}
 
     monkeypatch.setattr(
-        lowering_module,
-        "_repair_rank4_channelwise_broadcast_constants_to_runtime_layout",
+        convergence_owner,
+        "repair_rank4_channelwise_broadcast_constants_to_runtime_layout",
         broadcast_probe,
     )
     monkeypatch.setattr(
-        lowering_module,
-        "_repair_stale_nchw_to_nhwc_channelwise_binary_transposes",
+        convergence_owner,
+        "repair_stale_nchw_to_nhwc_channelwise_binary_transposes",
         transpose_probe,
     )
     monkeypatch.setattr(
-        lowering_module,
-        "_reconcile_static_tensor_shapes",
+        convergence_owner,
+        "reconcile_static_tensor_shapes",
         reconcile_probe,
     )
 
@@ -451,18 +451,18 @@ def test_indexed_binary_layout_convergence_retains_three_round_cap(
         return {"reconciled_static_tensor_shapes": 1}
 
     monkeypatch.setattr(
-        lowering_module,
-        "_repair_rank4_channelwise_broadcast_constants_to_runtime_layout",
+        convergence_owner,
+        "repair_rank4_channelwise_broadcast_constants_to_runtime_layout",
         zero_broadcast,
     )
     monkeypatch.setattr(
-        lowering_module,
-        "_repair_stale_nchw_to_nhwc_channelwise_binary_transposes",
+        convergence_owner,
+        "repair_stale_nchw_to_nhwc_channelwise_binary_transposes",
         zero_transpose,
     )
     monkeypatch.setattr(
-        lowering_module,
-        "_reconcile_static_tensor_shapes",
+        convergence_owner,
+        "reconcile_static_tensor_shapes",
         changing_reconcile,
     )
 
