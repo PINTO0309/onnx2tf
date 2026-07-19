@@ -1828,6 +1828,32 @@ On resume, audit the late-binary repair decision immediately following this
 boundary. Continue with commits and pushes only; never create, update, or
 reopen a pull request.
 
+## Late-binary repair decision characterization
+
+The adjacent late-binary repair boundary snapshots tensor count, sanitizes
+static shape signatures, runs the indexed binary adapter pair, and triggers
+its already-recorded reconciliation when one of three named counters is
+positive or cleanup pruned a tensor. This predicate is control flow and
+remains separate from the following optional late-binary layout recovery.
+
+The focused characterization fixes the three counter keys, tensor-count
+fallback, evidence order, direct reconciliation record, shared-late guard
+predecessor, and optional recovery successor. A strict expected failure
+requires one
+`run_late_binary_repair_cleanup(shared_model_ir_pass_context)` boolean result
+followed by the same lowerer-owned reconciliation guard.
+
+Implementation may absorb only signature sanitization, the indexed adapter
+pair, and their decision. The lowerer must continue to own the direct
+`_reconcile_static_tensor_shapes` record, and the optional layout-recovery
+outer and inner guards must remain untouched. No production source changed in
+this checkpoint.
+
+Sequential characterization under core-only `uv` completed with
+`1 passed, 1 xfailed in 0.14s`; the sole xfail is the intentionally absent
+boolean owner. Targeted Ruff, bytecode compilation, and whitespace checks
+passed.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:

@@ -2845,3 +2845,29 @@ the lowerer integration branch are covered directly. Commit and push this
 checkpoint. At resume, characterize the adjacent late-binary repair decision
 before changing production code. Continue with coherent commits and pushes
 only; never create, update, or reopen a pull request.
+
+## Late-binary repair decision characterization
+
+The next unit is the three-evidence plus prune-delta decision immediately
+after shared-late reconciliation. Static-signature sanitization contributes
+one named counter, indexed binary adapter cleanup contributes two, and a
+tensor-count decrease captures cleanup-only pruning. Any of these conditions
+invokes the existing `shape_reconciliation.primary.late_binary_repair`
+record.
+
+`tests/test_flatbuffer_direct_late_binary_repair_orchestration.py` fixes the
+counter keys, call order, tensor snapshot, direct reconciliation owner,
+shared-late predecessor, and optional late-binary recovery successor. Its
+strict expected failure requires one
+`run_late_binary_repair_cleanup(shared_model_ir_pass_context)` boolean
+assignment followed by the unchanged conditional record.
+
+The new owner must not absorb reconciliation or either guard of the following
+late-binary layout recovery. It must import the two existing pass-module
+owners directly, keep both model-only argument contracts, and preserve the
+three specific counter-key checks plus prune delta. The characterization gate
+completed with `1 passed, 1 xfailed in 0.14s`; the sole xfail is the absent
+owner. Targeted Ruff, bytecode compilation, and whitespace checks passed.
+
+Commit and push this characterization before production changes. Keep the
+store at 128/128 and never create, update, or reopen a pull request.
