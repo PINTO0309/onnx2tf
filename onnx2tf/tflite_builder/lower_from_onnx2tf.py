@@ -269,6 +269,9 @@ from onnx2tf.tflite_builder.passes.gate_layout_orchestration import (
 from onnx2tf.tflite_builder.passes.late_concat_layout_orchestration import (
     run_late_concat_layout_cleanup,
 )
+from onnx2tf.tflite_builder.passes.late_reshape_layout_orchestration import (
+    run_late_reshape_layout_cleanup,
+)
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     run_channel_shuffle_gather,
 )
@@ -5166,22 +5169,8 @@ def lower_onnx_to_ir(
                 model_ir
             )
         )
-    _late_expanddims_reshape_layout_stats = (
-        _optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-    )
-    _late_flatten_hw_reshape_layout_stats = (
-        _optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-    )
-    _late_nhwc_reshape_collapse_stats = (
-        _optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains(
-            model_ir
-        )
+    _late_reshape_layout_results = run_late_reshape_layout_cleanup(
+        shared_model_ir_pass_context,
     )
     _late_channel_shuffle_gather_results = (
         _run_channel_shuffle_gather_layout_pass_cluster(

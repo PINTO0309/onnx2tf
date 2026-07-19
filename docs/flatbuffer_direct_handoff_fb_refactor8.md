@@ -2260,3 +2260,31 @@ first. Implementation must add a focused runtime test for call order, context
 identity, layout arguments, and tuple order; then update only structural
 boundary contracts, run sequential focused/core/result/architecture gates,
 document, commit, and push. Never create, update, or reopen a pull request.
+
+## Late reshape-layout composite implementation
+
+`run_late_reshape_layout_cleanup` now executes the three characterized owners
+in their original order and returns their mappings as an ordered tuple. The
+first two receive `context.layout_state`; the private collapse owner remains
+model-only. The lowerer keeps one `_late_reshape_layout_results` composite via
+`shared_model_ir_pass_context`, outside the full phase store.
+
+The three old result locals are gone. Compatibility wrappers remain intact.
+Focused runtime coverage proves callback order, ModelIR/layout identity, exact
+argument policy, and tuple ordering. Broader gates exposed only stale source-
+representation assertions; no graph or numerical behavior failed.
+
+Final sequential validation under core-only `uv`:
+
+- focused reshape owners and affected boundaries: `95 passed in 1.11s`;
+- terminal-layout and pass-efficiency contracts: `94 passed in 2.11s`;
+- synthetic core runtime contracts: `55 passed in 1.01s`;
+- result and phase-result contracts: `196 passed in 9.07s`;
+- full architecture contracts: `258 passed in 17.48s`;
+- phase-store capacity contracts: `2 passed in 0.51s`;
+- Ruff, bytecode compilation, 128/128 capacity audit, and whitespace checks:
+  passed.
+
+The store remains fixed at 128/128. Commit and push this implementation unit.
+Resume with the next non-store late orchestration audit; do not create, update,
+or reopen a pull request.

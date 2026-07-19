@@ -437,7 +437,8 @@ def test_channel_shuffle_gather_helper_propagates_and_retains_results() -> None:
     previous = lowerer.body[late_index - 1]
     assert isinstance(previous, ast.Assign)
     assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_late_nhwc_reshape_collapse_stats"
+    assert previous.targets[0].id == "_late_reshape_layout_results"
+    assert _direct_call_name(previous) == "run_late_reshape_layout_cleanup"
     assert _direct_call_name(lowerer.body[late_index + 1]) == (
         "_optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains"
     )
@@ -519,12 +520,12 @@ def test_channel_shuffle_gather_preserves_late_base_policy_and_boundaries() -> N
         "include_nhwc_shuffle": False,
     }
     assert _direct_call_name(lowerer.body[invocation_index - 1]) == (
-        "_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains"
+        "run_late_reshape_layout_cleanup"
     )
     previous = lowerer.body[invocation_index - 1]
     assert isinstance(previous, ast.Assign)
     assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_late_nhwc_reshape_collapse_stats"
+    assert previous.targets[0].id == "_late_reshape_layout_results"
     assert _direct_call_name(lowerer.body[invocation_index + 1]) == (
         "_optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains"
     )

@@ -1187,6 +1187,42 @@ also passed. Commit and push the characterization before implementing the
 owner. Keep the phase store at 128/128 and do not create, update, or reopen a
 pull request.
 
+## Late reshape-layout composite implementation
+
+`run_late_reshape_layout_cleanup(context)` now owns the characterized
+ExpandDims-compatible, Flatten-HW-compatible, and NHWC-collapse repairs. It
+passes the shared conversion-local `LayoutState` to the first two owners,
+invokes the model-only collapse owner third, and returns the three independent
+counter mappings as an ordered tuple.
+
+The lowerer retains one `_late_reshape_layout_results` composite through
+`shared_model_ir_pass_context`. The three old unconsumed locals are absent,
+and the composite remains outside `ConversionSession.phase_results`; the
+bounded store stays exactly 128/128. Compatibility wrappers remain available
+for existing direct callers and tests.
+
+Focused runtime coverage proves callback order, identical ModelIR identity,
+layout argument identity for the first two callbacks, the model-only third
+callback, and tuple ordering. Existing structural contracts now require the
+composite at the elementwise-fanout/channel-shuffle boundaries, account for
+its three nested owners, and reject the old locals. No graph, numerical,
+diagnostics, or artifact failure occurred.
+
+Validation completed sequentially under core-only `uv`:
+
+- focused reshape owners and affected boundaries: `95 passed in 1.11s`;
+- terminal-layout and pass-efficiency contracts: `94 passed in 2.11s`;
+- synthetic core runtime contracts: `55 passed in 1.01s`;
+- broader result and phase-result contracts: `196 passed in 9.07s`;
+- full lowerer architecture contracts: `258 passed in 17.48s`;
+- phase-result capacity contracts: `2 passed in 0.51s`;
+- targeted Ruff, bytecode compilation, fixed-capacity audit, and whitespace
+  checks: passed.
+
+No root-model conversion was run because this is a characterized three-call
+owner extraction with focused runtime equivalence and unchanged serialization
+inputs.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:

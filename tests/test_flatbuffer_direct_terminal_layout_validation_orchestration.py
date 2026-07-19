@@ -1740,11 +1740,11 @@ def test_primary_path_retains_guarded_elementwise_fanout_results() -> None:
     assert len(guards) == 2
 
     expected = (
-        (
-            "_late_concat_elementwise_fanout_stats",
-            "_late_concat_layout_results",
-            "_optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains",
-        ),
+            (
+                "_late_concat_elementwise_fanout_stats",
+                "_late_concat_layout_results",
+                "run_late_reshape_layout_cleanup",
+            ),
         (
             "_terminal_elementwise_fanout_stats",
             "_terminal_shape_extract_stats",
@@ -1785,48 +1785,25 @@ def test_primary_path_retains_guarded_elementwise_fanout_results() -> None:
         )
 
 
-def test_primary_path_retains_late_expanddims_and_flatten_results() -> None:
+def test_primary_path_retains_late_reshape_layout_composite() -> None:
     body = _lowerer_body()
-    expected = (
-        (
-            "_late_expanddims_reshape_layout_stats",
-            "_optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains",
-        ),
-        (
-            "_late_flatten_hw_reshape_layout_stats",
-            "_optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains",
-        ),
+    indices = [
+        index
+        for index, statement in enumerate(body)
+        if _call_name(_statement_call(statement))
+        == "run_late_reshape_layout_cleanup"
+    ]
+    assert len(indices) == 1
+    index = indices[0]
+    statement = body[index]
+    assert isinstance(statement, ast.Assign)
+    assert isinstance(statement.targets[0], ast.Name)
+    assert statement.targets[0].id == "_late_reshape_layout_results"
+    assert ast.unparse(statement.value) == (
+        "run_late_reshape_layout_cleanup(shared_model_ir_pass_context)"
     )
-    indices = []
-    for target_name, callback_name in expected:
-        callback_indices = [
-            index
-            for index, statement in enumerate(body)
-            if _call_name(_statement_call(statement)) == callback_name
-        ]
-        assert len(callback_indices) == 1
-        index = callback_indices[0]
-        indices.append(index)
 
-        statement = body[index]
-        assert isinstance(statement, ast.Assign)
-        assert len(statement.targets) == 1
-        assert isinstance(statement.targets[0], ast.Name)
-        assert statement.targets[0].id == target_name
-        call = statement.value
-        assert isinstance(call, ast.Call)
-        assert isinstance(call.func, ast.Name)
-        assert call.func.id == callback_name
-        assert [ast.unparse(argument) for argument in call.args] == [
-            "model_ir"
-        ]
-        assert {
-            keyword.arg: ast.unparse(keyword.value)
-            for keyword in call.keywords
-        } == {"layout_state": "session.layout_state"}
-
-    assert indices[1] == indices[0] + 1
-    preceding_guard = body[indices[0] - 1]
+    preceding_guard = body[index - 1]
     assert isinstance(preceding_guard, ast.If)
     assert ast.unparse(preceding_guard.test) == "optimize_layout_transpose_chains"
     preceding_assignment = preceding_guard.body[0]
@@ -1835,41 +1812,29 @@ def test_primary_path_retains_late_expanddims_and_flatten_results() -> None:
     assert preceding_assignment.targets[0].id == (
         "_late_concat_elementwise_fanout_stats"
     )
-    assert _call_name(_statement_call(body[indices[1] + 1])) == (
-        "_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains"
+    assert _call_name(_statement_call(body[index + 1])) == (
+        "_run_channel_shuffle_gather_layout_pass_cluster"
     )
 
 
-def test_primary_path_retains_late_nhwc_reshape_collapse_result() -> None:
+def test_primary_path_removes_late_reshape_layout_result_locals() -> None:
     body = _lowerer_body()
-    callback_name = (
-        "_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains"
+    old_targets = (
+        "_late_expanddims_reshape_layout_stats",
+        "_late_flatten_hw_reshape_layout_stats",
+        "_late_nhwc_reshape_collapse_stats",
     )
-    indices = [
+    assert not any(
+        isinstance(node, ast.Name) and node.id in old_targets
+        for statement in body
+        for node in ast.walk(statement)
+    )
+    index = next(
         index
         for index, statement in enumerate(body)
-        if _call_name(_statement_call(statement)) == callback_name
-    ]
-    assert len(indices) == 1
-    index = indices[0]
-
-    statement = body[index]
-    assert isinstance(statement, ast.Assign)
-    assert len(statement.targets) == 1
-    assert isinstance(statement.targets[0], ast.Name)
-    assert statement.targets[0].id == "_late_nhwc_reshape_collapse_stats"
-    call = statement.value
-    assert isinstance(call, ast.Call)
-    assert isinstance(call.func, ast.Name)
-    assert call.func.id == callback_name
-    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-    assert call.keywords == []
-
-    predecessor = body[index - 1]
-    assert isinstance(predecessor, ast.Assign)
-    assert isinstance(predecessor.targets[0], ast.Name)
-    assert predecessor.targets[0].id == (
-        "_late_flatten_hw_reshape_layout_stats"
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "_late_reshape_layout_results"
     )
     successor = body[index + 1]
     assert _call_name(_statement_call(successor)) == (

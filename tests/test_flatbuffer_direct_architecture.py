@@ -95,6 +95,9 @@ from onnx2tf.tflite_builder.passes.gate_layout_orchestration import (
 from onnx2tf.tflite_builder.passes.late_concat_layout_orchestration import (
     LATE_CONCAT_LAYOUT_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.late_reshape_layout_orchestration import (
+    LATE_RESHAPE_LAYOUT_PASS_IDS,
+)
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     CHANNEL_SHUFFLE_GATHER_BASE_PASS_IDS,
     CHANNEL_SHUFFLE_GATHER_DEFAULT_PASS_IDS,
@@ -175,6 +178,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *GATE_LAYOUT_PASS_IDS,
     *LATE_NDHWC_COST_VOLUME_PASS_IDS,
     *LATE_CONCAT_LAYOUT_PASS_IDS,
+    *LATE_RESHAPE_LAYOUT_PASS_IDS,
     *CHANNEL_SHUFFLE_GATHER_PASS_IDS,
     *MEAN_ATTENTION_PASS_IDS,
     *SINGLETON_RESHAPE_PASS_IDS,
@@ -8020,13 +8024,12 @@ def test_lowerer_late_nchw_shuffle_gather_pair_stays_between_raw_rewrites() -> N
     assert isinstance(previous_boundary, ast.Assign)
     assert isinstance(previous_boundary.targets[0], ast.Name)
     assert previous_boundary.targets[0].id == (
-        "_late_nhwc_reshape_collapse_stats"
+        "_late_reshape_layout_results"
     )
     assert isinstance(previous_boundary.value, ast.Call)
     assert isinstance(previous_boundary.value.func, ast.Name)
     assert (
-        previous_boundary.value.func.id
-        == "_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains"
+        previous_boundary.value.func.id == "run_late_reshape_layout_cleanup"
     )
     next_boundary = lowerer.body[invocation_index + 1]
     assert isinstance(next_boundary, ast.Assign)
