@@ -2060,3 +2060,25 @@ No root-model conversion was required because only three already-computed
 one-counter result destinations changed and focused runtime tests cover their
 owners. Commit and push this unit. Begin the next unit with a fresh
 characterize-first audit and never create, update, or reopen a pull request.
+
+## Post-SiNet attention and activation result characterization
+
+The next bounded-store unit contains the consecutive SiNet mix-attention,
+mixed-attention layout, and Dequantize/HardSigmoid bridge results between
+`cleanup.post_sinet.split_conv_concat_bridge` and creation of
+`late_ndhwc_cost_volume_state_scope`. All three mappings contain only one
+integer counter. The mixed-attention layout owner still writes normal pass
+diagnostics separately, and none of these result locals has a consumer.
+
+The existing mixed-attention result module now has a strict expected-failure
+contract for exact `cleanup.post_sinet.*` records, owner expressions and
+arguments, adjacency, outer boundaries, and absence of loads. No production
+source changed.
+
+The related baseline is `14 passed in 1.04s`. Re-run the same five focused
+modules and expect one strict xfail, then run targeted Ruff, bytecode
+compilation, and whitespace validation. Commit and push characterization
+first. Implementation must change only the three destinations, preserve the
+diagnostics stream and state-scope boundary, move the store from 124 to 127
+records, run sequential gates, document, commit, and push. Never create,
+update, or reopen a pull request.

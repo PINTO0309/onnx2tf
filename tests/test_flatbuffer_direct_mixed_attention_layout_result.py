@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
@@ -31,6 +33,28 @@ RESULT_TARGET = "_post_sinet_mixed_attention_layout_stats"
 PREDECESSOR_TARGET = "_post_sinet_mix_attention_stats"
 SUCCESSOR_TARGET = "_post_sinet_dequant_hardsigmoid_bridge_stats"
 RESULT_KEY = "optimized_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains"
+POST_SINET_RESULT_TARGETS = (
+    "_post_sinet_mix_attention_stats",
+    "_post_sinet_mixed_attention_layout_stats",
+    "_post_sinet_dequant_hardsigmoid_bridge_stats",
+)
+POST_SINET_PHASE_IDS = (
+    "cleanup.post_sinet.mix_attention",
+    "cleanup.post_sinet.mixed_attention_layout",
+    "cleanup.post_sinet.dequant_hardsigmoid_bridge",
+)
+POST_SINET_OWNER_EXPRESSIONS = (
+    (
+        "_optimize_sinet_mix_attention_double_logistic_nhwc_chains("
+        "model_ir, layout_state=session.layout_state)"
+    ),
+    (
+        "run_mixed_attention_layout_cleanup("
+        "model_ir, layout_state=session.layout_state, "
+        "diagnostics=session.diagnostics)"
+    ),
+    "_optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)",
+)
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -59,6 +83,21 @@ def _single_target(statement: ast.stmt) -> str | None:
         return None
     target = statement.targets[0]
     return target.id if isinstance(target, ast.Name) else None
+
+
+def _phase_id(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
+        return None
+    call = statement.value
+    if (
+        not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != "session"
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
 
 
 def _lowerer() -> ast.FunctionDef:
@@ -181,6 +220,38 @@ def test_mixed_attention_layout_direct_result_is_retained_for_observation() -> N
     assert not any(
         isinstance(node, ast.Name)
         and node.id == RESULT_TARGET
+        and isinstance(node.ctx, ast.Load)
+        for node in ast.walk(lowerer)
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="post-SiNet attention/activation results have not moved to phase records",
+)
+def test_post_sinet_attention_activation_results_use_phase_store() -> None:
+    lowerer = _lowerer()
+    records = [
+        statement
+        for statement in lowerer.body
+        if _phase_id(statement) in POST_SINET_PHASE_IDS
+    ]
+    indices = [lowerer.body.index(statement) for statement in records]
+
+    assert tuple(_phase_id(statement) for statement in records) == POST_SINET_PHASE_IDS
+    assert tuple(ast.unparse(statement.value.args[1]) for statement in records) == (
+        POST_SINET_OWNER_EXPRESSIONS
+    )
+    assert indices == list(range(indices[0], indices[0] + 3))
+    assert _phase_id(lowerer.body[indices[0] - 1]) == (
+        "cleanup.post_sinet.split_conv_concat_bridge"
+    )
+    assert _single_target(lowerer.body[indices[-1] + 1]) == (
+        "late_ndhwc_cost_volume_state_scope"
+    )
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id in POST_SINET_RESULT_TARGETS
         and isinstance(node.ctx, ast.Load)
         for node in ast.walk(lowerer)
     )

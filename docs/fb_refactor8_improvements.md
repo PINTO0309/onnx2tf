@@ -956,6 +956,33 @@ No root-model corpus conversion was run because this is an
 observation-destination-only change and the focused suite exercises all three
 owners.
 
+## Post-SiNet attention and activation result characterization
+
+The next unit is limited to the three consecutive observations after the
+post-SiNet Split/Conv/Concat bridge: SiNet double-Logistic mix-attention,
+mixed Mean/ReduceMax/Concat/MirrorPad layout cleanup, and the
+Dequantize/HardSigmoid/Quantize bridge. Their fixed schemas contain one
+bounded integer each; the mixed-attention owner continues to receive the
+conversion diagnostics stream, but diagnostic events are not copied into its
+returned mapping. None of the three locals is loaded.
+
+The mixed-attention result module now strictly expects the exact
+`cleanup.post_sinet.*` records, nested owner expressions including diagnostics
+arguments, adjacency, preceding Split/Conv/Concat phase, following shared
+NDHWC/cost-volume state-scope creation, and absence of result loads. No
+production source changed.
+
+Validation completed sequentially under core-only `uv`: the related baseline
+is `14 passed in 1.04s`. Characterization must preserve those passes plus one
+intentional strict expected failure. Targeted Ruff, bytecode compilation, and
+whitespace validation are required before committing and pushing this
+checkpoint.
+
+Implement only the three destinations after the checkpoint. Preserve
+diagnostic behavior, outer boundaries, owner arguments, and execution order;
+grow the store from 124 to 127 records, run sequential gates, document,
+commit, and push. Never create, update, or reopen a pull request.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:
