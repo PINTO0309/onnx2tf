@@ -668,3 +668,10 @@ The latest checkpoint implements that shared indexed Conv-input summary owner.
 It removes both compatible tensor snapshots and inline mapping extensions while
 retaining the indexed repair pair, fallback guard, raw wrapper, final one-key
 site, and the full 128/128 phase-result store.
+
+The next characterization fixes the two compatible stale channelwise-binary
+adapter count-plus-mapping sites. It preserves their concat-axis predecessors,
+mutation-positive reconciliation guards, fallback topology successor, final
+progress successor, and raw wrapper, while explicitly excluding the iterative
+indexed convergence owner. Production remains unchanged until the shared
+prune-aware summary owner is implemented separately.

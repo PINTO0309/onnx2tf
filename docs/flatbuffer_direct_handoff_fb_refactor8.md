@@ -3585,3 +3585,29 @@ Final sequential validation under core-only `uv`:
 Commit and push this implementation checkpoint. At resume, characterize the
 next compatible repeated evidence family before production changes. Continue
 with commits and pushes only; never create, update, or reopen a pull request.
+
+## Stale channelwise-binary adapter summary family characterization
+
+The next selected family is the repeated raw-repair-plus-prune mapping at the
+fallback and final-primary stale channelwise-binary adapter sites. Both use the
+same raw repair and exact one-key schema. The indexed binary convergence loop
+is explicitly excluded because it owns a shared graph index and iterative
+broadcast, adapter, and shape reconciliation semantics.
+
+The focused contract fixes both current representations, model arguments,
+prune expressions, preceding concat-axis guards, following conditional
+reconciliation, fallback topology successor, final progress successor, and raw
+wrapper retention. One strict xfail requires
+`run_stale_binary_adapter_repair_summary(model_ir)`.
+
+Sequential validation under core-only `uv` completed with
+`93 passed, 1 xfailed in 2.30s` across the new characterization and related
+fallback, terminal-layout, indexed binary-convergence, and phase-store
+contracts. The sole expected failure is the unimplemented shared summary
+owner. Targeted Ruff and whitespace checks passed.
+
+Commit and push this characterization separately. At resume, implement only
+the shared owner and the two compatible sites, retain the raw lowerer wrapper,
+leave indexed convergence unchanged, update owner-aware structural contracts,
+and validate sequentially. Continue with commits and pushes only; never create,
+update, or reopen a pull request.

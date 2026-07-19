@@ -4062,3 +4062,27 @@ No real-model corpus conversion was repeated because focused runtime coverage
 proves stable and prune-only schema preservation, while family and architecture
 gates preserve the one-index owner, both compatible sites, fallback guard, and
 excluded final site.
+
+## Stale channelwise-binary adapter summary family characterization
+
+The next repeated evidence family contains the fallback and final-primary
+stale channelwise-binary adapter sites. Both snapshot tensor count, invoke the
+same raw stale NCHW-to-NHWC Transpose repair, and extend its exact one-key
+mapping with `pruned_unused_tensors`. The indexed convergence loop is excluded:
+it shares a `ModelIRGraphIndex` across multiple repairs and iterations and
+therefore has materially different ownership and ordering semantics.
+
+`tests/test_flatbuffer_direct_stale_binary_adapter_summary_orchestration.py`
+fixes both current two-statement representations, exact model arguments and
+prune expressions, preceding concat-axis reconciliation guards, following
+mutation-positive reconciliation guards, fallback topology successor, final
+progress successor, and the retained raw lowerer wrapper. Its strict expected
+failure requires one shared pass-module prune-aware summary owner. No
+production source, graph mutation, guard, store entry, public API, artifact,
+dependency, or TensorFlow boundary changed.
+
+Sequential characterization under core-only `uv` completed with
+`93 passed, 1 xfailed in 2.30s` across the dedicated family contract and the
+related fallback, terminal-layout, indexed binary-convergence, and phase-store
+contracts. The sole expected failure is the intentionally absent shared
+summary owner. Targeted Ruff and whitespace checks passed.
