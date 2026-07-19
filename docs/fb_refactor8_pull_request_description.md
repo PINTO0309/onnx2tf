@@ -106,7 +106,7 @@ text. Cycle behavior and stale-error removal are covered explicitly.
 
 ### Late composite orchestration owners
 
-Thirty-three late lowerer clusters now have focused orchestration owners. The first
+Thirty-four late lowerer clusters now have focused orchestration owners. The first
 combines adjacent NDHWC gate and cost-volume ScatterND cleanup into the final
 bounded phase result while sharing one short-lived pass state. The second runs
 four late Concat/layout owners with one internal state scope and returns their
@@ -280,8 +280,13 @@ ordering, keeps all three raw mappings independent, omits layout state for
 fallback, forwards it for primary-final, and limits diagnostics to the
 transactional middle stage.
 
+The thirty-fourth owns the absolute-final dynamic-boundary realignment and
+static-signature sanitizer pair. It preserves both raw schemas, exact mutation
+order, every other signature caller, wrapper compatibility, and the following
+affine cleanup.
+
 These extractions preserve callback order, model/layout/diagnostics identity,
-and result schemas while removing fifty-one former unconsumed locals and two
+and result schemas while removing fifty-three former unconsumed locals and two
 lowerer scope locals. They also replace twenty-nine consumed mutation-evidence
 or aggregate-result locals and twenty tensor-count snapshots with three
 explicit boolean decisions, nineteen reusable summary calls, and one prune-aware
@@ -831,3 +836,9 @@ schemas, realign-before-sanitize order, the following affine boundary, all
 other signature-owner callers, compatibility wrappers, and the full 128/128
 store. Production remains unchanged until an ordered pair owner is implemented
 separately.
+
+The latest checkpoint implements that ordered boundary-signature pair owner.
+It replaces two individual unconsumed result locals with one ordered tuple
+while preserving metadata/tensor mutation order, all other realign/sanitize
+routes, lowerer wrappers, the following affine boundary, and the full 128/128
+store.

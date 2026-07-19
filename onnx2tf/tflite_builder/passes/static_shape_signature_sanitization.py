@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import numpy as np
 
@@ -283,3 +283,12 @@ def sanitize_static_shape_signature_consistency(
             preserved_dynamic_lineage
         ),
     }
+
+
+def run_boundary_shape_signature_cleanup(
+    model_ir: ModelIR,
+) -> Tuple[Dict[str, int], Dict[str, int]]:
+    return (
+        realign_dynamic_boundary_shape_signature_map(model_ir),
+        sanitize_static_shape_signature_consistency(model_ir),
+    )

@@ -133,6 +133,7 @@ from onnx2tf.tflite_builder.passes.squeeze_shape_sanitization import (
 )
 from onnx2tf.tflite_builder.passes.static_shape_signature_sanitization import (
     realign_dynamic_boundary_shape_signature_map as _realign_dynamic_boundary_shape_signature_map_pass,
+    run_boundary_shape_signature_cleanup,
     sanitize_static_shape_signature_consistency as _sanitize_static_shape_signature_consistency_pass,
 )
 from onnx2tf.tflite_builder.passes.expand_squeeze_reshape import (
@@ -5761,11 +5762,8 @@ def lower_onnx_to_ir(
     # Final boundary-signature restore:
     # late static-shape reconciliations may overwrite graph-boundary dynamic
     # contracts (e.g. NMS selected_indices leading axis).
-    _absolute_final_boundary_signature_stats = (
-        _realign_dynamic_boundary_shape_signature_map(model_ir)
-    )
-    _absolute_final_static_signature_stats = (
-        _sanitize_static_shape_signature_consistency(model_ir)
+    _absolute_final_boundary_signature_results = (
+        run_boundary_shape_signature_cleanup(model_ir)
     )
     # Absolute-final guard: topological sort + signature sanitize can expose
     # one more strict TRANSPOSE->MUL(const)->TRANSPOSE->ADD(const) fragment.

@@ -4020,3 +4020,35 @@ the pair owner and absolute-final site, retain both raw wrappers and every
 other caller, update owner-aware contracts, and validate sequentially.
 Continue with commits and pushes only; never create, update, or reopen a pull
 request.
+
+## Absolute-final boundary-signature pair implementation
+
+The existing signature-sanitization module now exposes
+`run_boundary_shape_signature_cleanup(model_ir)`. It returns dynamic-boundary
+realignment and static-signature sanitization mappings unchanged in their
+existing order. The absolute-final site now retains one ordered tuple instead
+of two individual locals.
+
+The following affine cleanup, later terminal realignment, shared-late
+realignment, late-binary sanitizer, and both lowerer wrappers remain unchanged.
+Owner-aware architecture coverage preserves three realign routes and two
+sanitize routes. No context/index/layout/diagnostics handoff or 128/128 store
+entry is added.
+
+Final sequential validation under core-only `uv`:
+
+- focused ordered-pair contracts: `3 passed in 0.57s`;
+- affected signature, terminal, late recovery, store, and architecture
+  contracts: `374 passed in 20.32s`;
+- terminal-layout/pass-efficiency contracts: `92 passed in 1.80s`;
+- synthetic core runtime contracts: `55 passed in 0.91s`;
+- result contracts: `196 passed in 9.05s`;
+- phase-store capacity contracts: `2 passed in 0.52s`;
+- TensorFlow/tf-keras blocker, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.90s`;
+- Ruff, bytecode compilation, 128/128 audit, and whitespace checks: passed.
+
+Commit and push this implementation checkpoint. At resume, audit the next
+small semantically closed unconsumed-result cluster before production changes.
+Keep validation sequential and continue with commits and pushes only; never
+create, update, or reopen a pull request.

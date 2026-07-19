@@ -271,6 +271,29 @@ def _late_binary_layout_recovery_call_count(function_name: str) -> int:
     )
 
 
+def _boundary_signature_cleanup_call_count(function_name: str) -> int:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "static_shape_signature_sanitization.py"
+    )
+    owner_tree = ast.parse(owner_path.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_boundary_shape_signature_cleanup"
+    )
+    return sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name
+        for node in ast.walk(owner)
+    )
+
+
 def test_constant_lowering_has_one_typed_op_family_owner() -> None:
     lowerer_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
@@ -3274,7 +3297,11 @@ def test_static_shape_signature_sanitizer_has_one_module_owner() -> None:
         and node.func.id == wrapper_name
     ]
     assert (
-        len(production_calls) + _orchestrated_pass_count(wrapper_name)
+        len(production_calls)
+        + _orchestrated_pass_count(wrapper_name)
+        + _boundary_signature_cleanup_call_count(
+            "sanitize_static_shape_signature_consistency"
+        )
         == 2
     )
 
@@ -3346,7 +3373,14 @@ def test_boundary_signature_realigner_has_one_module_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 3
+    assert (
+        len(production_calls)
+        + _orchestrated_pass_count(wrapper_name)
+        + _boundary_signature_cleanup_call_count(
+            "realign_dynamic_boundary_shape_signature_map"
+        )
+        == 3
+    )
 
     owner_path = (
         REPO_ROOT

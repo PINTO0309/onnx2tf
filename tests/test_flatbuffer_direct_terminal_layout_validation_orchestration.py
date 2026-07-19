@@ -985,6 +985,18 @@ def test_primary_path_retains_absolute_final_boundary_signature_results() -> Non
     body = _lowerer_body()
     realign_name = "_realign_dynamic_boundary_shape_signature_map"
     sanitize_name = "_sanitize_static_shape_signature_consistency"
+    summary_name = "run_boundary_shape_signature_cleanup"
+    summary_index = _call_index(body, summary_name)
+    summary = body[summary_index]
+    assert isinstance(summary, ast.Assign)
+    assert len(summary.targets) == 1
+    assert isinstance(summary.targets[0], ast.Name)
+    assert (
+        summary.targets[0].id
+        == "_absolute_final_boundary_signature_results"
+    )
+    assert ast.unparse(summary.value) == f"{summary_name}(model_ir)"
+
     realign_indices = [
         index
         for index, statement in enumerate(body)
@@ -995,44 +1007,21 @@ def test_primary_path_retains_absolute_final_boundary_signature_results() -> Non
         for index, statement in enumerate(body)
         if _call_name(_statement_call(statement)) == sanitize_name
     ]
-    assert len(realign_indices) == 2
+    assert len(realign_indices) == 1
     assert _shared_late_owner_call_count(realign_name) == 1
-    assert len(sanitize_indices) == 1
+    assert len(sanitize_indices) == 0
     assert _late_binary_repair_owner_call_count(sanitize_name) == 1
 
-    expected_realign_targets = [
-        "_absolute_final_boundary_signature_stats",
-        "_final_dynamic_boundary_signature_stats",
-    ]
-    for index, target_name in zip(
-        realign_indices,
-        expected_realign_targets,
-    ):
-        statement = body[index]
-        assert isinstance(statement, ast.Assign)
-        assert len(statement.targets) == 1
-        assert isinstance(statement.targets[0], ast.Name)
-        assert statement.targets[0].id == target_name
-        assert ast.unparse(statement.value) == f"{realign_name}(model_ir)"
+    terminal_realign = body[realign_indices[0]]
+    assert isinstance(terminal_realign, ast.Assign)
+    assert isinstance(terminal_realign.targets[0], ast.Name)
+    assert (
+        terminal_realign.targets[0].id
+        == "_final_dynamic_boundary_signature_stats"
+    )
+    assert ast.unparse(terminal_realign.value) == f"{realign_name}(model_ir)"
 
-    expected_sanitize_targets = [
-        "_absolute_final_static_signature_stats",
-    ]
-    for index, target_name in zip(
-        sanitize_indices,
-        expected_sanitize_targets,
-    ):
-        statement = body[index]
-        assert isinstance(statement, ast.Assign)
-        assert len(statement.targets) == 1
-        assert isinstance(statement.targets[0], ast.Name)
-        assert statement.targets[0].id == target_name
-        assert ast.unparse(statement.value) == f"{sanitize_name}(model_ir)"
-
-    absolute_realign_index = realign_indices[0]
-    absolute_sanitize_index = sanitize_indices[0]
-    assert absolute_sanitize_index == absolute_realign_index + 1
-    following = body[absolute_sanitize_index + 1]
+    following = body[summary_index + 1]
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)
     assert following.targets[0].id == "_absolute_final_affine_post_add_stats"
@@ -1103,7 +1092,10 @@ def test_primary_path_retains_guarded_no_layout_final_cleanup_results() -> None:
     following = body[guard_index + 1]
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_absolute_final_boundary_signature_stats"
+    assert (
+        following.targets[0].id
+        == "_absolute_final_boundary_signature_results"
+    )
 
 
 def test_primary_path_retains_final_precision_cleanup_results() -> None:

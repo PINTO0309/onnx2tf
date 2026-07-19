@@ -4543,3 +4543,41 @@ ordered pair owner. Targeted Ruff and whitespace checks passed.
 This checkpoint changes no production source, metadata/tensor mutation, pass
 order, store entry, public API, artifact, dependency, or TensorFlow boundary.
 No real-model conversion was repeated for this characterization-only change.
+
+## Absolute-final boundary-signature pair implementation
+
+`run_boundary_shape_signature_cleanup(model_ir)` now lives beside the two raw
+signature owners and returns their mappings unchanged as an ordered pair. It
+always realigns the dynamic-boundary signature map before sanitizing static
+shape-signature consistency, preserving the exact metadata/tensor mutation
+order.
+
+The absolute-final lowerer site replaces its two individual result locals with
+one ordered-result tuple. The following affine post-Add cleanup, later terminal
+dynamic-boundary realignment, shared-late realignment, and late-binary
+sanitization remain unchanged. Both lowerer wrappers remain available for
+compatibility, and owner-aware architecture tests preserve three total realign
+routes and two total sanitize routes.
+
+The new owner requires no context object, graph index, layout state,
+diagnostics, reconciliation, or guard. It remains outside the full 128/128
+phase-result store and adds no dependency, TensorFlow import, public API, or
+artifact behavior.
+
+Final sequential validation under core-only `uv`:
+
+- focused ordered-pair contracts: `3 passed in 0.57s`;
+- affected signature, terminal, normalization/attention, late-binary,
+  shared-late, store, and architecture contracts: `374 passed in 20.32s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.80s`;
+- synthetic core runtime contracts: `55 passed in 0.91s`;
+- result contracts: `196 passed in 9.05s`;
+- phase-store capacity contracts: `2 passed in 0.52s`;
+- TensorFlow/tf-keras import blocking, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.90s`;
+- targeted Ruff, bytecode compilation, 128/128 audit, and whitespace checks:
+  passed.
+
+No real-model corpus conversion was repeated because runtime coverage proves
+exact raw order, ModelIR identity, and schema preservation, while affected
+structural gates preserve all independent callers and neighboring boundaries.
