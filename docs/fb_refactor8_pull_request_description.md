@@ -106,7 +106,7 @@ text. Cycle behavior and stale-error removal are covered explicitly.
 
 ### Late composite orchestration owners
 
-Twenty-four late lowerer clusters now have focused orchestration owners. The first
+Twenty-five late lowerer clusters now have focused orchestration owners. The first
 combines adjacent NDHWC gate and cost-volume ScatterND cleanup into the final
 bounded phase result while sharing one short-lived pass state. The second runs
 four late Concat/layout owners with one internal state scope and returns their
@@ -230,11 +230,17 @@ layout/Mean/SPP/Gather/constant-fold/Cast cluster with its strict prune-aware
 summary. It preserves the runtime layout-Transpose policy, shared pass-state
 scope, child constant-fold/Cast builder, raw wrapper, and normalized schema.
 
+The twenty-fifth composes very-late
+Gather/constant-fold/Cast/normalization cleanup with its strict four-result
+prune-aware summary. It preserves the shared pass-state scope, child
+constant-fold/Cast builder, normalization policy, raw wrapper, and normalized
+schema.
+
 These extractions preserve callback order, model/layout/diagnostics identity,
 and result schemas while removing forty-five former unconsumed locals and two
-lowerer scope locals. They also replace twenty consumed mutation-evidence or
-aggregate-result locals and nine tensor-count snapshots with three explicit
-boolean decisions, eight reusable summary calls, and one prune-aware cleanup
+lowerer scope locals. They also replace twenty-one consumed mutation-evidence
+or aggregate-result locals and ten tensor-count snapshots with three explicit
+boolean decisions, nine reusable summary calls, and one prune-aware cleanup
 call.
 Focused runtime tests verify shared scope identity, exact argument policy,
 ordered results, every positive-evidence path, and prune-only cleanup.
@@ -535,6 +541,9 @@ Final checkpoint results:
   contracts: **283 passed**;
 - very-late normalization prune-aware summary characterization and related
   contracts: **40 passed, 1 intentional strict xfail**;
+- very-late normalization prune-aware summary owner contracts: **4 passed**;
+- affected very-late normalization, adjacent repair, store, and architecture
+  contracts: **301 passed**;
 - TensorFlow/tf-keras import blocker, default/direct conversion, and `-cotof`
   contracts: **11 passed**;
 - pre-Concat NHWC pass-owner and compatibility contracts: **3 passed**;
@@ -634,3 +643,8 @@ The next characterization fixes the very-late normalization tensor snapshot,
 four-result raw tuple, strict prune-aware summary, and neighboring pass
 boundaries. Production remains unchanged until its direct summary owner is
 implemented separately.
+
+The latest checkpoint implements that very-late normalization summary owner.
+It removes the lowerer-local tensor snapshot and consumed raw tuple while
+retaining raw wrapper dispatch, child-builder and shared-scope behavior, strict
+schema, neighboring repair boundaries, and the full 128/128 phase-result store.

@@ -113,3 +113,19 @@ def run_very_late_gather_constant_normalization(
         expected_pass_ids=VERY_LATE_GATHER_CONSTANT_NORMALIZATION_PASS_IDS,
         phase_name="very-late gather/constant/normalization",
     )
+
+
+def run_very_late_gather_constant_normalization_summary(
+    context: VeryLateGatherConstantNormalizationContext,
+) -> Dict[str, int]:
+    """Run very-late normalization and return its prune-aware summary."""
+
+    initial_tensor_count = len(context.model_ir.tensors)
+    pass_results = run_very_late_gather_constant_normalization(context)
+    return summarize_very_late_gather_constant_normalization_mutations(
+        pass_results,
+        pruned_unused_tensors=max(
+            0,
+            int(initial_tensor_count - len(context.model_ir.tensors)),
+        ),
+    )

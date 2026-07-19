@@ -243,7 +243,7 @@ from onnx2tf.tflite_builder.passes.duplicate_quantized_prelu_orchestration impor
 )
 from onnx2tf.tflite_builder.passes.very_late_gather_constant_normalization_orchestration import (
     run_very_late_gather_constant_normalization,
-    summarize_very_late_gather_constant_normalization_mutations,
+    run_very_late_gather_constant_normalization_summary,
 )
 from onnx2tf.tflite_builder.passes.se_fc_gather_channel_fanout_orchestration import (
     run_se_fc_gather_channel_fanout,
@@ -5428,17 +5428,9 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
-    very_late_normalization_tensor_count = len(model_ir.tensors)
-    very_late_normalization_results = (
-        _run_very_late_gather_constant_normalization_pass_cluster()
-    )
     _very_late_normalization_stats = (
-        summarize_very_late_gather_constant_normalization_mutations(
-            very_late_normalization_results,
-            pruned_unused_tensors=max(
-                0,
-                int(very_late_normalization_tensor_count - len(model_ir.tensors)),
-            ),
+        run_very_late_gather_constant_normalization_summary(
+            very_late_gather_constant_normalization_context,
         )
     )
     # Very late terminal bridge/transpose rewrites above can still stale out

@@ -5,6 +5,13 @@ from pathlib import Path
 
 import pytest
 
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
+from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
+from onnx2tf.tflite_builder.passes import (
+    very_late_gather_constant_normalization_orchestration,
+)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = (
@@ -49,35 +56,22 @@ def _single_target(statement: ast.stmt) -> str | None:
 
 def test_very_late_normalization_prune_aware_summary_boundary_is_fixed() -> None:
     lowerer = _lowerer()
-    count = next(
+    summary = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == COUNT_TARGET
+        if _single_target(statement) == SUMMARY_TARGET
     )
-    index = lowerer.body.index(count)
-    raw = lowerer.body[index + 1]
-    summary = lowerer.body[index + 2]
-    assert isinstance(count, ast.Assign)
-    assert ast.unparse(count.value) == "len(model_ir.tensors)"
-    assert _single_target(raw) == RAW_TARGET
-    assert isinstance(raw, ast.Assign)
-    assert ast.unparse(raw.value) == f"{RAW_WRAPPER}()"
-    assert _single_target(summary) == SUMMARY_TARGET
+    index = lowerer.body.index(summary)
     assert isinstance(summary, ast.Assign)
     assert ast.unparse(summary.value) == (
-        f"{SUMMARY_FUNCTION}({RAW_TARGET}, pruned_unused_tensors=max(0, "
-        "int(very_late_normalization_tensor_count - len(model_ir.tensors))))"
+        f"{SUMMARY_OWNER}(very_late_gather_constant_normalization_context)"
     )
     assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
-    assert _single_target(lowerer.body[index + 3]) == SUCCESSOR_TARGET
-    assert sum(
-        isinstance(node, ast.Name) and node.id == COUNT_TARGET
+    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert not any(
+        isinstance(node, ast.Name) and node.id in {COUNT_TARGET, RAW_TARGET}
         for node in ast.walk(lowerer)
-    ) == 2
-    assert sum(
-        isinstance(node, ast.Name) and node.id == RAW_TARGET
-        for node in ast.walk(lowerer)
-    ) == 2
+    )
     assert not any(
         isinstance(node, ast.Name)
         and isinstance(node.ctx, ast.Load)
@@ -86,10 +80,6 @@ def test_very_late_normalization_prune_aware_summary_boundary_is_fixed() -> None
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="very-late normalization lacks one prune-aware summary owner",
-)
 def test_very_late_normalization_uses_one_prune_aware_summary_owner() -> None:
     owner = _functions(OWNER_PATH)[SUMMARY_OWNER]
     owner_calls = [
@@ -138,3 +128,66 @@ def test_very_late_normalization_uses_one_prune_aware_summary_owner() -> None:
         and node.func.id == RAW_OWNER
         for node in ast.walk(wrapper)
     )
+
+
+@pytest.mark.parametrize("prune", (False, True))
+def test_very_late_normalization_summary_preserves_schema_and_pruning(
+    monkeypatch: pytest.MonkeyPatch,
+    prune: bool,
+) -> None:
+    model_ir = ModelIR("very_late_normalization_summary")
+    model_ir.tensors["probe"] = TensorIR(
+        name="probe",
+        dtype="float32",
+        shape=[1],
+    )
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
+    raw_results = (
+        {"optimized_transpose_gather_transpose_axis_remap_nhwc_chains": 1},
+        {
+            "optimized_constant_input_pad_chains": 2,
+            "optimized_constant_input_pool_chains": 3,
+            "optimized_constant_input_cast_chains": 4,
+        },
+        {
+            "optimized_redundant_int32_to_int64_passthrough_cast_chains": 5,
+            "optimized_redundant_int64_to_int32_cast_chains": 6,
+        },
+        {
+            "optimized_transpose_instancenorm_pad_prepost_nhwc_chains": 7,
+            "optimized_transpose_flatten_globalnorm_pad_prepost_nhwc_chains": 8,
+        },
+    )
+    expected = (
+        very_late_gather_constant_normalization_orchestration
+        .summarize_very_late_gather_constant_normalization_mutations(
+            raw_results,
+            pruned_unused_tensors=int(prune),
+        )
+    )
+    observed: list[ModelIRPassContext] = []
+
+    def _run(
+        candidate: ModelIRPassContext,
+    ) -> tuple[dict[str, int], ...]:
+        observed.append(candidate)
+        if prune:
+            del candidate.model_ir.tensors["probe"]
+        return raw_results
+
+    monkeypatch.setattr(
+        very_late_gather_constant_normalization_orchestration,
+        RAW_OWNER,
+        _run,
+    )
+
+    assert (
+        very_late_gather_constant_normalization_orchestration
+        .run_very_late_gather_constant_normalization_summary(context)
+        == expected
+    )
+    assert observed == [context]

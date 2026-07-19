@@ -5476,48 +5476,41 @@ def test_lowerer_very_late_gather_constant_normalization_cluster_reuses_scope() 
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "very_late_normalization_results"
+        and statement.targets[0].id == "_very_late_normalization_stats"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == helper_name
+        and statement.value.func.id
+        == "run_very_late_gather_constant_normalization_summary"
     )
+    invocation = lowerer.body[invocation_index]
+    assert isinstance(invocation, ast.Assign)
+    assert isinstance(invocation.value, ast.Call)
+    assert [ast.unparse(argument) for argument in invocation.value.args] == [
+        "very_late_gather_constant_normalization_context"
+    ]
     previous_boundary = lowerer.body[invocation_index - 1]
     assert isinstance(previous_boundary, ast.Assign)
     assert len(previous_boundary.targets) == 1
     assert isinstance(previous_boundary.targets[0], ast.Name)
-    assert previous_boundary.targets[0].id == "very_late_normalization_tensor_count"
+    assert previous_boundary.targets[0].id == "_very_late_affine_post_add_stats"
     next_boundary = lowerer.body[invocation_index + 1]
     assert isinstance(next_boundary, ast.Assign)
     assert len(next_boundary.targets) == 1
     assert isinstance(next_boundary.targets[0], ast.Name)
-    assert next_boundary.targets[0].id == "_very_late_normalization_stats"
+    assert next_boundary.targets[0].id == "_very_late_dynamic_reshape_stats"
     assert isinstance(next_boundary.value, ast.Call)
     assert isinstance(next_boundary.value.func, ast.Name)
-    assert next_boundary.value.func.id == (
-        "summarize_very_late_gather_constant_normalization_mutations"
-    )
-    affine_boundary = lowerer.body[invocation_index - 2]
-    assert isinstance(affine_boundary, ast.Assign)
-    assert isinstance(affine_boundary.targets[0], ast.Name)
-    assert affine_boundary.targets[0].id == "_very_late_affine_post_add_stats"
-    resolve_boundary = lowerer.body[invocation_index + 2]
-    assert isinstance(resolve_boundary, ast.Assign)
-    assert len(resolve_boundary.targets) == 1
-    assert isinstance(resolve_boundary.targets[0], ast.Name)
-    assert resolve_boundary.targets[0].id == "_very_late_dynamic_reshape_stats"
-    assert isinstance(resolve_boundary.value, ast.Call)
-    assert isinstance(resolve_boundary.value.func, ast.Name)
-    assert resolve_boundary.value.func.id == "_resolve_dynamic_reshape_shapes"
-    conv_input_count = lowerer.body[invocation_index + 3]
+    assert next_boundary.value.func.id == "_resolve_dynamic_reshape_shapes"
+    conv_input_count = lowerer.body[invocation_index + 2]
     assert isinstance(conv_input_count, ast.Assign)
     assert isinstance(conv_input_count.targets[0], ast.Name)
     assert conv_input_count.targets[0].id == "very_late_conv_input_tensor_count"
-    conv_input_stats = lowerer.body[invocation_index + 4]
+    conv_input_stats = lowerer.body[invocation_index + 3]
     assert isinstance(conv_input_stats, ast.Assign)
     assert isinstance(conv_input_stats.targets[0], ast.Name)
     assert conv_input_stats.targets[0].id == "_very_late_conv_input_stats"
     assert isinstance(conv_input_stats.value, ast.Dict)
-    channel_shuffle_stats = lowerer.body[invocation_index + 5]
+    channel_shuffle_stats = lowerer.body[invocation_index + 4]
     assert isinstance(channel_shuffle_stats, ast.Assign)
     assert isinstance(channel_shuffle_stats.targets[0], ast.Name)
     assert channel_shuffle_stats.targets[0].id == (
@@ -5529,7 +5522,7 @@ def test_lowerer_very_late_gather_constant_normalization_cluster_reuses_scope() 
         channel_shuffle_stats.value.func.id
         == "run_stale_nchw_channel_shuffle_repair"
     )
-    concat_axis_stats = lowerer.body[invocation_index + 6]
+    concat_axis_stats = lowerer.body[invocation_index + 5]
     assert isinstance(concat_axis_stats, ast.Assign)
     assert isinstance(concat_axis_stats.targets[0], ast.Name)
     assert concat_axis_stats.targets[0].id == (
@@ -5541,7 +5534,7 @@ def test_lowerer_very_late_gather_constant_normalization_cluster_reuses_scope() 
         concat_axis_stats.value.func.id
         == "_repair_nchw_concat_transpose_conv_axes"
     )
-    concat_pool_axis_stats = lowerer.body[invocation_index + 7]
+    concat_pool_axis_stats = lowerer.body[invocation_index + 6]
     assert isinstance(concat_pool_axis_stats, ast.Assign)
     assert isinstance(concat_pool_axis_stats.targets[0], ast.Name)
     assert concat_pool_axis_stats.targets[0].id == (
@@ -5553,7 +5546,7 @@ def test_lowerer_very_late_gather_constant_normalization_cluster_reuses_scope() 
         concat_pool_axis_stats.value.func.id
         == "_repair_nchw_concat_global_pool_conv_axes"
     )
-    dynamic_rank1_stats = lowerer.body[invocation_index + 8]
+    dynamic_rank1_stats = lowerer.body[invocation_index + 7]
     assert isinstance(dynamic_rank1_stats, ast.Assign)
     assert isinstance(dynamic_rank1_stats.targets[0], ast.Name)
     assert dynamic_rank1_stats.targets[0].id == (
@@ -5564,7 +5557,7 @@ def test_lowerer_very_late_gather_constant_normalization_cluster_reuses_scope() 
     assert dynamic_rank1_stats.value.func.id == (
         "_rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs"
     )
-    static_shape_stats = lowerer.body[invocation_index + 9]
+    static_shape_stats = lowerer.body[invocation_index + 8]
     assert isinstance(static_shape_stats, ast.Expr)
     assert ast.unparse(static_shape_stats) == (
         "session.record_phase_result("

@@ -3969,3 +3969,38 @@ Sequential characterization under core-only `uv` completed with
 very-late normalization, absolute-final normalization/attention, late input
 repair result, and phase-store contracts. The sole expected failure is the
 intentionally absent summary owner.
+
+## Very-late normalization prune-aware summary implementation
+
+`run_very_late_gather_constant_normalization_summary(context)` now owns the
+characterized tensor snapshot, four-result ordered invocation, and strict
+prune-aware normalization. The lowerer retains `_very_late_normalization_stats`
+at the same boundary and passes the same shared context, while the consumed
+`very_late_normalization_tensor_count` and `very_late_normalization_results`
+locals are removed.
+
+The nested raw wrapper remains defined and still dispatches to the ordered
+owner. Shared pass-state scope, constant-fold/Cast child builder, normalization
+Pad policy, four-result schema, pruning, affine post-Add predecessor,
+dynamic-Reshape successor, subsequent very-late repairs, public behavior,
+artifacts, dependencies, and TensorFlow isolation are unchanged. The summary
+remains outside the full 128/128 phase-result store.
+
+Final sequential validation under core-only `uv`:
+
+- focused summary-owner contracts: `4 passed in 0.60s`;
+- affected owner, boundary, store, and architecture contracts:
+  `301 passed in 19.52s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.82s`;
+- synthetic core runtime contracts: `55 passed in 0.94s`;
+- result contracts: `196 passed in 9.03s`;
+- phase-store capacity contracts: `2 passed in 0.53s`;
+- TensorFlow/tf-keras import blocking, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.68s`;
+- targeted Ruff, bytecode compilation, 128/128 audit, and whitespace checks:
+  passed.
+
+No real-model corpus conversion was repeated because focused runtime coverage
+proves exact context forwarding plus stable and prune-only behavior, while the
+affected and architecture gates preserve child orchestration, raw ownership,
+and all neighboring repair boundaries.
