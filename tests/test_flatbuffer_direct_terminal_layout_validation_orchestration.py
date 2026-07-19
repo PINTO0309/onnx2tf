@@ -593,34 +593,13 @@ def test_primary_path_stages_complete_final_concat_axis_binary_evidence() -> Non
         ),
     )
 
-    tensor_count = body[axis_index + 2]
-    assert isinstance(tensor_count, ast.Assign)
-    assert isinstance(tensor_count.targets[0], ast.Name)
-    assert tensor_count.targets[0].id == "final_binary_layout_tensor_count"
-    assert ast.unparse(tensor_count.value) == "len(model_ir.tensors)"
-
-    binary_index = axis_index + 3
+    binary_index = axis_index + 2
     binary_stats = body[binary_index]
     assert isinstance(binary_stats, ast.Assign)
     assert isinstance(binary_stats.targets[0], ast.Name)
     assert binary_stats.targets[0].id == "final_binary_layout_stats"
-    assert isinstance(binary_stats.value, ast.Dict)
-    assert binary_stats.value.keys[0] is None
-    binary_owner = binary_stats.value.values[0]
-    assert isinstance(binary_owner, ast.Call)
-    assert isinstance(binary_owner.func, ast.Name)
-    assert binary_owner.func.id == (
-        "_repair_stale_nchw_to_nhwc_channelwise_binary_transposes"
-    )
-    assert [ast.unparse(argument) for argument in binary_owner.args] == [
-        "model_ir"
-    ]
-    assert binary_owner.keywords == []
-    prune_key = binary_stats.value.keys[1]
-    assert isinstance(prune_key, ast.Constant)
-    assert prune_key.value == "pruned_unused_tensors"
-    assert ast.unparse(binary_stats.value.values[1]) == (
-        "max(0, final_binary_layout_tensor_count - len(model_ir.tensors))"
+    assert ast.unparse(binary_stats.value) == (
+        "run_stale_binary_adapter_repair_summary(model_ir)"
     )
 
     binary_guard = body[binary_index + 1]

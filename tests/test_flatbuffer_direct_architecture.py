@@ -3843,23 +3843,30 @@ def test_stale_binary_layout_convergence_uses_one_graph_index() -> None:
         "model_ir",
     ]
 
-    direct_repair_invocations = [
+    summary_name = "run_stale_binary_adapter_repair_summary"
+    summary_invocations = [
         node
         for node in ast.walk(lowerer)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id == repair_name
+        and node.func.id == summary_name
     ]
     assert [
         call.args[0].id
         for call in sorted(
-            direct_repair_invocations,
+            summary_invocations,
             key=lambda candidate: candidate.lineno,
         )
     ] == [
         "fallback_ir",
         "model_ir",
     ]
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == repair_name
+        for node in ast.walk(lowerer)
+    )
 
 
 def test_conv_input_adapter_repairs_use_one_graph_index() -> None:

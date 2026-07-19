@@ -580,6 +580,7 @@ from onnx2tf.tflite_builder.passes.mixed_concat_input_repair import (
 )
 from onnx2tf.tflite_builder.passes.stale_binary_adapter_repair import (
     _repair_stale_nchw_to_nhwc_channelwise_binary_transposes as _repair_stale_nchw_to_nhwc_channelwise_binary_transposes_pass,
+    run_stale_binary_adapter_repair_summary,
 )
 from onnx2tf.tflite_builder.passes.concat_unary_conv_layout import (
     _optimize_transpose_concat_unary_fanout_conv_nhwc_chains as _optimize_transpose_concat_unary_fanout_conv_nhwc_chains_pass,
@@ -5697,16 +5698,9 @@ def lower_onnx_to_ir(
                     include_mutation_count=True,
                 ),
             )
-        fallback_binary_layout_tensor_count = len(fallback_ir.tensors)
-        fallback_binary_layout_stats = {
-            **_repair_stale_nchw_to_nhwc_channelwise_binary_transposes(
-                fallback_ir
-            ),
-            "pruned_unused_tensors": max(
-                0,
-                fallback_binary_layout_tensor_count - len(fallback_ir.tensors),
-            ),
-        }
+        fallback_binary_layout_stats = run_stale_binary_adapter_repair_summary(
+            fallback_ir
+        )
         if int(
             fallback_binary_layout_stats.get(
                 "repaired_stale_nchw_to_nhwc_channelwise_binary_transposes",
@@ -6243,14 +6237,7 @@ def lower_onnx_to_ir(
             "shape_topology.primary.final_concat_axis",
             run_static_shape_topology_reconciliation(model_ir),
         )
-    final_binary_layout_tensor_count = len(model_ir.tensors)
-    final_binary_layout_stats = {
-        **_repair_stale_nchw_to_nhwc_channelwise_binary_transposes(model_ir),
-        "pruned_unused_tensors": max(
-            0,
-            final_binary_layout_tensor_count - len(model_ir.tensors),
-        ),
-    }
+    final_binary_layout_stats = run_stale_binary_adapter_repair_summary(model_ir)
     if int(
         final_binary_layout_stats.get(
             "repaired_stale_nchw_to_nhwc_channelwise_binary_transposes",

@@ -501,7 +501,7 @@ def test_safety_fallback_stages_concat_axis_reconciliation_evidence() -> None:
     following = body[owner_index + 2]
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "fallback_binary_layout_tensor_count"
+    assert following.targets[0].id == "fallback_binary_layout_stats"
 
 
 def test_fallback_binary_layout_owner_can_prune_without_a_rewrite() -> None:
@@ -536,29 +536,10 @@ def test_safety_fallback_stages_complete_binary_layout_evidence() -> None:
         and statement.targets[0].id == "fallback_binary_layout_stats"
     )
 
-    tensor_count = body[stats_index - 1]
-    assert isinstance(tensor_count, ast.Assign)
-    assert isinstance(tensor_count.targets[0], ast.Name)
-    assert tensor_count.targets[0].id == "fallback_binary_layout_tensor_count"
-    assert ast.unparse(tensor_count.value) == "len(fallback_ir.tensors)"
-
     stats = body[stats_index]
     assert isinstance(stats, ast.Assign)
-    assert isinstance(stats.value, ast.Dict)
-    assert stats.value.keys[0] is None
-    owner = stats.value.values[0]
-    assert isinstance(owner, ast.Call)
-    assert isinstance(owner.func, ast.Name)
-    assert owner.func.id == (
-        "_repair_stale_nchw_to_nhwc_channelwise_binary_transposes"
-    )
-    assert [ast.unparse(argument) for argument in owner.args] == ["fallback_ir"]
-    assert owner.keywords == []
-    prune_key = stats.value.keys[1]
-    assert isinstance(prune_key, ast.Constant)
-    assert prune_key.value == "pruned_unused_tensors"
-    assert ast.unparse(stats.value.values[1]) == (
-        "max(0, fallback_binary_layout_tensor_count - len(fallback_ir.tensors))"
+    assert ast.unparse(stats.value) == (
+        "run_stale_binary_adapter_repair_summary(fallback_ir)"
     )
 
     guard = body[stats_index + 1]

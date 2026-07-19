@@ -4086,3 +4086,38 @@ Sequential characterization under core-only `uv` completed with
 related fallback, terminal-layout, indexed binary-convergence, and phase-store
 contracts. The sole expected failure is the intentionally absent shared
 summary owner. Targeted Ruff and whitespace checks passed.
+
+## Stale channelwise-binary adapter summary family implementation
+
+`run_stale_binary_adapter_repair_summary(model_ir)` now owns the tensor-count
+snapshot, one raw stale-adapter repair invocation, and the non-negative prune
+delta. The fallback and final-primary stats targets remain, while their two
+lowerer-local count variables and inline mapping extensions are removed.
+
+The raw lowerer wrapper remains defined and continues to forward an optional
+`ModelIRGraphIndex`. The indexed convergence owner remains unchanged and still
+shares one graph index across its broadcast, adapter, and shape-reconciliation
+steps. Both mutation-positive reconciliation guards, their phase IDs, the
+fallback topology successor, final progress successor, public behavior,
+artifacts, dependencies, TensorFlow isolation, and the full 128/128
+phase-result store are unchanged. The shared summaries remain outside that
+store.
+
+Final sequential validation under core-only `uv`:
+
+- focused shared-summary contracts: `4 passed in 0.57s`;
+- affected fallback, terminal-layout, indexed convergence, store, and
+  architecture contracts: `354 passed in 20.61s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.80s`;
+- synthetic core runtime contracts: `55 passed in 0.92s`;
+- result contracts: `196 passed in 9.11s`;
+- phase-store capacity contracts: `2 passed in 0.52s`;
+- TensorFlow/tf-keras import blocking, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.60s`;
+- targeted Ruff, bytecode compilation, 128/128 audit, and whitespace checks:
+  passed.
+
+No real-model corpus conversion was repeated because focused runtime coverage
+proves stable and prune-only schema preservation, while the affected and
+architecture gates preserve raw-wrapper forwarding, iterative indexed
+convergence, both conditional reconciliations, and neighboring boundaries.

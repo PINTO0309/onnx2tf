@@ -3611,3 +3611,34 @@ the shared owner and the two compatible sites, retain the raw lowerer wrapper,
 leave indexed convergence unchanged, update owner-aware structural contracts,
 and validate sequentially. Continue with commits and pushes only; never create,
 update, or reopen a pull request.
+
+## Stale channelwise-binary adapter summary family implementation
+
+The pass module now exposes
+`run_stale_binary_adapter_repair_summary(model_ir)`. It captures tensor count,
+invokes the existing raw stale channelwise-binary adapter repair once, and
+returns the exact raw mapping plus prune evidence. The fallback and
+final-primary stats targets remain, while both count locals and inline mapping
+extensions are removed.
+
+The raw lowerer wrapper and its optional graph-index forwarding remain intact.
+The indexed convergence loop, mutation-positive reconciliation guards,
+phase-result IDs, fallback topology successor, final progress successor, and
+128/128 store are unchanged.
+
+Final sequential validation under core-only `uv`:
+
+- focused shared-summary contracts: `4 passed in 0.57s`;
+- affected family, boundary, store, and architecture contracts:
+  `354 passed in 20.61s`;
+- terminal-layout/pass-efficiency contracts: `92 passed in 1.80s`;
+- synthetic core runtime contracts: `55 passed in 0.92s`;
+- result contracts: `196 passed in 9.11s`;
+- phase-store capacity contracts: `2 passed in 0.52s`;
+- TensorFlow/tf-keras blocker, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.60s`;
+- Ruff, bytecode compilation, 128/128 audit, and whitespace checks: passed.
+
+Commit and push this implementation checkpoint. At resume, characterize the
+next compatible repeated evidence family before production changes. Continue
+with commits and pushes only; never create, update, or reopen a pull request.
