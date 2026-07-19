@@ -3479,3 +3479,26 @@ Final sequential validation under core-only `uv`:
 Commit and push this implementation checkpoint. At resume, characterize the
 next adjacent non-store evidence boundary before production changes. Continue
 with commits and pushes only; never create, update, or reopen a pull request.
+
+## Very-late normalization prune-aware summary characterization
+
+The next selected unit is the three-statement very-late
+Gather/constant-fold/Cast/normalization evidence boundary. It snapshots tensor
+count, runs the existing four-result ordered owner, and applies the existing
+strict prune-aware normalizer. The summary is unconsumed.
+
+The focused contract fixes the current representation, exact prune expression,
+raw wrapper retention, affine post-Add predecessor, and dynamic-Reshape
+successor. One strict xfail requires
+`run_very_late_gather_constant_normalization_summary(context)`.
+
+Sequential validation under core-only `uv` completed with
+`40 passed, 1 xfailed in 1.34s` across the new characterization and related
+very-late normalization, absolute-final normalization/attention, late input
+repair, and store contracts. The sole expected failure is the unimplemented
+summary owner.
+
+Commit and push this characterization separately. At resume, implement only
+the prune-aware owner and direct late site, retain the raw lowerer wrapper,
+update owner-aware structural contracts, and validate sequentially. Continue
+with commits and pushes only; never create, update, or reopen a pull request.

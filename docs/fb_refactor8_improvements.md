@@ -3948,3 +3948,24 @@ No real-model corpus conversion was repeated because focused runtime coverage
 proves exact context/flag forwarding plus stable and prune-only behavior, while
 the affected and architecture gates preserve child orchestration, raw
 ownership, and both neighboring boundaries.
+
+## Very-late normalization prune-aware summary characterization
+
+The next evidence triple snapshots tensor count, invokes the very-late
+Gather/constant-fold/Cast/normalization ordered owner, and applies its existing
+strict four-result prune-aware normalizer. The count and raw tuple are consumed
+only by the normalized mapping, which does not control subsequent work.
+
+`tests/test_flatbuffer_direct_very_late_normalization_summary_orchestration.py`
+fixes the exact three statements, prune expression, retained raw wrapper,
+very-late affine post-Add predecessor, dynamic-Reshape successor, and absence
+of a summary consumer. Its strict expected failure requires one pass-module
+prune-aware summary owner. No production source, pass selection, graph
+mutation, store entry, public API, artifact, dependency, or TensorFlow boundary
+changed.
+
+Sequential characterization under core-only `uv` completed with
+`40 passed, 1 xfailed in 1.34s` across the dedicated contract and related
+very-late normalization, absolute-final normalization/attention, late input
+repair result, and phase-store contracts. The sole expected failure is the
+intentionally absent summary owner.
