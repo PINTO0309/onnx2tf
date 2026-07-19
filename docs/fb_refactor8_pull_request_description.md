@@ -1703,3 +1703,17 @@ and TensorFlow isolation remain unchanged. Focused `3`, affected `394`, and
 standard `92 / 55 / 196 / 2 / 11` sequential tests pass. The phase store
 remains exactly 128 IDs and 128 owners, and the unconsumed-result inventory
 decreases from 46 to 45.
+
+The next characterization fixes the remaining layout-pass-set-1 tail before
+any production edit. Final layout/attention/quantized suffix recovery must be
+followed by transpose/unary fan-out recovery with its fixed layout-enabled and
+unary-passthrough-disabled policy, then final safe-binary recovery. All three
+stages share the exact session pass context; the suffix retains its original
+callbacks and duplicate-Transpose policy.
+
+Recorded squeeze/reshape cleanup and the existing progress advance remain the
+outer boundaries. Focused and reference-based affected sequential validation
+report `7 passed, 1 xfailed` and `479 passed, 1 xfailed`; the sole expected
+failure is the deliberately absent future composite owner. Production,
+dependencies, TensorFlow isolation, the 45-result inventory, and the exactly
+128-ID/128-owner phase store remain unchanged.

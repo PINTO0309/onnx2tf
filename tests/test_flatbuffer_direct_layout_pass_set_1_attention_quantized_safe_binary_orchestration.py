@@ -24,12 +24,16 @@ from onnx2tf.tflite_builder.passes.gate_layout_orchestration import (
 )
 from onnx2tf.tflite_builder.passes.layout_attention_quantized_suffix_orchestration import (
     LayoutAttentionQuantizedSuffixContext,
+    run_layout_attention_quantized_suffix,
 )
 from onnx2tf.tflite_builder.passes.mean_attention_orchestration import (
     run_mean_attention,
 )
 from onnx2tf.tflite_builder.passes.transpose_unary_fanout_orchestration import (
     run_transpose_unary_fanout,
+)
+from onnx2tf.tflite_builder.passes.quantized_recovery_orchestration import (
+    run_safe_binary_recovery,
 )
 
 
@@ -65,6 +69,29 @@ LATER_RESULT_TARGETS = (
     "_layout_pass_set_1_transpose_unary_fanout_results",
     "_layout_pass_set_1_final_safe_binary_results",
 )
+FINAL_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "layout_pass_set_1_final_quantized_unary_safe_orchestration.py"
+)
+FINAL_OWNER = "run_layout_pass_set_1_final_quantized_unary_safe_cleanup"
+FINAL_CHILD_OWNERS = (
+    "run_layout_attention_quantized_suffix",
+    "run_transpose_unary_fanout",
+    "run_safe_binary_recovery",
+)
+FINAL_CURRENT_CHILD_OWNERS = (
+    "_run_layout_attention_quantized_recovery_suffix",
+    "_run_transpose_unary_fanout_layout_pass_cluster",
+    "_run_safe_binary_bridge_recovery_sequence",
+)
+FINAL_COMPOSITE_TARGET = "_layout_pass_set_1_final_quantized_unary_safe_results"
+FINAL_PREDECESSOR_PHASE_ID = (
+    "cleanup.layout_pass_set_1.squeeze_reshape_identity"
+)
+FINAL_SUCCESSOR = "_advance_post_progress"
 PREDECESSOR_PHASE_ID = (
     "cleanup.layout_pass_set_1.post_binary_affine_chain_fold"
 )
@@ -128,6 +155,17 @@ SAFE_BINARY_SCHEMA = (
         "rewritten_transpose_binary_asymmetric_fanout_bridges",
         "rewritten_transpose_binary_full_post_fanout_bridges",
     ),
+)
+TRANSPOSE_UNARY_SCHEMA = (
+    (
+        "iterations",
+        "removed_identity_transpose",
+        "removed_inverse_transpose_pairs",
+        "removed_inverse_transpose_fanout_branches",
+        "composed_consecutive_transpose_pairs",
+    ),
+    ("rewritten_transpose_unary_fanout_inverse_post_bridges",),
+    ("rewritten_transpose_unary_binary_full_post_fanout_bridges",),
 )
 
 
@@ -460,3 +498,167 @@ def test_layout_pass_set_1_attention_quantized_safe_runtime_identity(
         ),
         (CHILD_OWNERS[1], context.pass_context, {}),
     ]
+
+
+@pytest.mark.parametrize("include_duplicate_transpose", [False, True])
+def test_layout_pass_set_1_final_quantized_unary_safe_current_contract(
+    include_duplicate_transpose: bool,
+) -> None:
+    body = _guard_body()
+    assignments = [
+        statement
+        for statement in body
+        if _single_target(statement) in LATER_RESULT_TARGETS
+    ]
+    assert [_single_target(statement) for statement in assignments] == list(
+        LATER_RESULT_TARGETS
+    )
+    assert [_call_name(statement) for statement in assignments] == list(
+        FINAL_CURRENT_CHILD_OWNERS
+    )
+    indices = [body.index(statement) for statement in assignments]
+    assert indices == list(range(indices[0], indices[0] + len(assignments)))
+    assert _phase_id(body[indices[0] - 1]) == FINAL_PREDECESSOR_PHASE_ID
+    assert _call_name(body[indices[-1] + 1]) == FINAL_SUCCESSOR
+
+    suffix_call = _call(assignments[0])
+    assert suffix_call is not None
+    assert suffix_call.args == []
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in suffix_call.keywords
+    } == {"include_duplicate_transpose": OPTION}
+    transpose_call = _call(assignments[1])
+    assert transpose_call is not None
+    assert transpose_call.args == []
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in transpose_call.keywords
+    } == {
+        "include_layout_transpose": "True",
+        "include_unary_passthrough": "False",
+    }
+    safe_call = _call(assignments[2])
+    assert safe_call is not None
+    assert safe_call.args == []
+    assert safe_call.keywords == []
+    assert not any(
+        isinstance(node, ast.Name)
+        and isinstance(node.ctx, ast.Load)
+        and node.id in LATER_RESULT_TARGETS
+        for statement in body
+        for node in ast.walk(statement)
+    )
+
+    lowerer = _lowerer()
+    assignments_by_target = {
+        _single_target(statement): statement
+        for statement in lowerer.body
+        if _single_target(statement)
+        in {
+            "shared_model_ir_pass_context",
+            "quantized_recovery_context",
+            "transpose_unary_fanout_context",
+        }
+    }
+    assert ast.unparse(
+        assignments_by_target["shared_model_ir_pass_context"].value
+    ) == "session.model_ir_pass_context"
+    assert ast.unparse(
+        assignments_by_target["quantized_recovery_context"].value
+    ) == "shared_model_ir_pass_context"
+    assert ast.unparse(
+        assignments_by_target["transpose_unary_fanout_context"].value
+    ) == "shared_model_ir_pass_context"
+
+    context = _context()
+    results = (
+        run_layout_attention_quantized_suffix(
+            context,
+            include_duplicate_transpose=include_duplicate_transpose,
+        ),
+        run_transpose_unary_fanout(
+            context.pass_context,
+            include_layout_transpose=True,
+            include_unary_passthrough=False,
+        ),
+        run_safe_binary_recovery(context.pass_context),
+    )
+    assert _schema(results) == (
+        _expected_suffix_schema(
+            include_duplicate_transpose=include_duplicate_transpose
+        ),
+        TRANSPOSE_UNARY_SCHEMA,
+        SAFE_BINARY_SCHEMA,
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="layout-pass-set-1 final quantized/unary/safe owner is not implemented",
+)
+def test_layout_pass_set_1_final_quantized_unary_safe_has_one_context_owner() -> None:
+    assert FINAL_OWNER_PATH.exists()
+    owner = _functions(FINAL_OWNER_PATH)[FINAL_OWNER]
+    calls = sorted(
+        (
+            node
+            for node in ast.walk(owner)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in FINAL_CHILD_OWNERS
+        ),
+        key=lambda node: (node.lineno, node.col_offset),
+    )
+    assert [call.func.id for call in calls] == list(FINAL_CHILD_OWNERS)
+    assert [ast.unparse(argument) for argument in calls[0].args] == ["context"]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in calls[0].keywords
+    } == {"include_duplicate_transpose": "include_duplicate_transpose"}
+    assert [ast.unparse(argument) for argument in calls[1].args] == [
+        "context.pass_context"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in calls[1].keywords
+    } == {
+        "include_layout_transpose": "True",
+        "include_unary_passthrough": "False",
+    }
+    assert [ast.unparse(argument) for argument in calls[2].args] == [
+        "context.pass_context"
+    ]
+    assert calls[2].keywords == []
+
+    body = _guard_body()
+    assignment = next(
+        statement
+        for statement in body
+        if _single_target(statement) == FINAL_COMPOSITE_TARGET
+    )
+    index = body.index(assignment)
+    assert _call_name(assignment) == FINAL_OWNER
+    call = _call(assignment)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == [
+        "layout_attention_quantized_suffix_context"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
+    } == {"include_duplicate_transpose": OPTION}
+    assert _phase_id(body[index - 1]) == FINAL_PREDECESSOR_PHASE_ID
+    assert _call_name(body[index + 1]) == FINAL_SUCCESSOR
+    assert not any(
+        isinstance(node, ast.Name) and node.id in LATER_RESULT_TARGETS
+        for node in ast.walk(_lowerer())
+    )
+
+    lowerer_functions = {
+        node.name: node
+        for node in _lowerer().body
+        if isinstance(node, ast.FunctionDef)
+    }
+    assert all(
+        name in lowerer_functions for name in FINAL_CURRENT_CHILD_OWNERS
+    )

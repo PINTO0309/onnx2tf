@@ -6245,3 +6245,44 @@ identities, complete nested schemas, and independent routes before changing
 production. Run validation sequentially under `uv`, then create and push a
 complete checkpoint commit only. Do not create, update, reopen, or otherwise
 modify a pull request.
+
+## Next 45-result candidate characterization
+
+The refreshed inventory selects the contiguous final three observations inside
+layout pass set 1:
+`_layout_pass_set_1_final_attention_quantized_suffix_results`,
+`_layout_pass_set_1_transpose_unary_fanout_results`, and
+`_layout_pass_set_1_final_safe_binary_results`. Recorded
+`cleanup.layout_pass_set_1.squeeze_reshape_identity` is the immediate
+predecessor and `_advance_post_progress()` is the immediate successor.
+
+The strict contract covers both duplicate-Transpose policy values. The suffix
+receives the original `LayoutAttentionQuantizedSuffixContext`; transpose/unary
+recovery receives its exact embedded pass context with
+`include_layout_transpose=True` and `include_unary_passthrough=False`; final
+safe-binary recovery receives that same pass context. All suffix callbacks,
+raw schema shapes, source order, observation-only status, and compatibility
+wrappers are fixed. Complete child schemas remain in their existing focused
+contract tests instead of being duplicated into another large test module.
+
+Production is unchanged pending
+`passes/layout_pass_set_1_final_quantized_unary_safe_orchestration.py` and
+`run_layout_pass_set_1_final_quantized_unary_safe_cleanup()`. That owner must
+call public suffix, transpose/unary, and safe-binary owners in source order,
+return all three raw tuples unchanged and by identity, and replace only the
+three characterized locals with
+`_layout_pass_set_1_final_quantized_unary_safe_results`. Retain all three
+lowerer wrappers and every independent callback or recovery route.
+
+Focused sequential validation reports `7 passed, 1 xfailed`; complete
+reference-based affected validation reports `479 passed, 1 xfailed`. The sole
+expected failure requires the intentionally absent owner. Ruff, bytecode
+compilation, and whitespace checks pass. The unconsumed-result inventory
+remains 45 and the phase-result store remains exactly 128 IDs and 128 owners.
+
+At resume, implement only this characterized owner and lowerer replacement,
+convert the strict xfail to runtime order/context/option/result-identity
+coverage, update only stale structural entry assertions, and run affected plus
+standard gates sequentially under `uv`. Confirm the expected inventory
+reduction from 45 to 43, then commit and push the complete unit only. Do not
+create, update, reopen, or otherwise modify a pull request.

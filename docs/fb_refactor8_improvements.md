@@ -6860,3 +6860,27 @@ focused `3`, affected `394`, and standard `92 / 55 / 196 / 2 / 11`. Ruff,
 bytecode compilation, and whitespace checks pass. The phase store remains
 exactly 128 IDs and 128 owners, while the unconsumed lowerer-result inventory
 decreases from 46 to 45.
+
+## Characterize the final quantized suffix/unary/safe-binary boundary
+
+The refreshed 45-result inventory selects the remaining three-stage tail of
+layout pass set 1: the final layout/attention/quantized suffix, the fixed
+transpose/unary fan-out recovery, and final safe-binary recovery. The three
+observation-only calls are contiguous inside the existing layout-Transpose
+guard. Recorded squeeze/reshape cleanup remains the immediate predecessor and
+the existing progress advance remains the immediate successor.
+
+Characterization covers both duplicate-Transpose policies, the exact shared
+session pass context, all suffix callback identities, the fixed
+`include_layout_transpose=True` and `include_unary_passthrough=False` policy,
+all three raw result schemas, observation-only status, and every retained
+wrapper. To minimize test duplication and maintenance context, complete child
+schemas stay authoritative in their existing child-contract tests while the
+new assertions compose those public children at the outer boundary.
+
+Production remains unchanged pending one three-child context owner. Focused
+and reference-based affected sequential validation report
+`7 passed, 1 xfailed` and `479 passed, 1 xfailed`; the sole expected failure is
+the intentionally absent owner module. Ruff, bytecode compilation, and
+whitespace validation pass. The inventory remains 45 and the phase-result
+store remains unchanged.
