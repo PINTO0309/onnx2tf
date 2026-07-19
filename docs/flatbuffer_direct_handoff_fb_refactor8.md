@@ -2436,3 +2436,29 @@ Final sequential validation under core-only `uv`:
 The store remains fixed at 128/128. Commit and push this implementation unit.
 Resume by auditing the next final non-store boundary; do not create, update, or
 reopen a pull request.
+
+## Terminal Concat-bridge composite characterization
+
+The final Slice/pre-Concat pair was audited but left unchanged. The pre-Concat
+composite implementation still resides in the lowerer, so a pass-module owner
+and compatibility-wrapper checkpoint must precede any pair extraction; avoid
+circular imports or callback injection.
+
+The next selected unit instead owns six adjacent pass-module callbacks:
+all-output ReLU/Split, ReLU/Split/Conv/Concat, mixed Split/Concat, Concat input
+adaptation, Concat-unary-Conv, and Shape extract. Their argument policy is
+layout/layout/layout/layout/(layout+diagnostics)/model-only.
+
+`tests/test_flatbuffer_direct_terminal_concat_bridge_layout_orchestration.py`
+fixes exact order and arguments, final pre-Concat predecessor, guarded
+elementwise-fanout successor, and absence of consumers. Its strict expected
+failure requires one
+`run_terminal_concat_bridge_layout_cleanup(shared_model_ir_pass_context)`
+tuple outside the full store and removal of the six old locals.
+
+The gate completed with `15 passed, 1 xfailed in 0.86s`; Ruff, bytecode
+compilation, and whitespace checks passed. Commit and push this checkpoint
+first. Implementation must add runtime order/context/argument/tuple coverage,
+update source-boundary and ownership contracts, run sequential gates,
+document, commit, and push. Keep the store at 128/128 and never create, update,
+or reopen a pull request.

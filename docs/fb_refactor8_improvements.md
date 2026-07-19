@@ -1387,6 +1387,35 @@ No root-model conversion was run because this is a characterized three-call
 owner extraction with focused runtime equivalence and unchanged serialization
 inputs.
 
+## Terminal Concat-bridge composite characterization
+
+The initially considered final Slice/pre-Concat pair was deferred without
+source changes. Its pre-Concat implementation still lives in the lowerer and
+combines indexed, quantized, and legacy owners; moving the pair now would
+require either a circular import or callback injection. The pre-ConCat owner
+must first move behind a pass-module compatibility wrapper in a separate
+characterized checkpoint.
+
+The selected non-store unit instead covers six adjacent owners that already
+have pass-module boundaries: all-output ReLU/Split, ReLU/Split/Conv/Concat,
+mixed Split/Concat, Concat input adaptation, Concat-unary-Conv, and Shape
+extract. Their fixed argument policy is four layout-aware calls, one
+layout-and-diagnostics call, and one model-only call. All six mappings are
+unconsumed.
+
+The focused characterization fixes exact order and arguments, final
+pre-Concat predecessor, guarded elementwise-fanout successor, and absence of
+consumers. A strict expected failure requires one
+`run_terminal_concat_bridge_layout_cleanup` owner and one ordered
+`_terminal_concat_bridge_layout_results` tuple outside the full store. No
+production source changed.
+
+Sequential validation under core-only `uv` completed with
+`15 passed, 1 xfailed in 0.86s`; the sole xfail is the intentionally absent
+composite. Targeted Ruff, bytecode compilation, and whitespace checks passed.
+Commit and push characterization first, keep the store at 128/128, and never
+create, update, or reopen a pull request.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:
