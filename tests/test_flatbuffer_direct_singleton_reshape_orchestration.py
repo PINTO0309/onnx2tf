@@ -70,9 +70,19 @@ def _direct_call_name(statement: ast.stmt) -> str | None:
         return None
     if not isinstance(statement.value, ast.Call):
         return None
-    if not isinstance(statement.value.func, ast.Name):
+    call = statement.value
+    if (
+        isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        call = call.args[1]
+    if not isinstance(call.func, ast.Name):
         return None
-    return statement.value.func.id
+    return call.func.id
 
 
 def _context(*, use_layout_state: bool = False) -> SingletonReshapeContext:

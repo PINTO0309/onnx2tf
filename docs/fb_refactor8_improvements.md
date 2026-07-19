@@ -804,6 +804,36 @@ Validation completed sequentially under core-only `uv`:
 The sole expected failure is the intentionally unimplemented destination
 migration.
 
+## Guarded terminal QKV bridge implementation
+
+The characterized bridge observation now records as
+`cleanup.terminal.qkv_split_conv_concat_bridge` inside its original
+`optimize_layout_transpose_chains` guard.
+
+Only the unused local destination changed. The indexed owner call, argument,
+layout-state keyword, evaluation count, QKV-attention predecessor,
+singleton-reshape successor, post-SiNet and later bridge observations, ModelIR
+mutation, public outputs, reports, artifacts, dependencies, and TensorFlow
+isolation remain unchanged. The retained guard preserves invoked-phase-only
+semantics. The bounded store now covers 110/128 phase IDs, leaving 18 slots.
+
+Two representation-dependent bridge and singleton boundary tests now unwrap
+the record while continuing to validate all three owner call sites and both
+composite boundaries.
+
+Validation completed sequentially under core-only `uv`:
+
+- focused bridge/QKV/singleton/store contracts: `106 passed in 1.37s`;
+- synthetic core runtime contracts: `55 passed in 1.02s`;
+- broader result and phase-result contracts: `190 passed in 9.42s`;
+- lowerer architecture contracts: `258 passed in 17.17s`;
+- targeted Ruff, Python bytecode compilation, AST capacity audit, and
+  whitespace validation: passed.
+
+No root-model corpus conversion was run because this is an
+observation-destination-only change and the indexed synthetic runtime suite
+exercises the bridge implementation.
+
 ## Layout pass-set 1 affine cleanup implementation
 
 The five characterized observations now record under stable

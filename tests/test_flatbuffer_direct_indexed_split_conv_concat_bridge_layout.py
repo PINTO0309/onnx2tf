@@ -797,14 +797,28 @@ def test_split_conv_concat_bridge_retains_both_earlier_results() -> None:
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
 
-    def _call_name(statement: ast.stmt) -> str | None:
+    def _statement_call(statement: ast.stmt) -> ast.Call | None:
         if not isinstance(statement, (ast.Assign, ast.Expr)):
             return None
         if not isinstance(statement.value, ast.Call):
             return None
-        if not isinstance(statement.value.func, ast.Name):
+        call = statement.value
+        if (
+            isinstance(call.func, ast.Attribute)
+            and isinstance(call.func.value, ast.Name)
+            and call.func.value.id == "session"
+            and call.func.attr == "record_phase_result"
+            and len(call.args) == 2
+            and isinstance(call.args[1], ast.Call)
+        ):
+            return call.args[1]
+        return call
+
+    def _call_name(statement: ast.stmt) -> str | None:
+        call = _statement_call(statement)
+        if call is None or not isinstance(call.func, ast.Name):
             return None
-        return statement.value.func.id
+        return call.func.id
 
     all_calls = [
         node
@@ -833,11 +847,15 @@ def test_split_conv_concat_bridge_retains_both_earlier_results() -> None:
         if _call_name(statement) == TERMINAL_SPLIT_CONV_CONCAT_BRIDGE_OWNER
     )
     terminal = terminal_guard.body[terminal_index]
-    assert isinstance(terminal, ast.Assign)
-    assert len(terminal.targets) == 1
-    assert isinstance(terminal.targets[0], ast.Name)
-    assert terminal.targets[0].id == (
-        "_terminal_qkv_split_conv_concat_bridge_stats"
+    assert isinstance(terminal, ast.Expr)
+    record = terminal.value
+    assert isinstance(record, ast.Call)
+    assert isinstance(record.func, ast.Attribute)
+    assert isinstance(record.func.value, ast.Name)
+    assert record.func.value.id == "session"
+    assert record.func.attr == "record_phase_result"
+    assert ast.literal_eval(record.args[0]) == (
+        "cleanup.terminal.qkv_split_conv_concat_bridge"
     )
     predecessor = terminal_guard.body[terminal_index - 1]
     assert isinstance(predecessor, ast.Assign)
@@ -867,13 +885,14 @@ def test_split_conv_concat_bridge_retains_both_earlier_results() -> None:
     )
 
     for statement in (terminal, post_sinet):
-        assert isinstance(statement.value, ast.Call)
-        assert [ast.unparse(argument) for argument in statement.value.args] == [
+        call = _statement_call(statement)
+        assert call is not None
+        assert [ast.unparse(argument) for argument in call.args] == [
             "model_ir"
         ]
         assert {
             keyword.arg: ast.unparse(keyword.value)
-            for keyword in statement.value.keywords
+            for keyword in call.keywords
         } == {"layout_state": "session.layout_state"}
 
     late = next(

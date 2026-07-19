@@ -3,9 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 EXPECTED_RESULT_TARGET = "_terminal_qkv_split_conv_concat_bridge_stats"
@@ -72,33 +69,6 @@ def _terminal_layout_guard(lowerer: ast.FunctionDef) -> ast.If:
     return guards[0]
 
 
-def test_terminal_qkv_bridge_result_is_guarded_bounded_and_unconsumed() -> None:
-    lowerer = _lowerer()
-    guard = _terminal_layout_guard(lowerer)
-    assignments = [
-        statement
-        for statement in guard.body
-        if _single_target(statement) == EXPECTED_RESULT_TARGET
-    ]
-    assert len(assignments) == 1
-    statement = assignments[0]
-    index = guard.body.index(statement)
-
-    assert ast.unparse(statement.value) == EXPECTED_OWNER_EXPRESSION
-    assert _single_target(guard.body[index - 1]) == PREDECESSOR_TARGET
-    assert _single_target(guard.body[index + 1]) == SUCCESSOR_TARGET
-    assert not any(
-        isinstance(node, ast.Name)
-        and node.id == EXPECTED_RESULT_TARGET
-        and isinstance(node.ctx, ast.Load)
-        for node in ast.walk(lowerer)
-    )
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="terminal QKV bridge result has not moved to a phase record",
-)
 def test_terminal_qkv_bridge_result_uses_phase_result_store() -> None:
     lowerer = _lowerer()
     guard = _terminal_layout_guard(lowerer)

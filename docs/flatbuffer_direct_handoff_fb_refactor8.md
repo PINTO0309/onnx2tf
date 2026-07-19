@@ -1731,3 +1731,29 @@ Commit and push this characterization before replacing only the one mapping
 destination. Preserve the guard and both composites, update structural
 contracts, run sequential gates, document, commit, and push. Never create,
 update, or reopen a pull request.
+
+## Guarded terminal QKV bridge implementation
+
+The one characterized result now records under
+`cleanup.terminal.qkv_split_conv_concat_bridge` inside the unchanged layout
+optimization guard. Its owner, argument, layout-state keyword, evaluation
+count, QKV and singleton composite boundaries, graph behavior, later owner
+calls, public contracts, dependencies, and TensorFlow isolation are unchanged.
+
+The bounded store now contains 110/128 records, leaving 18 slots. Two stale
+structural assertions now unwrap the nested owner while retaining three-call-
+site and boundary checks.
+
+Validation completed sequentially under core-only `uv`:
+
+- focused bridge/QKV/singleton/store contracts: `106 passed in 1.37s`;
+- synthetic core runtime contracts: `55 passed in 1.02s`;
+- broader result contracts: `190 passed in 9.42s`;
+- lowerer architecture contracts: `258 passed in 17.17s`;
+- targeted Ruff, bytecode compilation, AST capacity audit, and whitespace
+  checks: passed.
+
+No root-model conversion was required because the indexed synthetic suite
+executes this bridge. Commit and push this unit. Begin the next unit with a
+fresh characterize-first audit and never create, update, or reopen a pull
+request.

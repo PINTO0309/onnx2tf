@@ -141,9 +141,9 @@ numbering and report semantics.
 The phase store is not written to ModelIR metadata and is not exposed through
 the public API, conversion result, reports, or generated artifacts.
 
-### 109 stable phase IDs
+### 110 stable phase IDs
 
-The lowerer now records 109 bounded observations covering:
+The lowerer now records 110 bounded observations covering:
 
 - nine unconditional core cleanup results covering pseudo-LeakyReLU, YOLO
   decode, consecutive Mul, terminal Dequantize/QDQ, Conv affine/activation,
@@ -170,6 +170,8 @@ The lowerer now records 109 bounded observations covering:
   InstanceNorm dual-stat cleanup;
 - guarded terminal BatchMatMul affine-input, Reshape/SE, and adjoint-flag
   cleanup between the retained Mean- and QKV-attention composites;
+- guarded terminal QKV Split/Conv/Concat bridge cleanup between the retained
+  QKV-attention and singleton-reshape composites;
 - core shape resolution;
 - safe no-layout Transpose reduction;
 - terminal static-shape reconciliation;
@@ -224,15 +226,15 @@ contract that fixed the relevant schema, graph effects, cycle behavior,
 metadata behavior, phase position, arguments, and no-op behavior. Production
 changes were then limited to the characterized boundary.
 
-The latest twelve records cover terminal boundary StridedSlice/QDQ/Concat,
+The latest thirteen records cover terminal boundary StridedSlice/QDQ/Concat,
 activation bridge, InstanceNorm, normalization, and guarded BatchMatMul
-cleanup observations. They retain deterministic order and their original
-composite boundaries.
+and QKV bridge cleanup observations. They retain deterministic order and
+their original composite boundaries.
 
 Structural tests also ensure that:
 
 - raw duplicated operation pairs no longer remain at migrated sites;
-- all 109 phase IDs and owners appear in deterministic source order;
+- all 110 phase IDs and owners appear in deterministic source order;
 - old unconsumed result targets are absent from the lowerer;
 - the bounded store does not alias caller mappings or snapshots;
 - diagnostics and public output contracts remain independent of the store.
@@ -286,7 +288,9 @@ Final checkpoint results:
 - terminal normalization, phase-store, owner, and boundary contracts:
   **100 passed**;
 - terminal BatchMatMul, QKV, and phase-store contracts: **26 passed**;
-- broader result and phase-result contracts: **189 passed**;
+- indexed QKV bridge, QKV, singleton, and phase-store contracts:
+  **106 passed**;
+- broader result and phase-result contracts: **190 passed**;
 - broader phase-store, owner, fallback, terminal, shape, and topology suite:
   **275 passed**;
 - lowerer architecture suite: **258 passed**;
