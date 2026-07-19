@@ -388,8 +388,8 @@ def test_terminal_slice_concat_recovery_preserves_outer_boundaries() -> None:
             "_optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks",
         ),
         (
-            "_final_channel_slice_muladd_bridge_stats",
-            "_optimize_transpose_channel_slice_muladd_nhwc_bridge_chains",
+            "_final_boundary_channel_layout_results",
+            "run_final_boundary_channel_layout_cleanup",
             (),
             "_final_slice_prepost_passthrough_stats",
             "_optimize_transpose_slice_prepost_nhwc_passthrough_chains",

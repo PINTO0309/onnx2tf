@@ -1351,6 +1351,42 @@ composite. Targeted Ruff, bytecode compilation, and whitespace checks passed.
 Commit and push characterization first, keep the store fixed at 128/128, and
 never create, update, or reopen a pull request.
 
+## Final boundary-channel composite implementation
+
+`run_final_boundary_channel_layout_cleanup(context)` now owns the
+characterized boundary-input normalization, internal channel-slice, and
+channel-slice Mul/Add bridge calls. It passes layout state and diagnostics only
+to normalization and preserves the model-only final invocations of the latter
+two owners. Their independent mappings are returned as an ordered tuple.
+
+The lowerer retains one `_final_boundary_channel_layout_results` composite via
+`shared_model_ir_pass_context`. The three old unconsumed locals are absent, and
+the composite remains outside `ConversionSession.phase_results`; the store is
+still exactly 128/128. Earlier terminal phase records and their layout-aware
+arguments are unchanged.
+
+Focused runtime coverage proves call order, ModelIR/layout/diagnostics identity,
+the model-only second and third callbacks, and tuple ordering. Structural
+contracts now distinguish the retained terminal calls from the new final
+composite and require it between final convergence and slice/Concat recovery.
+No graph, numerical, diagnostics, or artifact failure occurred.
+
+Validation completed sequentially under core-only `uv`:
+
+- focused boundary/channel owners and affected boundaries:
+  `79 passed in 4.15s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.97s`;
+- synthetic core runtime contracts: `55 passed in 1.11s`;
+- broader result and phase-result contracts: `196 passed in 9.49s`;
+- full lowerer architecture contracts: `258 passed in 19.29s`;
+- phase-result capacity contracts: `2 passed in 0.52s`;
+- targeted Ruff, bytecode compilation, fixed-capacity audit, and whitespace
+  checks: passed.
+
+No root-model conversion was run because this is a characterized three-call
+owner extraction with focused runtime equivalence and unchanged serialization
+inputs.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:

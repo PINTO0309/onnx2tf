@@ -2406,3 +2406,33 @@ first. Implementation must add runtime order/context/argument/tuple coverage,
 update structural boundaries and ownership, run sequential gates, document,
 commit, and push. Keep the store at 128/128 and never create, update, or reopen
 a pull request.
+
+## Final boundary-channel composite implementation
+
+`run_final_boundary_channel_layout_cleanup` now invokes final boundary-input
+normalization, internal channel-slice propagation, and the channel-slice
+Mul/Add bridge in the original order. Only normalization receives layout and
+diagnostics; the latter two remain model-only. The ordered tuple is retained
+as `_final_boundary_channel_layout_results` outside the full store.
+
+The three old final locals are gone, while the earlier terminal phase records
+and layout-aware calls remain unchanged. Focused runtime coverage proves order,
+context identity, exact argument policy, and tuple order. Broad failures were
+only stale source-representation assertions; no graph or numerical behavior
+failed.
+
+Final sequential validation under core-only `uv`:
+
+- focused boundary/channel owners and affected boundaries:
+  `79 passed in 4.15s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.97s`;
+- synthetic core runtime contracts: `55 passed in 1.11s`;
+- result and phase-result contracts: `196 passed in 9.49s`;
+- full architecture contracts: `258 passed in 19.29s`;
+- phase-store capacity contracts: `2 passed in 0.52s`;
+- Ruff, bytecode compilation, 128/128 capacity audit, and whitespace checks:
+  passed.
+
+The store remains fixed at 128/128. Commit and push this implementation unit.
+Resume by auditing the next final non-store boundary; do not create, update, or
+reopen a pull request.

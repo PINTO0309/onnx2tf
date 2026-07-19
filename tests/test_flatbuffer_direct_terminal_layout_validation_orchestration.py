@@ -1982,71 +1982,48 @@ def test_primary_path_retains_late_final_shape_activation_convergence_result() -
     assert predecessor.targets[0].id == "_late_window_layout_results"
 
     successor_call = _statement_call(body[index + 1])
-    assert _call_name(successor_call) == "run_boundary_input_normalization_cleanup"
+    assert _call_name(successor_call) == (
+        "run_final_boundary_channel_layout_cleanup"
+    )
     assert successor_call is not None
-    assert [ast.unparse(argument) for argument in successor_call.args] == ["model_ir"]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in successor_call.keywords
-    } == {
-        "layout_state": "session.layout_state",
-        "diagnostics": "session.diagnostics",
-    }
+    assert [ast.unparse(argument) for argument in successor_call.args] == [
+        "shared_model_ir_pass_context"
+    ]
+    assert successor_call.keywords == []
 
 
-def test_primary_path_retains_final_boundary_input_normalization_result() -> None:
+def test_primary_path_retains_final_boundary_channel_layout_composite() -> None:
     body = _lowerer_body()
-    callback_name = "run_boundary_input_normalization_cleanup"
     indices = [
         index
         for index, statement in enumerate(body)
-        if _call_name(_statement_call(statement)) == callback_name
+        if _call_name(_statement_call(statement))
+        == "run_final_boundary_channel_layout_cleanup"
     ]
-    assert len(indices) == 2
-    earlier_index, final_index = indices
-    assert earlier_index < final_index
-    earlier_statement = body[earlier_index]
-    _assert_phase_result_record(
-        earlier_statement,
-        phase_id="cleanup.terminal.boundary_input_normalization",
-        owner_expression=(
-            "run_boundary_input_normalization_cleanup(model_ir, "
-            "layout_state=session.layout_state, "
-            "diagnostics=session.diagnostics)"
-        ),
-    )
-
-    statement = body[final_index]
+    assert len(indices) == 1
+    index = indices[0]
+    statement = body[index]
     assert isinstance(statement, ast.Assign)
-    assert len(statement.targets) == 1
     assert isinstance(statement.targets[0], ast.Name)
-    assert statement.targets[0].id == "_final_boundary_input_normalization_stats"
-    call = statement.value
-    assert isinstance(call, ast.Call)
-    assert isinstance(call.func, ast.Name)
-    assert call.func.id == callback_name
-    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in call.keywords
-    } == {
-        "layout_state": "session.layout_state",
-        "diagnostics": "session.diagnostics",
-    }
-
-    predecessor = body[final_index - 1]
+    assert statement.targets[0].id == (
+        "_final_boundary_channel_layout_results"
+    )
+    assert ast.unparse(statement.value) == (
+        "run_final_boundary_channel_layout_cleanup("
+        "shared_model_ir_pass_context)"
+    )
+    predecessor = body[index - 1]
     assert isinstance(predecessor, ast.Assign)
     assert isinstance(predecessor.targets[0], ast.Name)
     assert predecessor.targets[0].id == (
         "_late_final_shape_activation_convergence_stats"
     )
-
-    successor_call = _statement_call(body[final_index + 1])
+    successor_call = _statement_call(body[index + 1])
     assert _call_name(successor_call) == (
-        "_optimize_internal_transpose_channel_slice_nhwc_propagation_chains"
+        "_run_terminal_slice_concat_layout_recovery_sequence"
     )
     assert successor_call is not None
-    assert [ast.unparse(argument) for argument in successor_call.args] == ["model_ir"]
+    assert successor_call.args == []
     assert successor_call.keywords == []
 
 
@@ -2058,16 +2035,8 @@ def test_primary_path_retains_terminal_boundary_input_normalization_result() -> 
         for index, statement in enumerate(body)
         if _call_name(_statement_call(statement)) == callback_name
     ]
-    assert len(indices) == 2
-    terminal_index, final_index = indices
-    assert terminal_index < final_index
-
-    final_statement = body[final_index]
-    assert isinstance(final_statement, ast.Assign)
-    assert isinstance(final_statement.targets[0], ast.Name)
-    assert final_statement.targets[0].id == (
-        "_final_boundary_input_normalization_stats"
-    )
+    assert len(indices) == 1
+    terminal_index = indices[0]
 
     statement = body[terminal_index]
     _assert_phase_result_record(
@@ -2161,9 +2130,8 @@ def test_primary_path_retains_first_terminal_internal_channel_slice_result() -> 
         for index, statement in enumerate(body)
         if _call_name(_statement_call(statement)) == callback_name
     ]
-    assert len(indices) == 2
-    first_index, final_index = indices
-    assert first_index < final_index
+    assert len(indices) == 1
+    first_index = indices[0]
 
     statement = body[first_index]
     _assert_phase_result_record(
@@ -2198,152 +2166,24 @@ def test_primary_path_retains_first_terminal_internal_channel_slice_result() -> 
         for keyword in successor_call.keywords
     } == {"layout_state": "session.layout_state"}
 
-    final_statement = body[final_index]
-    assert isinstance(final_statement, ast.Assign)
-    assert len(final_statement.targets) == 1
-    assert isinstance(final_statement.targets[0], ast.Name)
-    assert final_statement.targets[0].id == "_final_internal_channel_slice_stats"
-    final_call = final_statement.value
-    assert isinstance(final_call, ast.Call)
-    assert isinstance(final_call.func, ast.Name)
-    assert final_call.func.id == callback_name
-    assert [ast.unparse(argument) for argument in final_call.args] == ["model_ir"]
-    assert final_call.keywords == []
-
-    final_predecessor = body[final_index - 1]
-    assert isinstance(final_predecessor, ast.Assign)
-    assert len(final_predecessor.targets) == 1
-    assert isinstance(final_predecessor.targets[0], ast.Name)
-    assert final_predecessor.targets[0].id == (
-        "_final_boundary_input_normalization_stats"
-    )
-    final_successor_call = _statement_call(body[final_index + 1])
-    assert _call_name(final_successor_call) == (
-        "_optimize_transpose_channel_slice_muladd_nhwc_bridge_chains"
-    )
-    assert final_successor_call is not None
-    assert [
-        ast.unparse(argument) for argument in final_successor_call.args
-    ] == ["model_ir"]
-    assert final_successor_call.keywords == []
-
-
-def test_primary_path_retains_final_internal_channel_slice_result() -> None:
+def test_primary_path_removes_final_internal_channel_slice_result() -> None:
     body = _lowerer_body()
-    callback_name = (
-        "_optimize_internal_transpose_channel_slice_nhwc_propagation_chains"
-    )
-    indices = [
-        index
-        for index, statement in enumerate(body)
-        if _call_name(_statement_call(statement)) == callback_name
-    ]
-    assert len(indices) == 2
-    terminal_index, final_index = indices
-    assert terminal_index < final_index
-
-    terminal_statement = body[terminal_index]
-    _assert_phase_result_record(
-        terminal_statement,
-        phase_id="cleanup.terminal.internal_channel_slice",
-        owner_expression=(
-            "_optimize_internal_transpose_channel_slice_nhwc_propagation_chains("
-            "model_ir, layout_state=session.layout_state)"
-        ),
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id == "_final_internal_channel_slice_stats"
+        for statement in body
+        for node in ast.walk(statement)
     )
 
-    statement = body[final_index]
-    assert isinstance(statement, ast.Assign)
-    assert len(statement.targets) == 1
-    assert isinstance(statement.targets[0], ast.Name)
-    assert statement.targets[0].id == "_final_internal_channel_slice_stats"
-    call = statement.value
-    assert isinstance(call, ast.Call)
-    assert isinstance(call.func, ast.Name)
-    assert call.func.id == callback_name
-    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-    assert call.keywords == []
 
-    predecessor = body[final_index - 1]
-    assert isinstance(predecessor, ast.Assign)
-    assert len(predecessor.targets) == 1
-    assert isinstance(predecessor.targets[0], ast.Name)
-    assert predecessor.targets[0].id == (
-        "_final_boundary_input_normalization_stats"
-    )
-
-    successor_call = _statement_call(body[final_index + 1])
-    assert _call_name(successor_call) == (
-        "_optimize_transpose_channel_slice_muladd_nhwc_bridge_chains"
-    )
-    assert successor_call is not None
-    assert [ast.unparse(argument) for argument in successor_call.args] == [
-        "model_ir"
-    ]
-    assert successor_call.keywords == []
-
-
-def test_primary_path_retains_final_channel_slice_muladd_bridge_result() -> None:
+def test_primary_path_removes_final_channel_slice_muladd_bridge_result() -> None:
     body = _lowerer_body()
-    callback_name = (
-        "_optimize_transpose_channel_slice_muladd_nhwc_bridge_chains"
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id == "_final_channel_slice_muladd_bridge_stats"
+        for statement in body
+        for node in ast.walk(statement)
     )
-    indices = [
-        index
-        for index, statement in enumerate(body)
-        if _call_name(_statement_call(statement)) == callback_name
-    ]
-    assert len(indices) == 2
-    terminal_index, final_index = indices
-    assert terminal_index < final_index
-
-    terminal_statement = body[terminal_index]
-    _assert_phase_result_record(
-        terminal_statement,
-        phase_id="cleanup.terminal.channel_slice_muladd_bridge",
-        owner_expression=(
-            "_optimize_transpose_channel_slice_muladd_nhwc_bridge_chains("
-            "model_ir, layout_state=session.layout_state)"
-        ),
-    )
-
-    terminal_predecessor = body[terminal_index - 1]
-    _assert_phase_result_record(
-        terminal_predecessor,
-        phase_id="cleanup.terminal.internal_channel_slice",
-        owner_expression=(
-            "_optimize_internal_transpose_channel_slice_nhwc_propagation_chains("
-            "model_ir, layout_state=session.layout_state)"
-        ),
-    )
-    assert _call_name(_statement_call(body[terminal_index + 1])) == (
-        "_run_terminal_slice_concat_layout_recovery_sequence"
-    )
-
-    statement = body[final_index]
-    assert isinstance(statement, ast.Assign)
-    assert len(statement.targets) == 1
-    assert isinstance(statement.targets[0], ast.Name)
-    assert statement.targets[0].id == "_final_channel_slice_muladd_bridge_stats"
-    call = statement.value
-    assert isinstance(call, ast.Call)
-    assert isinstance(call.func, ast.Name)
-    assert call.func.id == callback_name
-    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-    assert call.keywords == []
-
-    predecessor = body[final_index - 1]
-    assert isinstance(predecessor, ast.Assign)
-    assert len(predecessor.targets) == 1
-    assert isinstance(predecessor.targets[0], ast.Name)
-    assert predecessor.targets[0].id == "_final_internal_channel_slice_stats"
-    successor_call = _statement_call(body[final_index + 1])
-    assert _call_name(successor_call) == (
-        "_run_terminal_slice_concat_layout_recovery_sequence"
-    )
-    assert successor_call is not None
-    assert successor_call.args == []
-    assert successor_call.keywords == []
 
 
 def test_primary_path_retains_terminal_channel_slice_muladd_bridge_result() -> None:
@@ -2356,9 +2196,8 @@ def test_primary_path_retains_terminal_channel_slice_muladd_bridge_result() -> N
         for index, statement in enumerate(body)
         if _call_name(_statement_call(statement)) == callback_name
     ]
-    assert len(indices) == 2
-    terminal_index, final_index = indices
-    assert terminal_index < final_index
+    assert len(indices) == 1
+    terminal_index = indices[0]
 
     statement = body[terminal_index]
     _assert_phase_result_record(
@@ -2387,32 +2226,6 @@ def test_primary_path_retains_terminal_channel_slice_muladd_bridge_result() -> N
     assert successor_call.args == []
     assert successor_call.keywords == []
 
-    final_statement = body[final_index]
-    assert isinstance(final_statement, ast.Assign)
-    assert len(final_statement.targets) == 1
-    assert isinstance(final_statement.targets[0], ast.Name)
-    assert final_statement.targets[0].id == (
-        "_final_channel_slice_muladd_bridge_stats"
-    )
-    final_call = final_statement.value
-    assert isinstance(final_call, ast.Call)
-    assert isinstance(final_call.func, ast.Name)
-    assert final_call.func.id == callback_name
-    assert [ast.unparse(argument) for argument in final_call.args] == ["model_ir"]
-    assert final_call.keywords == []
-
-    final_predecessor = body[final_index - 1]
-    assert isinstance(final_predecessor, ast.Assign)
-    assert len(final_predecessor.targets) == 1
-    assert isinstance(final_predecessor.targets[0], ast.Name)
-    assert final_predecessor.targets[0].id == "_final_internal_channel_slice_stats"
-    final_successor_call = _statement_call(body[final_index + 1])
-    assert _call_name(final_successor_call) == (
-        "_run_terminal_slice_concat_layout_recovery_sequence"
-    )
-    assert final_successor_call is not None
-    assert final_successor_call.args == []
-    assert final_successor_call.keywords == []
 
 
 def test_primary_path_retains_terminal_boundary_stridedslice_result() -> None:

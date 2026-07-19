@@ -106,7 +106,7 @@ text. Cycle behavior and stale-error removal are covered explicitly.
 
 ### Late composite orchestration owners
 
-Five late lowerer clusters now have focused orchestration owners. The first
+Six late lowerer clusters now have focused orchestration owners. The first
 combines adjacent NDHWC gate and cost-volume ScatterND cleanup into the final
 bounded phase result while sharing one short-lived pass state. The second runs
 four late Concat/layout owners with one internal state scope and returns their
@@ -127,8 +127,13 @@ The fifth runs the adjacent window-partition and window-reverse repairs with
 the same conversion-local layout state and returns their two mappings as an
 ordered tuple outside the store.
 
+The sixth runs final boundary-input normalization, internal channel-slice
+propagation, and the channel-slice Mul/Add bridge. It preserves the final-only
+model-only policy for the latter two calls and returns all three mappings as an
+ordered tuple outside the store.
+
 These extractions preserve callback order, model/layout/diagnostics identity,
-and result schemas while removing fifteen unconsumed locals and two lowerer scope
+and result schemas while removing eighteen unconsumed locals and two lowerer scope
 locals. Focused runtime tests verify shared scope identity, exact argument
 policy, and ordered results.
 
@@ -358,6 +363,8 @@ Final checkpoint results:
   **238 passed**;
 - late window-layout composite and affected owner contracts:
   **110 passed**;
+- final boundary-channel composite and affected owner contracts:
+  **79 passed**;
 - broader result and phase-result contracts: **196 passed**;
 - broader phase-store, owner, fallback, terminal, shape, and topology suite:
   **275 passed**;

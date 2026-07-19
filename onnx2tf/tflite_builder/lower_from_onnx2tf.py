@@ -278,6 +278,9 @@ from onnx2tf.tflite_builder.passes.late_attention_layout_orchestration import (
 from onnx2tf.tflite_builder.passes.late_window_layout_orchestration import (
     run_late_window_layout_cleanup,
 )
+from onnx2tf.tflite_builder.passes.final_boundary_channel_layout_orchestration import (
+    run_final_boundary_channel_layout_cleanup,
+)
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     run_channel_shuffle_gather,
 )
@@ -5199,18 +5202,10 @@ def lower_onnx_to_ir(
         )
     )
     # Final boundary cleanup after all late transpose/layout rewrites.
-    _final_boundary_input_normalization_stats = (
-        run_boundary_input_normalization_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
+    _final_boundary_channel_layout_results = (
+        run_final_boundary_channel_layout_cleanup(
+            shared_model_ir_pass_context,
         )
-    )
-    _final_internal_channel_slice_stats = (
-        _optimize_internal_transpose_channel_slice_nhwc_propagation_chains(model_ir)
-    )
-    _final_channel_slice_muladd_bridge_stats = (
-        _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(model_ir)
     )
     _final_slice_concat_recovery_results = (
         _run_terminal_slice_concat_layout_recovery_sequence()

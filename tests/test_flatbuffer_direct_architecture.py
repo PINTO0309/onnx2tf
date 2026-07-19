@@ -104,6 +104,9 @@ from onnx2tf.tflite_builder.passes.late_attention_layout_orchestration import (
 from onnx2tf.tflite_builder.passes.late_window_layout_orchestration import (
     LATE_WINDOW_LAYOUT_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.final_boundary_channel_layout_orchestration import (
+    FINAL_BOUNDARY_CHANNEL_LAYOUT_PASS_IDS,
+)
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     CHANNEL_SHUFFLE_GATHER_BASE_PASS_IDS,
     CHANNEL_SHUFFLE_GATHER_DEFAULT_PASS_IDS,
@@ -187,6 +190,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *LATE_RESHAPE_LAYOUT_PASS_IDS,
     *LATE_ATTENTION_LAYOUT_PASS_IDS,
     *LATE_WINDOW_LAYOUT_PASS_IDS,
+    *FINAL_BOUNDARY_CHANNEL_LAYOUT_PASS_IDS,
     *CHANNEL_SHUFFLE_GATHER_PASS_IDS,
     *MEAN_ATTENTION_PASS_IDS,
     *SINGLETON_RESHAPE_PASS_IDS,
@@ -1951,6 +1955,7 @@ def test_lowerer_terminal_slice_concat_recovery_has_one_ordered_owner() -> None:
     ]
     assert len(invocation_indexes) == 2
     previous_targets = []
+    previous_call_names = []
     previous_keyword_names = []
     next_targets = []
     next_call_names = []
@@ -1980,11 +1985,8 @@ def test_lowerer_terminal_slice_concat_recovery_has_one_ordered_owner() -> None:
             )
             previous_call = previous_call.args[1]
         assert isinstance(previous_call.func, ast.Name)
-        assert (
-            previous_call.func.id
-            == "_optimize_transpose_channel_slice_muladd_nhwc_bridge_chains"
-        )
         previous_targets.append(previous_target)
+        previous_call_names.append(previous_call.func.id)
         previous_keyword_names.append(
             [keyword.arg for keyword in previous_call.keywords]
         )
@@ -2014,7 +2016,11 @@ def test_lowerer_terminal_slice_concat_recovery_has_one_ordered_owner() -> None:
         next_call_names.append(following_call.func.id)
     assert previous_targets == [
         None,
-        "_final_channel_slice_muladd_bridge_stats",
+        "_final_boundary_channel_layout_results",
+    ]
+    assert previous_call_names == [
+        "_optimize_transpose_channel_slice_muladd_nhwc_bridge_chains",
+        "run_final_boundary_channel_layout_cleanup",
     ]
     assert previous_keyword_names == [["layout_state"], []]
     assert next_targets == [
@@ -3460,8 +3466,16 @@ def test_lowerer_final_shape_activation_convergence_reuses_one_index() -> None:
     assert isinstance(previous_boundary.value, ast.Call)
     assert isinstance(previous_boundary.value.func, ast.Name)
     assert previous_boundary.value.func.id == "run_late_window_layout_cleanup"
-    assert lowerer.body[invocation_index + 1].value.func.id == (
-        "run_boundary_input_normalization_cleanup"
+    next_boundary = lowerer.body[invocation_index + 1]
+    assert isinstance(next_boundary, ast.Assign)
+    assert isinstance(next_boundary.targets[0], ast.Name)
+    assert next_boundary.targets[0].id == (
+        "_final_boundary_channel_layout_results"
+    )
+    assert isinstance(next_boundary.value, ast.Call)
+    assert isinstance(next_boundary.value.func, ast.Name)
+    assert next_boundary.value.func.id == (
+        "run_final_boundary_channel_layout_cleanup"
     )
 
     fusion_wrapper = next(
@@ -13419,6 +13433,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_transpose_unary_fanout_bridge_cleanup",
         "run_transpose_unary_binary_fanout_bridge_cleanup",
         "run_boundary_input_batchmatmul_cleanup",
+        "run_boundary_input_normalization_cleanup",
         "run_input_unary_passthrough_cleanup",
         "run_channel_slice_merge_layout_cleanup",
         "run_pad_mul_layout_cleanup",
@@ -13556,7 +13571,13 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_boundary_input_normalization_cleanup"
     ]
-    assert len(boundary_normalization_calls) == 2
+    assert (
+        len(boundary_normalization_calls)
+        + _orchestrated_pass_count(
+            "run_boundary_input_normalization_cleanup"
+        )
+        == 2
+    )
 
     quantized_prelu_calls = [
         call
