@@ -4663,3 +4663,31 @@ semantically closed cluster whose children are already pass-module-owned,
 characterize it before production changes, and keep all verification under
 `uv` sequential and single-process. Do not create, update, or reopen a pull
 request; use appropriately scoped commits and pushes only.
+
+## Late reshape/shuffle/attention/window composite characterization
+
+The fresh inventory selected four adjacent unconsumed late-layout results:
+reshape, base-only channel shuffle/Gather, attention, and window cleanup. They
+all use the existing shared pass context; the base channel policy explicitly
+disables two-way and NHWC shuffle. The preceding optional Concat elementwise-
+fanout guard and following indexed final shape/activation convergence define
+the fixed outer boundary. The separate guarded full channel-shuffle policy is
+unchanged.
+
+The strict contract preserves exact child owners, arguments, flags, nested raw
+tuple schema `(3, 2, 4, 2)`, source order, and absence of consumers. Focused
+validation reports `2 passed, 1 xfailed`; affected sequential validation
+reports `403 passed, 1 xfailed`. The sole expected failure requires the new
+context owner. A pre-existing layout-recovery AST test was independently
+updated to unwrap already-recorded phase owners; it failed on the unchanged
+production baseline. Ruff and whitespace checks passed. Production,
+TensorFlow isolation, and the 128-ID/128-owner store remain unchanged; no model
+conversion was run.
+
+At resume, implement
+`passes/late_reshape_shuffle_attention_window_orchestration.py` as a
+straight-line four-stage owner. Pass the exact shared context to every child,
+preserve the base-only channel flags and all raw tuple identities, retain the
+lowerer channel-shuffle wrapper for its guarded full-policy and callback users,
+and preserve both outer boundaries. Run affected and standard gates
+sequentially. Never create, update, or reopen a pull request.

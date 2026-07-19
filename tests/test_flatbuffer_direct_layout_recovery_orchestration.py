@@ -73,6 +73,28 @@ def _direct_call_name(statement: ast.stmt) -> str | None:
     return function.id if isinstance(function, ast.Name) else None
 
 
+def _phase_or_direct_call_name(statement: ast.stmt) -> str | None:
+    direct_name = _direct_call_name(statement)
+    if direct_name is not None:
+        return direct_name
+    if not isinstance(statement, ast.Expr) or not isinstance(
+        statement.value, ast.Call
+    ):
+        return None
+    phase_call = statement.value
+    if not (
+        isinstance(phase_call.func, ast.Attribute)
+        and isinstance(phase_call.func.value, ast.Name)
+        and phase_call.func.value.id == "session"
+        and phase_call.func.attr == "record_phase_result"
+        and len(phase_call.args) == 2
+        and isinstance(phase_call.args[1], ast.Call)
+    ):
+        return None
+    owner = phase_call.args[1].func
+    return owner.id if isinstance(owner, ast.Name) else None
+
+
 def _single_target(statement: ast.stmt) -> str | None:
     if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
         return None
@@ -566,14 +588,16 @@ def test_attention_prefix_propagates_nested_layout_results_to_all_direct_calls(
         for body, index in direct_results
     )
     assert tuple(
-        _direct_call_name(body[index - 1]) for body, index in direct_results
+        _phase_or_direct_call_name(body[index - 1])
+        for body, index in direct_results
     ) == (
         "run_layout_transpose_cleanup",
         "run_duplicate_fanout_cleanup",
         "_run_qlinear_mean_concat_recovery_sequence",
     )
     assert tuple(
-        _direct_call_name(body[index + 1]) for body, index in direct_results
+        _phase_or_direct_call_name(body[index + 1])
+        for body, index in direct_results
     ) == (
         "_optimize_fold_mul_add_mul_affine_chains",
         "_optimize_fold_mul_add_mul_affine_chains",

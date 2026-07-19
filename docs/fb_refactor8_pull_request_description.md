@@ -1069,3 +1069,11 @@ pass IDs, phase results, public APIs, artifacts, dependency boundaries, and
 TensorFlow-free direct/`-cotof` behavior are preserved. Runtime identity tests,
 340 affected contracts, and the complete sequential standard gate set all
 pass; the phase-result store remains exactly 128 IDs and 128 owners.
+
+The next characterization fixes four adjacent late-layout composites:
+reshape, base-only channel shuffle/Gather, attention, and window cleanup. It
+preserves exact shared-context identity, the channel policy flags, all nested
+raw tuple schemas and order, the optional elementwise-fanout predecessor, the
+indexed final-shape successor, independent full-policy and callback routes,
+and the full 128-ID/128-owner store. Production remains unchanged pending a
+separate context-owner implementation.

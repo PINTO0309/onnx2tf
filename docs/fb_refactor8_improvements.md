@@ -5361,3 +5361,44 @@ changed. The store remains exactly 128 IDs and 128 owners. No real-model
 conversion was repeated because this checkpoint is a straight-line ownership
 move and the dedicated runtime test proves all arguments, state identities,
 raw results, and boundaries.
+
+## Late reshape/shuffle/attention/window composite characterization
+
+The post-removal inventory selected four consecutive unconditional late-layout
+results: reshape cleanup, the base NCHW channel-shuffle/Gather policy,
+attention cleanup, and window partition/reverse cleanup. The first, third, and
+fourth calls already receive `shared_model_ir_pass_context`; the channel
+shuffle wrapper delegates through an identity alias of that same context with
+`include_two_way_shuffle=False` and `include_nhwc_shuffle=False`. All four
+results are observation-only and unconsumed.
+
+The cluster starts immediately after the optional late Concat elementwise-
+fanout guard and ends immediately before indexed final shape/activation
+convergence. The guarded full channel-shuffle/Gather route remains independent
+and retains `include_post_gather_cleanup=True`.
+
+`tests/test_flatbuffer_direct_late_reshape_shuffle_attention_window_orchestration.py`
+fixes the four child owners, exact base-only policy, source adjacency, both
+outer boundaries, absence of consumers, and the empty-graph nested result
+schema `(3, 2, 4, 2)`. Its strict expected failure requires one shared-context
+owner returning the four raw tuples in order and one replacement lowerer
+result.
+
+An inherited layout-recovery test was also corrected to resolve the effective
+owner inside `session.record_phase_result(...)`. Its previous direct-call-only
+AST expectation was stale and failed before any production change; the new
+helper preserves the same expected owner names for both direct and recorded
+calls.
+
+Sequential characterization under core-only `uv` completed with
+`2 passed, 1 xfailed in 0.60s` focused and
+`403 passed, 1 xfailed in 19.20s` across the four child families, channel
+shuffle policies, terminal boundaries, callback composition, layout recovery,
+shared-context, architecture, result, and phase-store contracts. The sole
+expected failure is the intentionally absent composite. Ruff and whitespace
+checks passed.
+
+No production callback, graph mutation, result schema, context identity, pass
+order, public API, artifact, dependency, TensorFlow boundary, or store entry
+changed. No real-model conversion was run; the phase-result store remains
+exactly 128 IDs and 128 owners.
