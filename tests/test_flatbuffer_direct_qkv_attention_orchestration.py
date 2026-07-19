@@ -565,9 +565,10 @@ def test_qkv_attention_retains_both_default_policy_results() -> None:
     assert post_sinet.value.args == []
     assert post_sinet.value.keywords == []
     predecessor = lowerer.body[post_sinet_index - 1]
-    assert isinstance(predecessor, ast.Assign)
-    assert isinstance(predecessor.targets[0], ast.Name)
-    assert predecessor.targets[0].id == "_post_sinet_batchmatmul_adj_flags_stats"
+    _assert_phase_result_record(
+        predecessor,
+        "cleanup.post_sinet.batchmatmul_adj_flags",
+    )
     assert _call_name(lowerer.body[post_sinet_index + 1]) == (
         "_optimize_transpose_relu_split_all_outputs_to_nhwc_chains"
     )

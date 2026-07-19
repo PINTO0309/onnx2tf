@@ -1983,3 +1983,30 @@ before implementation. Then change only the three destinations, expand the
 store contract from 118 to 121, preserve the QKV composite, run sequential
 gates, document, commit, and push. Never create, update, or reopen a pull
 request.
+
+## Post-SiNet BatchMatMul result implementation
+
+The three results now record under their characterized
+`cleanup.post_sinet.batchmatmul_*` phase IDs. Only their unused destinations
+changed. Owner calls and arguments, unconditional order, outer MirrorPad and
+QKV boundaries, graph behavior, public contracts, artifacts, dependencies,
+and TensorFlow isolation are unchanged. The QKV composite remains a retained
+local and is not copied into the bounded store.
+
+The store now contains 121/128 records, leaving 7 slots. Affected structural
+tests unwrap the records and retain exact phase, owner, argument, adjacency,
+and composite assertions. The strict characterization expectation now passes.
+
+Validation completed sequentially under core-only `uv`:
+
+- focused BatchMatMul/QKV/attention/store contracts: `31 passed in 1.46s`;
+- synthetic core runtime contracts: `55 passed in 1.04s`;
+- broader result contracts: `192 passed in 9.08s`;
+- lowerer architecture contracts: `258 passed in 17.00s`;
+- targeted Ruff, bytecode compilation, AST capacity audit, and whitespace
+  checks: passed.
+
+No root-model conversion was required because only the destination of three
+already-computed one-counter mappings changed and focused runtime tests cover
+all owners. Commit and push this unit. Start the next unit with a fresh
+characterize-first audit and never create, update, or reopen a pull request.

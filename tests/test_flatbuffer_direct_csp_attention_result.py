@@ -202,8 +202,8 @@ def test_post_cleanup_attention_results_use_phase_result_store() -> None:
     assert _single_target(lowerer.body[indices[0] - 1]) == (
         "_post_cleanup_sinet_preadd_resize_results"
     )
-    assert _single_target(lowerer.body[indices[-1] + 1]) == (
-        "_post_sinet_batchmatmul_affine_input_stats"
+    assert _phase_id(lowerer.body[indices[-1] + 1]) == (
+        "cleanup.post_sinet.batchmatmul_affine_input"
     )
     assert not any(
         isinstance(node, ast.Name) and node.id in POST_CLEANUP_RESULT_TARGETS

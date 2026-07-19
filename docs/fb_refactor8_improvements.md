@@ -864,6 +864,39 @@ and all graph behavior; update the store from 118 to 121 records, run the
 sequential gates, document, commit, and push. Never create, update, or reopen
 a pull request.
 
+## Post-SiNet BatchMatMul result implementation
+
+The three characterized observations now record consecutively under:
+
+- `cleanup.post_sinet.batchmatmul_affine_input`;
+- `cleanup.post_sinet.batchmatmul_reshape_se`;
+- `cleanup.post_sinet.batchmatmul_adj_flags`.
+
+Only the unused local destinations changed. All three owners, arguments,
+unconditional execution, source order, preceding MirrorPad phase, following
+QKV-attention composite, ModelIR mutations, public behavior, reports,
+artifacts, dependencies, and TensorFlow isolation remain unchanged. The QKV
+composite remains deliberately outside the store. The bounded store now
+covers 121/128 phase IDs, leaving 7 slots.
+
+Affected affine-input, Reshape/SE, adjoint-flag, QKV, attention-boundary, and
+store contracts now unwrap phase records while preserving exact phase, owner,
+argument, and composite checks. The strict characterization expectation is a
+passing contract.
+
+Validation completed sequentially under core-only `uv`:
+
+- focused BatchMatMul/QKV/attention/store contracts: `31 passed in 1.46s`;
+- synthetic core runtime contracts: `55 passed in 1.04s`;
+- broader result and phase-result contracts: `192 passed in 9.08s`;
+- lowerer architecture contracts: `258 passed in 17.00s`;
+- targeted Ruff, bytecode compilation, AST capacity audit, and whitespace
+  checks: passed.
+
+No root-model corpus conversion was run because this is an
+observation-destination-only change and the focused suite exercises all three
+owners.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:

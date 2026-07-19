@@ -5,7 +5,6 @@ from copy import deepcopy
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
@@ -204,7 +203,7 @@ def test_flatbuffer_direct_batchmatmul_affine_transpose_input_chains() -> None:
     assert rhs_shape_vals == [1, 256, 96]
 
 
-def test_batchmatmul_affine_input_results_are_retained_at_both_boundaries() -> None:
+def test_batchmatmul_affine_input_results_are_recorded_at_both_boundaries() -> None:
     tree = ast.parse(LOWERER_PATH.read_text(encoding="utf-8"))
     lowerer = next(
         node
@@ -258,10 +257,10 @@ def test_batchmatmul_affine_input_results_are_retained_at_both_boundaries() -> N
         if _call_name(statement) == callback_name
     )
     post_sinet = lowerer.body[post_sinet_index]
-    assert isinstance(post_sinet, ast.Assign)
-    assert len(post_sinet.targets) == 1
-    assert isinstance(post_sinet.targets[0], ast.Name)
-    assert post_sinet.targets[0].id == "_post_sinet_batchmatmul_affine_input_stats"
+    _assert_phase_result_record(
+        post_sinet,
+        "cleanup.post_sinet.batchmatmul_affine_input",
+    )
     post_sinet_predecessor = lowerer.body[post_sinet_index - 1]
     _assert_phase_result_record(
         post_sinet_predecessor,
@@ -281,10 +280,6 @@ def test_batchmatmul_affine_input_results_are_retained_at_both_boundaries() -> N
         assert call.keywords == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="post-SiNet BatchMatMul results have not moved to phase records",
-)
 def test_post_sinet_batchmatmul_results_use_phase_result_store() -> None:
     tree = ast.parse(LOWERER_PATH.read_text(encoding="utf-8"))
     lowerer = next(

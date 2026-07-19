@@ -219,7 +219,7 @@ def test_flatbuffer_direct_batchmatmul_transpose_input_to_adj_flags() -> None:
     assert _fingerprint(owner_model_ir) == before_noop
 
 
-def test_batchmatmul_adj_flags_results_are_retained_at_both_boundaries() -> None:
+def test_batchmatmul_adj_flags_results_are_recorded_at_both_boundaries() -> None:
     tree = ast.parse(LOWERER_PATH.read_text(encoding="utf-8"))
     lowerer = next(
         node
@@ -273,14 +273,15 @@ def test_batchmatmul_adj_flags_results_are_retained_at_both_boundaries() -> None
         if _call_name(statement) == callback_name
     )
     post_sinet = lowerer.body[post_sinet_index]
-    assert isinstance(post_sinet, ast.Assign)
-    assert len(post_sinet.targets) == 1
-    assert isinstance(post_sinet.targets[0], ast.Name)
-    assert post_sinet.targets[0].id == "_post_sinet_batchmatmul_adj_flags_stats"
+    _assert_phase_result_record(
+        post_sinet,
+        "cleanup.post_sinet.batchmatmul_adj_flags",
+    )
     predecessor = lowerer.body[post_sinet_index - 1]
-    assert isinstance(predecessor, ast.Assign)
-    assert isinstance(predecessor.targets[0], ast.Name)
-    assert predecessor.targets[0].id == "_post_sinet_batchmatmul_reshape_se_stats"
+    _assert_phase_result_record(
+        predecessor,
+        "cleanup.post_sinet.batchmatmul_reshape_se",
+    )
     assert _call_name(lowerer.body[post_sinet_index + 1]) == (
         "_run_qkv_attention_layout_pass_cluster"
     )

@@ -208,8 +208,8 @@ def test_lowerer_records_both_direct_sa_pa_mirrorpad_results() -> None:
     following = lowerer.body[second_index + 1]
     assert _phase_id(previous) == "cleanup.post_cleanup.csp_attention"
     assert _call_name(previous) == "_optimize_transpose_csp_attention_nhwc_chains"
-    assert _single_target(following) == (
-        "_post_sinet_batchmatmul_affine_input_stats"
+    assert _phase_id(following) == (
+        "cleanup.post_sinet.batchmatmul_affine_input"
     )
     assert _call_name(following) == (
         "_optimize_batchmatmul_affine_transpose_input_chains"
