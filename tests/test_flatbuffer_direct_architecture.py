@@ -8272,7 +8272,42 @@ def test_lowerer_channel_slice_pad_mul_pair_reuses_pass_state_scope() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == helper_name
     ]
-    assert len(helper_invocations) + _orchestrated_pass_count(helper_name) == 2
+    summary_owner_name = "run_channel_slice_pad_mul_summary"
+    summary_invocations = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == summary_owner_name
+    ]
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "channel_slice_pad_mul_orchestration.py"
+    )
+    owner_tree = ast.parse(owner_path.read_text(encoding="utf-8"))
+    summary_owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == summary_owner_name
+    )
+    raw_owner_calls = [
+        node
+        for node in ast.walk(summary_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_channel_slice_pad_mul"
+    ]
+    assert len(raw_owner_calls) == 1
+    assert (
+        len(helper_invocations)
+        + _orchestrated_pass_count(helper_name)
+        + len(summary_invocations)
+        == 2
+    )
 
 
 def test_lowerer_singleton_reshape_clusters_reuse_pass_state_scopes() -> None:

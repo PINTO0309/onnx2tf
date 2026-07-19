@@ -106,7 +106,7 @@ text. Cycle behavior and stale-error removal are covered explicitly.
 
 ### Late composite orchestration owners
 
-Seventeen late lowerer clusters now have focused orchestration owners. The first
+Eighteen late lowerer clusters now have focused orchestration owners. The first
 combines adjacent NDHWC gate and cost-volume ScatterND cleanup into the final
 bounded phase result while sharing one short-lived pass state. The second runs
 four late Concat/layout owners with one internal state scope and returns their
@@ -195,11 +195,16 @@ and returns the original mapping extended with the same non-negative
 boundaries remain unchanged, while the lowerer-local snapshot and inline
 mapping construction are removed.
 
+The eighteenth composes the adjacent channel Slice/Pad/Mul raw cluster with
+its strict normalized summary at the direct late site. The raw lowerer wrapper
+remains available to terminal recovery callback composition, while one
+consumed raw-result local is removed.
+
 These extractions preserve callback order, model/layout/diagnostics identity,
 and result schemas while removing forty-three unconsumed locals and two
-lowerer scope locals. They also replace fifteen consumed mutation-evidence or
+lowerer scope locals. They also replace sixteen consumed mutation-evidence or
 aggregate-result locals and five tensor-count snapshots with three explicit
-boolean decisions, two reusable summary calls, and one prune-aware cleanup
+boolean decisions, three reusable summary calls, and one prune-aware cleanup
 call.
 Focused runtime tests verify shared scope identity, exact argument policy,
 ordered results, every positive-evidence path, and prune-only cleanup.
@@ -471,8 +476,9 @@ Final checkpoint results:
   **4 passed**;
 - affected pre-add, channel Slice/Pad/Mul, terminal-affine, and related
   contracts: **186 passed**;
-- channel Slice/Pad/Mul direct-summary characterization:
-  **1 passed, 1 intentional strict xfail**;
+- channel Slice/Pad/Mul direct-summary owner contracts: **3 passed**;
+- affected channel Slice/Pad/Mul, pre-add, terminal recovery, and related
+  contracts: **195 passed**;
 - TensorFlow/tf-keras import blocker, default/direct conversion, and `-cotof`
   contracts: **11 passed**;
 - pre-Concat NHWC pass-owner and compatibility contracts: **3 passed**;
@@ -516,7 +522,7 @@ identity, and unconsumed result remain intact; only their orchestration moves
 behind a focused pass-module boundary. Runtime tests cover both stable and
 prune-only paths, and the already-full 128/128 phase-result store is unchanged.
 
-The following characterization also fixes the adjacent direct channel
-Slice/Pad/Mul raw-to-summary boundary. It makes no production change and
-explicitly requires the existing raw wrapper to remain available for terminal
-recovery callback composition.
+The following checkpoint implements the adjacent direct channel Slice/Pad/Mul
+raw-to-summary owner. It removes only the consumed direct raw-result local and
+explicitly preserves the existing raw wrapper for terminal recovery callback
+composition.

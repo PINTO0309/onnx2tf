@@ -5,6 +5,10 @@ from pathlib import Path
 
 import pytest
 
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
+from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import channel_slice_pad_mul_orchestration
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = (
@@ -46,26 +50,24 @@ def _single_target(statement: ast.stmt) -> str | None:
     return target.id if isinstance(target, ast.Name) else None
 
 
-def test_channel_slice_pad_mul_raw_summary_boundary_is_fixed() -> None:
+def test_channel_slice_pad_mul_summary_boundary_is_fixed() -> None:
     lowerer = _lowerer()
-    raw = next(
+    summary = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == RAW_TARGET
+        if _single_target(statement) == SUMMARY_TARGET
     )
-    raw_index = lowerer.body.index(raw)
-    summary = lowerer.body[raw_index + 1]
-    assert isinstance(raw, ast.Assign)
-    assert ast.unparse(raw.value) == f"{RAW_WRAPPER}()"
-    assert _single_target(summary) == SUMMARY_TARGET
+    index = lowerer.body.index(summary)
     assert isinstance(summary, ast.Assign)
-    assert ast.unparse(summary.value) == f"{SUMMARY_FUNCTION}({RAW_TARGET})"
-    assert _single_target(lowerer.body[raw_index - 1]) == PREDECESSOR_TARGET
-    assert _single_target(lowerer.body[raw_index + 2]) == SUCCESSOR_TARGET
-    assert sum(
+    assert ast.unparse(summary.value) == (
+        f"{SUMMARY_OWNER}(channel_slice_pad_mul_context)"
+    )
+    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert not any(
         isinstance(node, ast.Name) and node.id == RAW_TARGET
         for node in ast.walk(lowerer)
-    ) == 2
+    )
     assert sum(
         isinstance(node, ast.Name)
         and isinstance(node.ctx, ast.Load)
@@ -83,10 +85,6 @@ def test_channel_slice_pad_mul_raw_summary_boundary_is_fixed() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="channel Slice/Pad/Mul lacks one direct summary owner",
-)
 def test_channel_slice_pad_mul_uses_one_direct_summary_owner() -> None:
     owner = _functions(OWNER_PATH)[SUMMARY_OWNER]
     owner_calls = [
@@ -125,3 +123,45 @@ def test_channel_slice_pad_mul_uses_one_direct_summary_owner() -> None:
     assert ast.unparse(wrapper.body[0]) == (
         f"return {RAW_OWNER}(channel_slice_pad_mul_context)"
     )
+
+
+def test_channel_slice_pad_mul_summary_owner_preserves_context_and_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = ModelIR("channel_slice_pad_mul_summary")
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
+    raw_results = (
+        {
+            "optimized_transpose_channel_slice_dual_add_bridges_strict": 1,
+            "optimized_transpose_slice_muladd_conv_mergeadd_strict": 2,
+            "optimized_transpose_slice_muladd_mergeadd_posttranspose_strict": 3,
+        },
+        {
+            "optimized_transpose_pad_mul_posttranspose_add_nhwc_chains": 4,
+        },
+    )
+    observed: list[object] = []
+
+    def _run(candidate: ModelIRPassContext) -> tuple[dict[str, int], ...]:
+        observed.append(candidate)
+        return raw_results
+
+    monkeypatch.setattr(
+        channel_slice_pad_mul_orchestration,
+        RAW_OWNER,
+        _run,
+    )
+
+    assert channel_slice_pad_mul_orchestration.run_channel_slice_pad_mul_summary(
+        context
+    ) == {
+        "optimized_transpose_channel_slice_dual_add_bridges_strict": 1,
+        "optimized_transpose_slice_muladd_conv_mergeadd_strict": 2,
+        "optimized_transpose_slice_muladd_mergeadd_posttranspose_strict": 3,
+        "optimized_transpose_pad_mul_posttranspose_add_nhwc_chains": 4,
+    }
+    assert observed == [context]

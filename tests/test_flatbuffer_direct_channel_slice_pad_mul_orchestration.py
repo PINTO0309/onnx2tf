@@ -24,6 +24,7 @@ from onnx2tf.tflite_builder.passes.terminal_slice_concat_recovery_orchestration 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 CHANNEL_SLICE_PAD_MUL = "_run_channel_slice_pad_mul_layout_pass_cluster"
+CHANNEL_SLICE_PAD_MUL_SUMMARY = "run_channel_slice_pad_mul_summary"
 PRE_TERMINAL_PRE_ADD = "run_pre_terminal_pre_add_cleanup"
 
 
@@ -150,9 +151,19 @@ def test_channel_slice_pad_mul_preserves_direct_and_callback_invocations() -> No
         and isinstance(node.func, ast.Name)
         and node.func.id == CHANNEL_SLICE_PAD_MUL
     ]
-    assert len(direct_invocations) == 1
-    assert direct_invocations[0].args == []
-    assert direct_invocations[0].keywords == []
+    assert direct_invocations == []
+    summary_invocations = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == CHANNEL_SLICE_PAD_MUL_SUMMARY
+    ]
+    assert len(summary_invocations) == 1
+    assert [ast.unparse(arg) for arg in summary_invocations[0].args] == [
+        "channel_slice_pad_mul_context"
+    ]
+    assert summary_invocations[0].keywords == []
 
     terminal_context = next(
         statement.value
@@ -182,15 +193,15 @@ def test_channel_slice_pad_mul_preserves_direct_boundaries() -> None:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "channel_slice_pad_mul_results"
+        and statement.targets[0].id
+        == "_pre_terminal_channel_slice_pad_mul_stats"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == CHANNEL_SLICE_PAD_MUL
+        and statement.value.func.id == CHANNEL_SLICE_PAD_MUL_SUMMARY
     )
 
     pre_add_stats = lowerer.body[invocation_index - 1]
-    summary = lowerer.body[invocation_index + 1]
-    following = lowerer.body[invocation_index + 2]
+    following = lowerer.body[invocation_index + 1]
     assert isinstance(pre_add_stats, ast.Assign)
     assert len(pre_add_stats.targets) == 1
     assert isinstance(pre_add_stats.targets[0], ast.Name)
@@ -203,13 +214,13 @@ def test_channel_slice_pad_mul_preserves_direct_boundaries() -> None:
         "shared_model_ir_pass_context"
     ]
     assert pre_add_owner.keywords == []
+    summary = lowerer.body[invocation_index]
     assert isinstance(summary, ast.Assign)
-    assert len(summary.targets) == 1
-    assert isinstance(summary.targets[0], ast.Name)
-    assert summary.targets[0].id == "_pre_terminal_channel_slice_pad_mul_stats"
     assert isinstance(summary.value, ast.Call)
-    assert isinstance(summary.value.func, ast.Name)
-    assert summary.value.func.id == "summarize_channel_slice_pad_mul_mutations"
+    assert [ast.unparse(arg) for arg in summary.value.args] == [
+        "channel_slice_pad_mul_context"
+    ]
+    assert summary.value.keywords == []
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
@@ -347,38 +358,24 @@ def test_channel_slice_pad_mul_returns_and_summarizes_mutations(
 
 def test_lowerer_captures_channel_slice_pad_mul_mutation_evidence() -> None:
     lowerer, helper = _lowerer_and_helper()
-    target_names = (
-        "channel_slice_pad_mul_results",
-        "_pre_terminal_channel_slice_pad_mul_stats",
+    summary = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        == "_pre_terminal_channel_slice_pad_mul_stats"
     )
-    assignment_indices: dict[str, int] = {}
-    assignments: dict[str, ast.expr] = {}
-    for index, statement in enumerate(lowerer.body):
-        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
-            continue
-        target = statement.targets[0]
-        if isinstance(target, ast.Name) and target.id in target_names:
-            assignment_indices[target.id] = index
-            assignments[target.id] = statement.value
-
-    first_index = min(assignment_indices.values())
-    assert assignment_indices == {
-        target_names[0]: first_index,
-        target_names[1]: first_index + 1,
-    }
-    result_call = assignments[target_names[0]]
-    assert isinstance(result_call, ast.Call)
-    assert isinstance(result_call.func, ast.Name)
-    assert result_call.func.id == CHANNEL_SLICE_PAD_MUL
-    assert result_call.args == []
-    assert result_call.keywords == []
-    summary_call = assignments[target_names[1]]
+    first_index = lowerer.body.index(summary)
+    summary_call = summary.value
     assert isinstance(summary_call, ast.Call)
     assert isinstance(summary_call.func, ast.Name)
-    assert summary_call.func.id == "summarize_channel_slice_pad_mul_mutations"
+    assert summary_call.func.id == CHANNEL_SLICE_PAD_MUL_SUMMARY
     assert len(summary_call.args) == 1
     assert isinstance(summary_call.args[0], ast.Name)
-    assert summary_call.args[0].id == "channel_slice_pad_mul_results"
+    assert summary_call.args[0].id == "channel_slice_pad_mul_context"
+    assert summary_call.keywords == []
 
     previous = lowerer.body[first_index - 1]
     assert isinstance(previous, ast.Assign)
@@ -393,7 +390,7 @@ def test_lowerer_captures_channel_slice_pad_mul_mutation_evidence() -> None:
         "shared_model_ir_pass_context"
     ]
     assert owner_call.keywords == []
-    following = lowerer.body[first_index + 2]
+    following = lowerer.body[first_index + 1]
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
@@ -440,7 +437,9 @@ def test_pre_terminal_pre_add_uses_prune_aware_owner() -> None:
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "channel_slice_pad_mul_results"
+    assert following.targets[0].id == (
+        "_pre_terminal_channel_slice_pad_mul_stats"
+    )
 
     assert not any(
         isinstance(node, ast.Name)

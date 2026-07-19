@@ -3146,3 +3146,33 @@ summary owner, replace only the two direct evidence statements, update
 owner-aware neighboring contracts, and retain the raw callback wrapper.
 Continue with commits and pushes only; never create, update, or reopen a pull
 request.
+
+## Channel Slice/Pad/Mul direct-summary implementation
+
+The pass module now exposes `run_channel_slice_pad_mul_summary(context)`, which
+runs the existing raw pair and feeds its tuple to the existing strict
+normalizer. The direct lowerer site retains its summary target but no longer
+keeps the consumed raw-result local. The nested raw wrapper remains intact for
+terminal recovery callback composition.
+
+The direct summary receives the same `channel_slice_pad_mul_context`; raw pass
+order, shared state scope, diagnostics/layout identity, normalized keys,
+predecessor, successor, and total invocation count are unchanged. The summary
+stays outside the 128/128 phase-result store.
+
+Final sequential validation under core-only `uv`:
+
+- focused summary-owner contracts: `3 passed in 0.57s`;
+- affected boundary and callback contracts: `195 passed in 2.42s`;
+- terminal-layout/pass-efficiency contracts: `92 passed in 1.86s`;
+- synthetic core runtime contracts: `55 passed in 0.92s`;
+- result contracts: `196 passed in 9.18s`;
+- architecture contracts: `258 passed in 18.46s`;
+- phase-store capacity contracts: `2 passed in 0.52s`;
+- TensorFlow/tf-keras blocker, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 10.31s`;
+- Ruff, bytecode compilation, 128/128 audit, and whitespace checks: passed.
+
+Commit and push this implementation checkpoint. At resume, characterize the
+next adjacent non-store evidence boundary before production changes. Continue
+with commits and pushes only; never create, update, or reopen a pull request.

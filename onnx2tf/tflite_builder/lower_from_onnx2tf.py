@@ -225,7 +225,7 @@ from onnx2tf.tflite_builder.passes.boundary_batchmatmul_unary_orchestration impo
 )
 from onnx2tf.tflite_builder.passes.channel_slice_pad_mul_orchestration import (
     run_channel_slice_pad_mul,
-    summarize_channel_slice_pad_mul_mutations,
+    run_channel_slice_pad_mul_summary,
 )
 from onnx2tf.tflite_builder.passes.late_hard_activation_layout_orchestration import (
     run_late_hard_activation_layout,
@@ -5331,9 +5331,8 @@ def lower_onnx_to_ir(
     _pre_terminal_pre_add_stats = run_pre_terminal_pre_add_cleanup(
         shared_model_ir_pass_context,
     )
-    channel_slice_pad_mul_results = _run_channel_slice_pad_mul_layout_pass_cluster()
-    _pre_terminal_channel_slice_pad_mul_stats = (
-        summarize_channel_slice_pad_mul_mutations(channel_slice_pad_mul_results)
+    _pre_terminal_channel_slice_pad_mul_stats = run_channel_slice_pad_mul_summary(
+        channel_slice_pad_mul_context,
     )
     _pre_terminal_affine_post_add_stats = (
         _optimize_transpose_mul_posttranspose_add_nhwc_chains(

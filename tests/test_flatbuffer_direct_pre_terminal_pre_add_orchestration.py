@@ -29,7 +29,7 @@ RESULT_TARGET = "_pre_terminal_pre_add_stats"
 COUNT_TARGET = "pre_terminal_pre_add_tensor_count"
 PASS_ID = "_optimize_transpose_pre_add_nhwc_chains"
 PREDECESSOR_TARGET = "_pre_terminal_affine_stats"
-SUCCESSOR_TARGET = "channel_slice_pad_mul_results"
+SUCCESSOR_TARGET = "_pre_terminal_channel_slice_pad_mul_stats"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
