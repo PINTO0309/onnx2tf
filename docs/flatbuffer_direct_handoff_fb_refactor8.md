@@ -581,3 +581,33 @@ On resume, migrate the three remaining single-call observation locals
 owner returns integer-only bounded counters. Keep fallback/final combined
 shape-topology results as a separate later family. Continue with coherent
 commits and pushes only; never create, update, or reopen a pull request.
+
+## Single-call phase-result migration
+
+The three proposed owners were confirmed to return bounded integer-only
+schemas: Dynamic Reshape returns one counter, safe Transpose reduction returns
+three, and terminal Expand/Squeeze reconciliation returns two. They now record:
+
+- `shape_resolution.core.dynamic_reshape`;
+- `layout.no_layout.safe_transpose_reduction`;
+- `shape_reconciliation.terminal.expand_squeeze`.
+
+All three calls remain in place. Their predecessors, successors, arguments,
+guards, graph mutations, and TensorFlow-free boundary are unchanged. The
+bounded-store contract now covers sixteen phase IDs in the lowerer.
+
+Validation completed sequentially under core-only `uv`:
+
+- dedicated result/schema/boundary contracts: `14 passed in 0.88s`;
+- phase store, topology/layout, fallback/terminal orchestration, and core
+  contracts: `149 passed in 3.49s`;
+- lowerer architecture contracts: `258 passed in 16.73s`;
+- targeted Ruff, bytecode compilation, and whitespace checks: passed.
+
+No real-model conversion was required for result-destination-only changes. On
+resume, audit the eight combined static-shape/topology reconciliation result
+targets as one family. Before removing their zero defaults, explicitly decide
+whether the bounded store represents only invoked phases or also records
+guard-skipped zero results. Do not silently conflate "not invoked" with "ran
+and changed nothing". Continue with coherent commits and pushes only; never
+create, update, or reopen a pull request.

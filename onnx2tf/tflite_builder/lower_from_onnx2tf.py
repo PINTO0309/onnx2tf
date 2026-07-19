@@ -4583,8 +4583,9 @@ def lower_onnx_to_ir(
         model_ir,
         layout_state=session.layout_state,
     )
-    _core_cleanup_dynamic_reshape_stats = _resolve_dynamic_reshape_shapes(
-        model_ir
+    session.record_phase_result(
+        "shape_resolution.core.dynamic_reshape",
+        _resolve_dynamic_reshape_shapes(model_ir),
     )
     _core_cleanup_squeeze_reshape_identity_stats = (
         run_squeeze_reshape_identity_cleanup(
@@ -5257,8 +5258,9 @@ def lower_onnx_to_ir(
             )
         )
     elif apply_safe_transpose_reduction_lite_on_no_layout_opt:
-        _no_layout_safe_transpose_reduction_stats = (
-            _apply_safe_transpose_reduction_lite(model_ir)
+        session.record_phase_result(
+            "layout.no_layout.safe_transpose_reduction",
+            _apply_safe_transpose_reduction_lite(model_ir),
         )
         # Keep strict, const-only NHWC<->NCHW affine bridge folding enabled
         # in no-layout fallback so simple TRANSPOSE->MUL->ADD->TRANSPOSE
@@ -5653,11 +5655,12 @@ def lower_onnx_to_ir(
         model_ir,
         layout_state=session.layout_state,
     )
-    _terminal_expand_squeeze_static_shape_stats = (
+    session.record_phase_result(
+        "shape_reconciliation.terminal.expand_squeeze",
         _reconcile_static_tensor_shapes(
             model_ir,
             include_mutation_count=True,
-        )
+        ),
     )
     _advance_post_progress()
 

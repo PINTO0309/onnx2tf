@@ -1502,8 +1502,10 @@ def test_primary_path_retains_quantization_successor_conv_results() -> None:
         assert isinstance(predecessor.targets[0], ast.Name)
         assert predecessor.targets[0].id == expected_targets[pair_index][2]
 
-    assert _call_name(_statement_call(body[activation_indices[0] + 1])) == (
-        "_resolve_dynamic_reshape_shapes"
+    _assert_phase_result_record(
+        body[activation_indices[0] + 1],
+        phase_id="shape_resolution.core.dynamic_reshape",
+        owner_expression="_resolve_dynamic_reshape_shapes(model_ir)",
     )
     assert _call_name(_statement_call(body[activation_indices[1] + 1])) == (
         "_optimize_transpose_pre_argmax_nhwc_terminal_chains"

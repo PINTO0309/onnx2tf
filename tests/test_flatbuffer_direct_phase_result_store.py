@@ -13,6 +13,9 @@ from onnx2tf.tflite_builder.ir import ModelIR
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 EXPECTED_RESULT_TARGETS = (
+    "_core_cleanup_dynamic_reshape_stats",
+    "_no_layout_safe_transpose_reduction_stats",
+    "_terminal_expand_squeeze_static_shape_stats",
     "_fallback_dynamic_rank1_topology_layout_stats",
     "_fallback_broadcast_topology_layout_stats",
     "_fallback_post_placeholder_topology_stats",
@@ -28,6 +31,9 @@ EXPECTED_RESULT_TARGETS = (
     "_terminal_topology_layout_validation_stats",
 )
 EXPECTED_OWNERS = (
+    "_resolve_dynamic_reshape_shapes",
+    "_apply_safe_transpose_reduction_lite",
+    "_reconcile_static_tensor_shapes",
     "run_topology_layout_refresh",
     "run_topology_layout_refresh",
     "_topologically_sort_operators",
@@ -43,6 +49,9 @@ EXPECTED_OWNERS = (
     "run_topology_layout_validation",
 )
 EXPECTED_MODEL_ARGUMENTS = (
+    "model_ir",
+    "model_ir",
+    "model_ir",
     "fallback_ir",
     "fallback_ir",
     "fallback_ir",
@@ -58,6 +67,9 @@ EXPECTED_MODEL_ARGUMENTS = (
     "model_ir",
 )
 EXPECTED_PHASE_IDS = (
+    "shape_resolution.core.dynamic_reshape",
+    "layout.no_layout.safe_transpose_reduction",
+    "shape_reconciliation.terminal.expand_squeeze",
     "topology_layout.fallback.post_dynamic_rank1",
     "topology_layout.fallback.broadcast",
     "topology.fallback.post_placeholder",
@@ -111,7 +123,7 @@ def _session() -> ConversionSession:
     )
 
 
-def test_thirteen_topology_observations_use_the_bounded_session_store() -> None:
+def test_sixteen_observations_use_the_bounded_session_store() -> None:
     lowerer = _lowerer()
     records = sorted(
         [
@@ -122,7 +134,7 @@ def test_thirteen_topology_observations_use_the_bounded_session_store() -> None:
         key=lambda node: node.lineno,
     )
 
-    assert len(records) == 13
+    assert len(records) == 16
     assert tuple(
         ast.literal_eval(_statement_call(node).args[0]) for node in records
     ) == EXPECTED_PHASE_IDS

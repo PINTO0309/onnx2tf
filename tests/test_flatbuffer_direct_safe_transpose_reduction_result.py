@@ -13,6 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 OWNER = "_apply_safe_transpose_reduction_lite"
 RESULT_TARGET = "_no_layout_safe_transpose_reduction_stats"
+PHASE_ID = "layout.no_layout.safe_transpose_reduction"
 SUCCESSOR_TARGET = "_no_layout_fallback_affine_prepost_stats"
 
 
@@ -43,6 +44,21 @@ def _single_target(statement: ast.stmt) -> str | None:
         return None
     target = statement.targets[0]
     return target.id if isinstance(target, ast.Name) else None
+
+
+def _phase_result_owner(statement: ast.stmt) -> ast.Call | None:
+    call = _statement_call(statement)
+    if (
+        call is None
+        or not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != "session"
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+        or not isinstance(call.args[1], ast.Call)
+    ):
+        return None
+    return call.args[1]
 
 
 def _fallback_branch() -> ast.If:
@@ -79,10 +95,13 @@ def test_safe_transpose_reduction_boundary_is_explicit() -> None:
     fallback = _fallback_branch()
     assert len(fallback.body) == 2
     invocation = fallback.body[0]
-    assert _single_target(invocation) == RESULT_TARGET
-    assert _call_name(invocation) == OWNER
-    call = _statement_call(invocation)
+    record_call = _statement_call(invocation)
+    assert record_call is not None
+    assert ast.literal_eval(record_call.args[0]) == PHASE_ID
+    call = _phase_result_owner(invocation)
     assert call is not None
+    assert isinstance(call.func, ast.Name)
+    assert call.func.id == OWNER
     assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
     assert call.keywords == []
     assert _single_target(fallback.body[1]) == SUCCESSOR_TARGET
@@ -91,8 +110,10 @@ def test_safe_transpose_reduction_boundary_is_explicit() -> None:
 def test_safe_transpose_reduction_result_is_retained_for_observation() -> None:
     fallback = _fallback_branch()
     invocation = fallback.body[0]
-    assert _single_target(invocation) == RESULT_TARGET
-    call = _statement_call(invocation)
+    record_call = _statement_call(invocation)
+    assert record_call is not None
+    assert ast.literal_eval(record_call.args[0]) == PHASE_ID
+    call = _phase_result_owner(invocation)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
     assert call.keywords == []
@@ -102,6 +123,5 @@ def test_safe_transpose_reduction_result_is_retained_for_observation() -> None:
     assert not any(
         isinstance(node, ast.Name)
         and node.id == RESULT_TARGET
-        and isinstance(node.ctx, ast.Load)
         for node in ast.walk(lowerer)
     )

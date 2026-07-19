@@ -16,6 +16,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 EXPAND_RESULT_TARGET = "_terminal_expand_squeeze_stats"
 RECONCILE_RESULT_TARGET = "_terminal_expand_squeeze_static_shape_stats"
+RECONCILE_PHASE_ID = "shape_reconciliation.terminal.expand_squeeze"
 
 
 def _lowerer() -> ast.FunctionDef:
@@ -45,6 +46,21 @@ def _call_name(statement: ast.stmt) -> str | None:
     if call is None or not isinstance(call.func, ast.Name):
         return None
     return call.func.id
+
+
+def _phase_result_owner(statement: ast.stmt) -> ast.Call | None:
+    call = _statement_call(statement)
+    if (
+        call is None
+        or not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != "session"
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+        or not isinstance(call.args[1], ast.Call)
+    ):
+        return None
+    return call.args[1]
 
 
 def _stale_reshape_model_ir() -> ModelIR:
@@ -112,10 +128,13 @@ def test_terminal_expand_squeeze_reconciliation_contract_is_explicit() -> None:
     } == {"layout_state": "session.layout_state"}
 
     reconciliation = lowerer.body[expand_index + 1]
-    assert _single_target(reconciliation) == RECONCILE_RESULT_TARGET
-    assert _call_name(reconciliation) == "_reconcile_static_tensor_shapes"
-    reconcile_call = _statement_call(reconciliation)
+    record_call = _statement_call(reconciliation)
+    assert record_call is not None
+    assert ast.literal_eval(record_call.args[0]) == RECONCILE_PHASE_ID
+    reconcile_call = _phase_result_owner(reconciliation)
     assert reconcile_call is not None
+    assert isinstance(reconcile_call.func, ast.Name)
+    assert reconcile_call.func.id == "_reconcile_static_tensor_shapes"
     assert [ast.unparse(argument) for argument in reconcile_call.args] == [
         "model_ir"
     ]
@@ -152,8 +171,10 @@ def test_terminal_reconciliation_retains_complete_observation_result() -> None:
         if _single_target(statement) == EXPAND_RESULT_TARGET
     )
     reconciliation = lowerer.body[expand_index + 1]
-    assert _single_target(reconciliation) == RECONCILE_RESULT_TARGET
-    reconcile_call = _statement_call(reconciliation)
+    record_call = _statement_call(reconciliation)
+    assert record_call is not None
+    assert ast.literal_eval(record_call.args[0]) == RECONCILE_PHASE_ID
+    reconcile_call = _phase_result_owner(reconciliation)
     assert reconcile_call is not None
     assert isinstance(reconcile_call.func, ast.Name)
     assert reconcile_call.func.id == "_reconcile_static_tensor_shapes"
@@ -168,6 +189,5 @@ def test_terminal_reconciliation_retains_complete_observation_result() -> None:
     assert not any(
         isinstance(node, ast.Name)
         and node.id == RECONCILE_RESULT_TARGET
-        and isinstance(node.ctx, ast.Load)
         for node in ast.walk(lowerer)
     )

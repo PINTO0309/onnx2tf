@@ -171,17 +171,10 @@ def test_terminal_expand_squeeze_result_is_captured_before_reconciliation() -> N
         "layout_state"
     }
     following = lowerer.body[assignment_index + 1]
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert (
-        following.targets[0].id
-        == "_terminal_expand_squeeze_static_shape_stats"
+    assert isinstance(following, ast.Expr)
+    assert ast.unparse(following) == (
+        "session.record_phase_result("
+        "'shape_reconciliation.terminal.expand_squeeze', "
+        "_reconcile_static_tensor_shapes(model_ir, "
+        "include_mutation_count=True))"
     )
-    assert isinstance(following.value, ast.Call)
-    assert isinstance(following.value.func, ast.Name)
-    assert following.value.func.id == "_reconcile_static_tensor_shapes"
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in following.value.keywords
-    } == {"include_mutation_count": "True"}

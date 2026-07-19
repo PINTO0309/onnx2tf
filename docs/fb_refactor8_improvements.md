@@ -542,3 +542,36 @@ Validation completed sequentially under `uv`:
 
 No real-model conversion was run because only the destination of an already
 small, unconsumed result changed.
+
+## Single-call phase-result migration
+
+Three remaining observation-only locals each wrapped one already-characterized
+owner call. Their dedicated contracts prove bounded integer-only schemas:
+
+- core Dynamic Reshape resolution: one counter;
+- no-layout safe Transpose reduction: three counters;
+- terminal Expand/Squeeze static-shape reconciliation: two counters.
+
+They now record these stable phase IDs:
+
+- `shape_resolution.core.dynamic_reshape`;
+- `layout.no_layout.safe_transpose_reduction`;
+- `shape_reconciliation.terminal.expand_squeeze`.
+
+The calls remain at their original positions between the same predecessors and
+successors. Dynamic Reshape resolution and terminal reconciliation remain
+unconditional; safe Transpose reduction remains under its existing no-layout
+guard. No owner argument, graph mutation, pass ordering, condition, public
+result, report, artifact, dependency, or TensorFlow boundary changed.
+
+Validation completed sequentially under `uv`:
+
+- dedicated owner/schema/boundary contracts: `14 passed in 0.88s`;
+- bounded-store, topology/layout, fallback/terminal orchestration, and core
+  contracts: `149 passed in 3.49s`;
+- lowerer architecture contracts: `258 passed in 16.73s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+No real-model conversion was run because the owner effects are unchanged and
+only their small result destination moved.
