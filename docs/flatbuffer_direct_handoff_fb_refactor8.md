@@ -1397,3 +1397,26 @@ changed and the runtime suite exercises the guarded path. After committing and
 pushing, retain the 77/128 phase-cap audit and keep composite results outside
 the bounded integer mapping store. Never create, update, or reopen a pull
 request.
+
+## Layout pass-set 1 residual cleanup characterization
+
+The four remaining direct mapping observations in the first layout pass-set
+are primary layout-Transpose cleanup, guarded Transpose/binary bridge cleanup,
+duplicate fan-out cleanup, and Dequantize→Mean→Quantize bridge cleanup. Their
+bounded integer schemas are already explicit, and none has a default or
+consumer.
+
+The contract fixes the outer and nested guards, exact owner expressions,
+policy and composite boundaries, and absence of loads. Composite results stay
+outside the migration. Its strict expected failure requires four stable
+`cleanup.layout_pass_set_1.*` records.
+
+Validation completed sequentially under core-only `uv`: the dedicated
+characterization and existing owner/schema contracts are
+`9 passed, 1 xfailed in 0.99s`; targeted Ruff, bytecode compilation, and
+whitespace checks pass.
+
+Commit and push this characterization before replacing only the four mapping
+destinations. Preserve both guards and every boundary, then update all
+multi-occurrence owner and bounded-store contracts, validate, document,
+commit, and push. Never create, update, or reopen a pull request.

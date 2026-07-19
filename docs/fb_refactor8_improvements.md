@@ -717,6 +717,31 @@ No root-model corpus conversion was run because this is an observation-
 destination-only change and the synthetic runtime suite executes the guarded
 layout path.
 
+## Layout pass-set 1 residual cleanup characterization
+
+The remaining direct mapping observations in layout pass-set 1 are limited to
+four results: primary layout-Transpose cleanup, the conditionally enabled
+Transpose/binary bridge, duplicate fan-out cleanup, and
+Dequantize→Mean→Quantize bridge cleanup. Each has an existing bounded integer
+schema contract and no default or consumer.
+
+The characterization fixes the outer layout guard, nested binary-feature
+guard, exact owner arguments and keywords, policy predecessor, composite
+attention/quantized and safe-binary boundaries, and absence of loads.
+Composite recovery results remain excluded. A strict expected failure requires
+four stable `cleanup.layout_pass_set_1.*` records. No production source
+changed.
+
+Validation completed sequentially under core-only `uv`:
+
+- dedicated characterization and existing owner/schema contracts:
+  `9 passed, 1 xfailed in 0.99s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The sole expected failure is the intentionally unimplemented four-result
+destination migration.
+
 ## Primary final SiNet reconciliation implementation
 
 The six ordered SiNet results now record under:
