@@ -162,3 +162,24 @@ Characterization validation completed sequentially under `uv`:
 
 The sole expected failure is the unimplemented assignment. No production
 source changed in this checkpoint.
+
+## Safe-transpose reduction result retention
+
+The no-layout fallback now retains the unchanged three-key dictionary as
+`_no_layout_safe_transpose_reduction_stats`. It remains unconsumed and
+observation-only. The `elif` condition, owner transaction, pass sequence,
+snapshot rollback, prune/reconciliation work, arguments, and following affine
+cleanup are unchanged.
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated result contract: `3 passed in 0.56s`;
+- focused safe-reduction, indexed Concat adapter, Conv/Pool result, affine,
+  terminal orchestration, core, architecture, pass-efficiency, and
+  TensorFlow-import-blocked gate: `461 passed in 29.10s`;
+- all test files changed on `fb-refactor8`: `23 passed in 0.87s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+No model conversion was run because assigning the already-returned transaction
+summary cannot affect ModelIR or artifacts.

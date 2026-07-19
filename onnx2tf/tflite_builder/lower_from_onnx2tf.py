@@ -5250,7 +5250,9 @@ def lower_onnx_to_ir(
             )
         )
     elif apply_safe_transpose_reduction_lite_on_no_layout_opt:
-        _apply_safe_transpose_reduction_lite(model_ir)
+        _no_layout_safe_transpose_reduction_stats = (
+            _apply_safe_transpose_reduction_lite(model_ir)
+        )
         # Keep strict, const-only NHWC<->NCHW affine bridge folding enabled
         # in no-layout fallback so simple TRANSPOSE->MUL->ADD->TRANSPOSE
         # chains are still reduced.

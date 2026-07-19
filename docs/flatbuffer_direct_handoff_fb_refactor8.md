@@ -150,3 +150,27 @@ contract is `2 passed, 1 xfailed in 0.55s`, and targeted Ruff, bytecode
 compilation, and whitespace checks pass. The sole expected failure is the
 unimplemented assignment. Commit and push this contract before changing
 production code; do not create or update a pull request.
+
+## Safe-transpose reduction result implementation checkpoint
+
+The no-layout fallback now retains the existing owner result as
+`_no_layout_safe_transpose_reduction_stats`. It remains unconsumed. No branch
+condition, pass, snapshot, rollback, prune/reconciliation, argument, ordering,
+dependency, public behavior, or TensorFlow boundary changed.
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated contract: `3 passed in 0.56s`;
+- focused safe-reduction, related layout owners, terminal orchestration, core,
+  architecture, pass-efficiency, and TensorFlow-import-blocked gate:
+  `461 passed in 29.10s`;
+- all `fb-refactor8` changed test files: `23 passed in 0.87s`;
+- targeted Ruff, bytecode compilation, and whitespace checks: passed.
+
+No model conversion was required for this observation-only assignment. After
+this checkpoint is committed and pushed, inventory the remaining raw
+fallback `_reconcile_static_tensor_shapes(fallback_ir)` inside the positive
+`fallback_norm_stats` branch. Its relationship to the preceding binary
+adapter and singleton/consecutive-Reshape results, complete mutation schema,
+and unconditional topological sort must be fixed before implementation.
+Continue with commits and pushes only; do not create or update a pull request.

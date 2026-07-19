@@ -3,8 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 from onnx2tf.tflite_builder.ir import ModelIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _apply_safe_transpose_reduction_lite,
@@ -77,11 +75,11 @@ def test_safe_transpose_reduction_zero_schema_is_explicit() -> None:
     }
 
 
-def test_safe_transpose_reduction_raw_boundary_is_explicit() -> None:
+def test_safe_transpose_reduction_boundary_is_explicit() -> None:
     fallback = _fallback_branch()
     assert len(fallback.body) == 2
     invocation = fallback.body[0]
-    assert isinstance(invocation, ast.Expr)
+    assert _single_target(invocation) == RESULT_TARGET
     assert _call_name(invocation) == OWNER
     call = _statement_call(invocation)
     assert call is not None
@@ -90,10 +88,6 @@ def test_safe_transpose_reduction_raw_boundary_is_explicit() -> None:
     assert _single_target(fallback.body[1]) == SUCCESSOR_TARGET
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the no-layout safe-transpose result is still discarded",
-)
 def test_safe_transpose_reduction_result_is_retained_for_observation() -> None:
     fallback = _fallback_branch()
     invocation = fallback.body[0]
