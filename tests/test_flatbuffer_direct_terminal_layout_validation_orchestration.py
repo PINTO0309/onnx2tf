@@ -1419,7 +1419,22 @@ def test_primary_path_retains_late_concat_scope_results() -> None:
     assert sum(
         isinstance(statement, ast.Assign)
         for statement in layout_cleanup_statements
-    ) == 3
+    ) == 2
+    phase_records = [
+        statement
+        for statement in layout_cleanup_statements
+        if _phase_result_owner(statement) is not None
+    ]
+    assert len(phase_records) == 1
+    _assert_phase_result_record(
+        phase_records[0],
+        phase_id="cleanup.layout_pass_set_1.layout_transpose",
+        owner_expression=(
+            "run_layout_transpose_cleanup(model_ir, "
+            "layout_state=session.layout_state, "
+            "diagnostics=session.diagnostics)"
+        ),
+    )
 
 
 def test_primary_path_retains_very_late_layout_transpose_cleanup_result() -> None:
@@ -1491,6 +1506,15 @@ def test_primary_path_retains_very_late_layout_transpose_cleanup_result() -> Non
         and _call_name(_statement_call(statement)) == callback_name
     ]
     assert len(cleanup_statements) == 3
+    _assert_phase_result_record(
+        cleanup_statements[0],
+        phase_id="cleanup.layout_pass_set_1.layout_transpose",
+        owner_expression=(
+            "run_layout_transpose_cleanup(model_ir, "
+            "layout_state=session.layout_state, "
+            "diagnostics=session.diagnostics)"
+        ),
+    )
     assigned_targets = [
         statement.targets[0].id
         for statement in cleanup_statements
@@ -1498,7 +1522,6 @@ def test_primary_path_retains_very_late_layout_transpose_cleanup_result() -> Non
         and isinstance(statement.targets[0], ast.Name)
     ]
     assert assigned_targets == [
-        "_layout_pass_set_1_layout_transpose_cleanup_stats",
         "_late_concat_transpose_layout_stats",
         "_very_late_layout_transpose_cleanup_stats",
     ]

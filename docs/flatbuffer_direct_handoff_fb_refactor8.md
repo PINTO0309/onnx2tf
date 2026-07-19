@@ -1420,3 +1420,33 @@ Commit and push this characterization before replacing only the four mapping
 destinations. Preserve both guards and every boundary, then update all
 multi-occurrence owner and bounded-store contracts, validate, document,
 commit, and push. Never create, update, or reopen a pull request.
+
+## Layout pass-set 1 residual cleanup implementation
+
+The four remaining direct mapping results now use stable
+`cleanup.layout_pass_set_1.*` records. The outer layout guard, nested binary
+feature guard, owner expressions, policy boundary, and all composite recovery
+boundaries remain unchanged. No default existed. The bounded store now covers
+81 phase IDs.
+
+Expanded architecture and orchestration validation exposed three stale AST
+assertions that assumed outer `ast.Name` calls or three assignment statements.
+They now verify the exact nested owner and the primary-record/two-late-
+assignment split. Targeted corrections are `2 passed in 2.28s` and
+`1 passed in 0.56s`; production behavior was not implicated.
+
+Validation completed sequentially under core-only `uv`:
+
+- direct affected contracts: `14 passed in 1.61s`;
+- synthetic core runtime contracts: `55 passed in 1.06s`;
+- broader result contracts: `182 passed in 8.70s`;
+- QLinear and terminal-layout orchestration contracts:
+  `71 passed in 1.96s`;
+- lowerer architecture contracts: `258 passed in 17.42s`;
+- targeted Ruff, bytecode compilation, and whitespace checks: passed.
+
+No root-model conversion was required because only observation destinations
+changed and the runtime suite exercises both guarded paths. After committing
+and pushing, retain the 81/128 phase-cap audit and keep composite results
+outside the bounded integer mapping store. Never create, update, or reopen a
+pull request.

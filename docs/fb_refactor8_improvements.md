@@ -742,6 +742,43 @@ Validation completed sequentially under core-only `uv`:
 The sole expected failure is the intentionally unimplemented four-result
 destination migration.
 
+## Layout pass-set 1 residual cleanup implementation
+
+The four remaining direct observations now record under stable
+`cleanup.layout_pass_set_1.*` phase IDs. Primary layout-Transpose cleanup,
+duplicate fan-out cleanup, and Dequantize→Mean→Quantize cleanup remain in the
+outer layout guard. The Transpose/binary bridge record remains inside its
+original feature guard and is absent when that guard is false.
+
+Only the four unconsumed mapping destinations changed. Owner calls, arguments,
+keywords, evaluation counts, both guards, policy selection, graph traversal,
+ModelIR mutation, composite recovery boundaries, public results, reports,
+artifacts, dependencies, and TensorFlow import boundaries are unchanged. No
+defaults existed. The bounded store now covers 81 phase IDs.
+
+Architecture and orchestration expansion exposed three stale structural
+assertions that accessed an adjacent owner as an outer `ast.Name` or required
+all three layout-cleanup owners to be assignments. They now verify the exact
+nested phase owner and distinguish the primary record from the two retained
+late assignments. Targeted corrections are `2 passed in 2.28s` and
+`1 passed in 0.56s`; production behavior was not implicated.
+
+Validation completed sequentially under core-only `uv`:
+
+- direct residual, owner, phase-store, QLinear-boundary, and terminal-boundary
+  contracts: `14 passed in 1.61s`;
+- synthetic core runtime contracts: `55 passed in 1.06s`;
+- broader result and phase-result contracts: `182 passed in 8.70s`;
+- QLinear and terminal-layout orchestration contracts:
+  `71 passed in 1.96s`;
+- lowerer architecture contracts: `258 passed in 17.42s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+No root-model corpus conversion was run because this is an observation-
+destination-only change and the synthetic runtime suite executes the guarded
+layout paths.
+
 ## Primary final SiNet reconciliation implementation
 
 The six ordered SiNet results now record under:

@@ -3,9 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 LAYOUT_RESULT_TARGET = "_layout_pass_set_1_layout_transpose_cleanup_stats"
@@ -135,55 +132,7 @@ def _assert_outer_boundaries(
     )
 
 
-def test_layout_pass_set_1_residual_results_are_guarded_and_unconsumed() -> None:
-    lowerer = _lowerer()
-    layout_guard = _layout_guard(lowerer)
-    binary_guard_index, binary_guard = _binary_guard(layout_guard)
-    outer_targets = (
-        LAYOUT_RESULT_TARGET,
-        DUPLICATE_RESULT_TARGET,
-        DEQUANT_MEAN_RESULT_TARGET,
-    )
-    assignments = [
-        statement
-        for statement in layout_guard.body
-        if _single_target(statement) in outer_targets
-    ]
-    indices = [layout_guard.body.index(statement) for statement in assignments]
-
-    assert layout_guard.orelse == []
-    assert tuple(_single_target(statement) for statement in assignments) == (
-        outer_targets
-    )
-    assert tuple(ast.unparse(statement.value) for statement in assignments) == (
-        EXPECTED_OWNER_EXPRESSIONS[0],
-        EXPECTED_OWNER_EXPRESSIONS[2],
-        EXPECTED_OWNER_EXPRESSIONS[3],
-    )
-    assert binary_guard.orelse == []
-    assert len(binary_guard.body) == 1
-    assert _single_target(binary_guard.body[0]) == BINARY_RESULT_TARGET
-    assert ast.unparse(binary_guard.body[0].value) == EXPECTED_OWNER_EXPRESSIONS[1]
-    _assert_outer_boundaries(
-        layout_guard,
-        indices[0],
-        binary_guard_index,
-        indices[1],
-        indices[2],
-    )
-    assert not any(
-        isinstance(node, ast.Name)
-        and node.id in EXPECTED_RESULT_TARGETS
-        and isinstance(node.ctx, ast.Load)
-        for node in ast.walk(lowerer)
-    )
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="layout pass-set 1 residual results have not moved to phase records",
-)
-def test_layout_pass_set_1_residual_results_use_phase_result_store() -> None:
+def test_layout_pass_set_1_residual_results_use_guarded_phase_records() -> None:
     lowerer = _lowerer()
     layout_guard = _layout_guard(lowerer)
     binary_guard_index, binary_guard = _binary_guard(layout_guard)
@@ -199,6 +148,7 @@ def test_layout_pass_set_1_residual_results_use_phase_result_store() -> None:
     ]
     indices = [layout_guard.body.index(statement) for statement in records]
 
+    assert layout_guard.orelse == []
     assert tuple(_phase_id(statement) for statement in records) == outer_phase_ids
     assert tuple(
         ast.unparse(_statement_call(statement).args[1]) for statement in records
@@ -221,6 +171,15 @@ def test_layout_pass_set_1_residual_results_use_phase_result_store() -> None:
         indices[1],
         indices[2],
     )
+    assert not any(
+        isinstance(node, ast.Name) and node.id in EXPECTED_RESULT_TARGETS
+        for node in ast.walk(lowerer)
+    )
+
+
+def test_layout_pass_set_1_residual_result_locals_are_removed() -> None:
+    lowerer = _lowerer()
+
     assert not any(
         isinstance(node, ast.Name) and node.id in EXPECTED_RESULT_TARGETS
         for node in ast.walk(lowerer)

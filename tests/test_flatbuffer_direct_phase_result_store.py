@@ -13,6 +13,7 @@ from onnx2tf.tflite_builder.ir import ModelIR
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 EXPECTED_RESULT_TARGETS = (
+    "_layout_pass_set_1_layout_transpose_cleanup_stats",
     "_layout_pass_set_1_initial_affine_chain_fold_stats",
     "_layout_pass_set_1_affine_prepost_stats",
     "_layout_pass_set_1_pre_unary_affine_fanout_stats",
@@ -20,7 +21,10 @@ EXPECTED_RESULT_TARGETS = (
     "_layout_pass_set_1_quantized_prelu_stats",
     "_layout_pass_set_1_dequant_transposeconv_quantize_stats",
     "_layout_pass_set_1_quantized_reshape_stats",
+    "_layout_pass_set_1_transpose_binary_bridge_stats",
+    "_layout_pass_set_1_duplicate_fanout_stats",
     "_layout_pass_set_1_post_binary_affine_chain_fold_stats",
+    "_layout_pass_set_1_dequant_mean_quantize_stats",
     "_layout_pass_set_1_instancenorm_prepost_stats",
     "_layout_pass_set_1_squeeze_reshape_identity_stats",
     "_core_cleanup_pseudo_leakyrelu_stats",
@@ -92,6 +96,7 @@ EXPECTED_RESULT_TARGETS = (
     "_terminal_topology_layout_validation_stats",
 )
 EXPECTED_OWNERS = (
+    "run_layout_transpose_cleanup",
     "_optimize_fold_mul_add_mul_affine_chains",
     "_optimize_transpose_mul_add_const_prepost_nhwc_chains",
     "_optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains",
@@ -99,7 +104,10 @@ EXPECTED_OWNERS = (
     "run_quantized_prelu_cleanup",
     "_optimize_dequant_transposeconv_quantize_chains",
     "run_quantized_reshape_cleanup",
+    "_optimize_transpose_binary_bridges",
+    "run_duplicate_fanout_cleanup",
     "_optimize_fold_mul_add_mul_affine_chains",
+    "_optimize_transpose_dequantize_mean_quantize_bridges",
     "_optimize_transpose_instancenorm_prepost_nhwc_chains",
     "run_squeeze_reshape_identity_cleanup",
     "_optimize_fuse_pseudo_leakyrelu_chains",
@@ -171,11 +179,12 @@ EXPECTED_OWNERS = (
     "run_topology_layout_validation",
 )
 EXPECTED_MODEL_ARGUMENTS = (
-    *("model_ir",) * 35,
+    *("model_ir",) * 39,
     *("fallback_ir",) * 14,
     *("model_ir",) * 28,
 )
 EXPECTED_PHASE_IDS = (
+    "cleanup.layout_pass_set_1.layout_transpose",
     "cleanup.layout_pass_set_1.initial_affine_chain_fold",
     "cleanup.layout_pass_set_1.affine_prepost",
     "cleanup.layout_pass_set_1.pre_unary_affine_fanout",
@@ -183,7 +192,10 @@ EXPECTED_PHASE_IDS = (
     "cleanup.layout_pass_set_1.quantized_prelu",
     "cleanup.layout_pass_set_1.dequant_transposeconv_quantize",
     "cleanup.layout_pass_set_1.quantized_reshape",
+    "cleanup.layout_pass_set_1.transpose_binary_bridge",
+    "cleanup.layout_pass_set_1.duplicate_fanout",
     "cleanup.layout_pass_set_1.post_binary_affine_chain_fold",
+    "cleanup.layout_pass_set_1.dequant_mean_quantize",
     "cleanup.layout_pass_set_1.instancenorm_prepost",
     "cleanup.layout_pass_set_1.squeeze_reshape_identity",
     "cleanup.core.pseudo_leakyrelu",
@@ -293,7 +305,7 @@ def _session() -> ConversionSession:
     )
 
 
-def test_seventy_seven_observations_use_the_bounded_session_store() -> None:
+def test_eighty_one_observations_use_the_bounded_session_store() -> None:
     lowerer = _lowerer()
     records = sorted(
         [
@@ -304,7 +316,7 @@ def test_seventy_seven_observations_use_the_bounded_session_store() -> None:
         key=lambda node: node.lineno,
     )
 
-    assert len(records) == 77
+    assert len(records) == 81
     assert tuple(
         ast.literal_eval(_statement_call(node).args[0]) for node in records
     ) == EXPECTED_PHASE_IDS

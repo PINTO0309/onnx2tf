@@ -58,12 +58,29 @@ def _expression_path(node: ast.expr) -> Any:
     raise AssertionError(f"unexpected call expression: {ast.dump(node)}")
 
 
-def _direct_call_name(statement: ast.stmt) -> str | None:
+def _direct_call(statement: ast.stmt) -> ast.Call | None:
     if not isinstance(statement, (ast.Assign, ast.Expr)):
         return None
     if not isinstance(statement.value, ast.Call):
         return None
-    function = statement.value.func
+    call = statement.value
+    if (
+        isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        return call.args[1]
+    return call
+
+
+def _direct_call_name(statement: ast.stmt) -> str | None:
+    call = _direct_call(statement)
+    if call is None:
+        return None
+    function = call.func
     return function.id if isinstance(function, ast.Name) else None
 
 
@@ -180,24 +197,27 @@ def test_qlinear_recovery_preserves_both_outer_boundaries() -> None:
                 continue
             previous = statement.body[index - 1]
             following = statement.body[index + 1]
-            assert isinstance(previous, (ast.Assign, ast.Expr))
-            assert isinstance(previous.value, ast.Call)
-            assert isinstance(previous.value.func, ast.Name)
-            assert isinstance(following, (ast.Assign, ast.Expr))
-            assert isinstance(following.value, ast.Call)
-            assert isinstance(following.value.func, ast.Name)
-            boundaries.append((previous.value.func.id, following.value.func.id))
+            previous_call = _direct_call(previous)
+            following_call = _direct_call(following)
+            assert previous_call is not None
+            assert isinstance(previous_call.func, ast.Name)
+            assert following_call is not None
+            assert isinstance(following_call.func, ast.Name)
+            boundaries.append((previous_call.func.id, following_call.func.id))
 
             assert _single_target(candidate) in RESULT_TARGETS
 
-            if previous.value.func.id == (
+            if previous_call.func.id == (
                 "_optimize_transpose_dequantize_mean_quantize_bridges"
             ):
-                assert _single_target(previous) == (
-                    "_layout_pass_set_1_dequant_mean_quantize_stats"
+                assert ast.unparse(previous) == (
+                    "session.record_phase_result("
+                    "'cleanup.layout_pass_set_1.dequant_mean_quantize', "
+                    "_optimize_transpose_dequantize_mean_quantize_bridges("
+                    "model_ir))"
                 )
 
-            if following.value.func.id == (
+            if following_call.func.id == (
                 "_run_layout_recovery_prefix_pass_sequence"
             ):
                 assert isinstance(following, ast.Assign)

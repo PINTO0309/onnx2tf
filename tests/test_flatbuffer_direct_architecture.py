@@ -1251,10 +1251,15 @@ def test_lowerer_safe_binary_bridge_recovery_has_one_ordered_owner() -> None:
         "_run_layout_attention_quantized_recovery_suffix",
         "_run_transpose_unary_fanout_layout_pass_cluster",
     ]
-    assert [boundary[2].value.func.id for boundary in direct_boundaries] == [
-        "_optimize_transpose_dequantize_mean_quantize_bridges",
-        "_advance_post_progress",
-    ]
+    assert ast.unparse(direct_boundaries[0][2]) == (
+        "session.record_phase_result("
+        "'cleanup.layout_pass_set_1.dequant_mean_quantize', "
+        "_optimize_transpose_dequantize_mean_quantize_bridges(model_ir))"
+    )
+    assert isinstance(direct_boundaries[1][2], ast.Expr)
+    assert isinstance(direct_boundaries[1][2].value, ast.Call)
+    assert isinstance(direct_boundaries[1][2].value.func, ast.Name)
+    assert direct_boundaries[1][2].value.func.id == "_advance_post_progress"
     all_invocations = [
         node
         for node in ast.walk(lowerer)
@@ -1326,10 +1331,15 @@ def test_lowerer_qlinear_mean_concat_recovery_has_one_ordered_owner() -> None:
         "_layout_pass_set_1_qlinear_mean_concat_results",
         "_layout_pass_set_2_qlinear_mean_concat_results",
     ]
-    assert [boundary[0].value.func.id for boundary in boundaries] == [
-        "_optimize_transpose_dequantize_mean_quantize_bridges",
-        "_set_post_progress_desc",
-    ]
+    assert ast.unparse(boundaries[0][0]) == (
+        "session.record_phase_result("
+        "'cleanup.layout_pass_set_1.dequant_mean_quantize', "
+        "_optimize_transpose_dequantize_mean_quantize_bridges(model_ir))"
+    )
+    assert isinstance(boundaries[1][0], ast.Expr)
+    assert isinstance(boundaries[1][0].value, ast.Call)
+    assert isinstance(boundaries[1][0].value.func, ast.Name)
+    assert boundaries[1][0].value.func.id == "_set_post_progress_desc"
     assert [boundary[1].value.func.id for boundary in boundaries] == [
         "_run_layout_reshape_attention_recovery_prefix",
         "_run_layout_recovery_prefix_pass_sequence",

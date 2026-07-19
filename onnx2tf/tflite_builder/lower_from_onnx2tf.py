@@ -4420,12 +4420,13 @@ def lower_onnx_to_ir(
         # removes redundant NHWC/NCHW adapters in multi-branch heads.
         enable_duplicate_transpose_fanout_optimizations = not has_qdq_ops
 
-        _layout_pass_set_1_layout_transpose_cleanup_stats = (
+        session.record_phase_result(
+            "cleanup.layout_pass_set_1.layout_transpose",
             run_layout_transpose_cleanup(
                 model_ir,
                 layout_state=session.layout_state,
                 diagnostics=session.diagnostics,
-            )
+            ),
         )
         _layout_pass_set_1_initial_attention_recovery_results = (
             _run_layout_reshape_attention_recovery_prefix()
@@ -4487,19 +4488,21 @@ def lower_onnx_to_ir(
             _run_quantized_activation_binary_bridge_recovery_sequence()
         )
         if enable_transpose_binary_bridge_optimizations:
-            _layout_pass_set_1_transpose_binary_bridge_stats = (
+            session.record_phase_result(
+                "cleanup.layout_pass_set_1.transpose_binary_bridge",
                 _optimize_transpose_binary_bridges(
                     model_ir,
                     layout_state=session.layout_state,
-                )
+                ),
             )
-        _layout_pass_set_1_duplicate_fanout_stats = (
+        session.record_phase_result(
+            "cleanup.layout_pass_set_1.duplicate_fanout",
             run_duplicate_fanout_cleanup(
                 model_ir,
                 include_transpose=enable_duplicate_transpose_fanout_optimizations,
                 layout_state=session.layout_state,
                 diagnostics=session.diagnostics,
-            )
+            ),
         )
         # Binary bridge rewrites can introduce new transpose-(q|dq)-transpose patterns.
         _layout_pass_set_1_post_binary_attention_recovery_results = (
@@ -4520,8 +4523,9 @@ def lower_onnx_to_ir(
         _layout_pass_set_1_safe_binary_results = (
             _run_safe_binary_bridge_recovery_sequence()
         )
-        _layout_pass_set_1_dequant_mean_quantize_stats = (
-            _optimize_transpose_dequantize_mean_quantize_bridges(model_ir)
+        session.record_phase_result(
+            "cleanup.layout_pass_set_1.dequant_mean_quantize",
+            _optimize_transpose_dequantize_mean_quantize_bridges(model_ir),
         )
         _layout_pass_set_1_qlinear_mean_concat_results = (
             _run_qlinear_mean_concat_recovery_sequence()
