@@ -290,6 +290,9 @@ from onnx2tf.tflite_builder.passes.terminal_concat_bridge_layout_orchestration i
 from onnx2tf.tflite_builder.passes.late_conv1d_decoder_layout_orchestration import (
     run_late_conv1d_decoder_layout_cleanup,
 )
+from onnx2tf.tflite_builder.passes.very_late_pad_instancenorm_layout_orchestration import (
+    run_very_late_pad_instancenorm_layout_cleanup,
+)
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     run_channel_shuffle_gather,
 )
@@ -5226,28 +5229,10 @@ def lower_onnx_to_ir(
             shared_model_ir_pass_context,
         )
     )
-    # Very late transpose/layout rewrites can recreate PAD-adjacent NCHW wrappers.
-    _very_late_pad_layout_stats = run_pad_layout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    _very_late_instancenorm_post_bias_stats = (
-        _optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-    )
-    _very_late_instancenorm_residual_mul_concat_stats = (
-        _optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-    )
-    _very_late_instancenorm_dualstats_stats = (
-        _optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
+    # Very-late rewrites can recreate Pad and InstanceNorm layout wrappers.
+    _very_late_pad_instancenorm_layout_results = (
+        run_very_late_pad_instancenorm_layout_cleanup(
+            shared_model_ir_pass_context,
         )
     )
     # Norm-subgraph fallback rewrites can introduce channelwise

@@ -23,8 +23,10 @@ LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py
 OWNER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "passes" / "pad_layout.py"
 OWNER = "run_pad_layout_cleanup"
 RESULT_TARGET = "_very_late_pad_layout_stats"
-PREDECESSOR = "run_late_conv1d_decoder_layout_cleanup"
-SUCCESSOR_TARGET = "_very_late_instancenorm_post_bias_stats"
+COMPOSITE_TARGET = "_very_late_pad_instancenorm_layout_results"
+COMPOSITE_OWNER = "run_very_late_pad_instancenorm_layout_cleanup"
+PREDECESSOR_TARGET = "_late_conv1d_decoder_layout_results"
+SUCCESSOR_TARGET = "_very_late_singleton_consecutive_reshape_results"
 RESULT_SCHEMA = {
     "optimized_transpose_pad_prepost_nhwc_chains": 0,
     "optimized_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains": 0,
@@ -62,15 +64,6 @@ def _single_target(statement: ast.stmt) -> str | None:
 
 def _lowerer() -> ast.FunctionDef:
     return _functions(LOWERER_PATH)["lower_onnx_to_ir"]
-
-
-def _direct_location() -> tuple[ast.FunctionDef, int]:
-    lowerer = _lowerer()
-    return lowerer, next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if _call_name(statement) == OWNER
-    )
 
 
 def _context(name: str) -> ModelIRPassContext:
@@ -166,20 +159,16 @@ def test_very_late_pad_schema_cleanup_and_routes_are_explicit() -> None:
         }
 
 
-def test_very_late_pad_direct_and_consumed_fallback_are_explicit() -> None:
-    lowerer, index = _direct_location()
-    invocation = lowerer.body[index]
-    assert _single_target(invocation) == RESULT_TARGET
-    call = _statement_call(invocation)
-    assert call is not None
-    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-    assert {
-        keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
-    } == {
-        "layout_state": "session.layout_state",
-        "diagnostics": "session.diagnostics",
-    }
-    assert _call_name(lowerer.body[index - 1]) == PREDECESSOR
+def test_very_late_pad_moves_to_composite_and_keeps_consumed_fallback() -> None:
+    lowerer = _lowerer()
+    composite = next(
+        statement
+        for statement in lowerer.body
+        if _single_target(statement) == COMPOSITE_TARGET
+    )
+    index = lowerer.body.index(composite)
+    assert _call_name(composite) == COMPOSITE_OWNER
+    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
     assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
 
     owner_calls = [
@@ -189,7 +178,7 @@ def test_very_late_pad_direct_and_consumed_fallback_are_explicit() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == OWNER
     ]
-    assert len(owner_calls) == 2
+    assert len(owner_calls) == 1
     fallback = next(
         call
         for call in owner_calls
@@ -213,12 +202,9 @@ def test_very_late_pad_direct_and_consumed_fallback_are_explicit() -> None:
     assert fallback in list(ast.walk(fallback_parent.value))
 
 
-def test_very_late_pad_direct_result_is_retained_for_observation() -> None:
-    lowerer, index = _direct_location()
-    assert _single_target(lowerer.body[index]) == RESULT_TARGET
+def test_very_late_pad_old_result_local_is_removed() -> None:
+    lowerer = _lowerer()
     assert not any(
-        isinstance(node, ast.Name)
-        and node.id == RESULT_TARGET
-        and isinstance(node.ctx, ast.Load)
+        isinstance(node, ast.Name) and node.id == RESULT_TARGET
         for node in ast.walk(lowerer)
     )

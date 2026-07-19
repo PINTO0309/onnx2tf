@@ -1658,6 +1658,41 @@ Sequential characterization under core-only `uv` completed with
 composite owner. Targeted Ruff, bytecode compilation, and whitespace checks
 passed.
 
+## Very-late Pad/InstanceNorm composite implementation checkpoint
+
+`run_very_late_pad_instancenorm_layout_cleanup` now owns the four
+characterized callbacks. It runs Pad cleanup first with the conversion-local
+layout state and diagnostics, then runs the post-bias, residual-Mul/Concat,
+and dual-stat InstanceNorm repairs with the same ModelIR and layout state.
+The four independent counter mappings are returned in their original order.
+
+The lowerer retains `_very_late_pad_instancenorm_layout_results` as an ordered
+tuple outside the already-full phase-result store. The four old unconsumed
+locals are gone. Existing pass owners, lowerer compatibility wrappers, the
+late Conv1D/decoder predecessor, and the singleton/consecutive-Reshape
+successor remain unchanged. Focused runtime tests prove exact call order,
+context identity, argument policy, and tuple order.
+
+Final sequential validation under core-only `uv`:
+
+- focused composite and affected Pad/InstanceNorm boundaries:
+  `424 passed in 2.53s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.83s`;
+- synthetic core runtime contracts: `55 passed in 1.03s`;
+- result contracts: `196 passed in 9.25s`;
+- full architecture contracts: `258 passed in 17.05s`;
+- phase-store capacity contracts: `2 passed in 0.56s`;
+- Ruff, bytecode compilation, 128/128 capacity audit, and whitespace checks:
+  passed.
+
+No graph traversal, mutation, numerical behavior, diagnostics, public API,
+artifact, dependency, or TensorFlow boundary changed. No real-model
+conversion was run because this checkpoint only extracts four already
+adjacent calls behind a focused owner. Commit and push this implementation
+checkpoint. On resume, audit the next coherent non-store source-order unit
+after the singleton/consecutive-Reshape cluster. Continue with commits and
+pushes only; never create, update, or reopen a pull request.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:

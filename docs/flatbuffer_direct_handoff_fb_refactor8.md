@@ -2692,3 +2692,36 @@ The characterization gate completed with `1 passed, 1 xfailed in 0.15s`;
 the sole xfail is the intentionally absent composite owner. Targeted Ruff,
 bytecode compilation, and whitespace checks passed. Commit and push this
 checkpoint before production changes.
+
+## Very-late Pad/InstanceNorm composite implementation
+
+The new pass-module owner calls Pad cleanup followed by the three
+InstanceNorm layout repairs in the characterized order. Pad keeps its layout
+and diagnostics arguments; every InstanceNorm owner keeps its layout-only
+argument policy. All calls receive the same conversion-local ModelIR and
+LayoutState, and their four mappings are returned as an ordered tuple.
+
+The lowerer now has one
+`_very_late_pad_instancenorm_layout_results` assignment outside the bounded
+store instead of four unconsumed locals. The store remains exactly 128/128.
+The late Conv1D/decoder and singleton/consecutive-Reshape boundaries,
+compatibility wrappers, existing pass owners, and all graph behavior remain
+unchanged.
+
+Final sequential validation under core-only `uv`:
+
+- focused composite and affected Pad/InstanceNorm boundaries:
+  `424 passed in 2.53s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.83s`;
+- synthetic core runtime contracts: `55 passed in 1.03s`;
+- result contracts: `196 passed in 9.25s`;
+- full architecture contracts: `258 passed in 17.05s`;
+- phase-store capacity contracts: `2 passed in 0.56s`;
+- Ruff, bytecode compilation, 128/128 capacity audit, and whitespace checks:
+  passed.
+
+No real-model conversion was required for this owner-only extraction. Commit
+and push this checkpoint. At resume, audit the next coherent non-store unit
+after the singleton/consecutive-Reshape cluster before changing production
+behavior. Continue with coherent commits and pushes only; never create,
+update, or reopen a pull request.

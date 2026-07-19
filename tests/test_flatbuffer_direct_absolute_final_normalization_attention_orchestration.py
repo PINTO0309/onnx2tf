@@ -25,6 +25,9 @@ LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py
 ABSOLUTE_FINAL_NORMALIZATION_ATTENTION = (
     "_run_absolute_final_normalization_attention_pass_pair"
 )
+VERY_LATE_PAD_INSTANCENORM = (
+    "run_very_late_pad_instancenorm_layout_cleanup"
+)
 
 
 def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -41,6 +44,15 @@ def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
         and node.name == ABSOLUTE_FINAL_NORMALIZATION_ATTENTION
     )
     return lowerer, helper
+
+
+def _very_late_pad_instancenorm_call_count(lowerer: ast.FunctionDef) -> int:
+    return sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == VERY_LATE_PAD_INSTANCENORM
+        for node in ast.walk(lowerer)
+    )
 
 
 def _expression_path(node: ast.expr) -> Any:
@@ -304,7 +316,11 @@ def test_absolute_final_post_bias_captures_complete_mutation_evidence() -> None:
             for node in ast.walk(statement)
         )
     ]
-    assert len(direct_statements) == 4
+    assert (
+        len(direct_statements)
+        + _very_late_pad_instancenorm_call_count(lowerer)
+        == 4
+    )
     terminal_owner = _phase_result_owner(
         direct_statements[0],
         "cleanup.terminal.instancenorm_post_bias",
@@ -316,12 +332,8 @@ def test_absolute_final_post_bias_captures_complete_mutation_evidence() -> None:
     assert isinstance(direct_statements[1], ast.Assign)
     second_target = direct_statements[1].targets[0]
     assert isinstance(second_target, ast.Name)
-    assert second_target.id == "_very_late_instancenorm_post_bias_stats"
-    assert isinstance(direct_statements[2], ast.Assign)
-    third_target = direct_statements[2].targets[0]
-    assert isinstance(third_target, ast.Name)
-    assert third_target.id == "_pre_terminal_affine_instancenorm_post_bias_stats"
-    assert direct_statements[3] is invocation
+    assert second_target.id == "_pre_terminal_affine_instancenorm_post_bias_stats"
+    assert direct_statements[2] is invocation
 
 
 def test_absolute_final_affine_post_add_captures_complete_mutation_evidence() -> (

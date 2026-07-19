@@ -116,6 +116,9 @@ from onnx2tf.tflite_builder.passes.terminal_concat_bridge_layout_orchestration i
 from onnx2tf.tflite_builder.passes.late_conv1d_decoder_layout_orchestration import (
     LATE_CONV1D_DECODER_LAYOUT_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.very_late_pad_instancenorm_layout_orchestration import (
+    VERY_LATE_PAD_INSTANCENORM_LAYOUT_PASS_IDS,
+)
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     CHANNEL_SHUFFLE_GATHER_BASE_PASS_IDS,
     CHANNEL_SHUFFLE_GATHER_DEFAULT_PASS_IDS,
@@ -203,6 +206,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *FINAL_SLICE_PRE_CONCAT_LAYOUT_PASS_IDS,
     *TERMINAL_CONCAT_BRIDGE_LAYOUT_PASS_IDS,
     *LATE_CONV1D_DECODER_LAYOUT_PASS_IDS,
+    *VERY_LATE_PAD_INSTANCENORM_LAYOUT_PASS_IDS,
     *CHANNEL_SHUFFLE_GATHER_PASS_IDS,
     *MEAN_ATTENTION_PASS_IDS,
     *SINGLETON_RESHAPE_PASS_IDS,
@@ -6389,7 +6393,7 @@ def test_indexed_instance_norm_residual_mul_concat_owner_is_transactional() -> N
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 4
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 4
     assert all(
         any(keyword.arg == "layout_state" for keyword in call.keywords)
         for call in production_calls
@@ -6466,7 +6470,7 @@ def test_indexed_instance_norm_dual_stats_owner_keeps_distinct_path_contract() -
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 4
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 4
     assert all(
         any(keyword.arg == "layout_state" for keyword in call.keywords)
         for call in production_calls

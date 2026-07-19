@@ -338,7 +338,7 @@ def test_singleton_consecutive_retains_very_late_main_results() -> None:
     assert len(predecessor.targets) == 1
     assert isinstance(predecessor.targets[0], ast.Name)
     assert predecessor.targets[0].id == (
-        "_very_late_instancenorm_dualstats_stats"
+            "_very_late_pad_instancenorm_layout_results"
     )
 
     successor = lowerer.body[first_index + 1]
@@ -394,10 +394,10 @@ def test_singleton_consecutive_preserves_both_main_boundaries() -> None:
     assert len(first_preceding.targets) == 1
     assert isinstance(first_preceding.targets[0], ast.Name)
     assert first_preceding.targets[0].id == (
-        "_very_late_instancenorm_dualstats_stats"
+        "_very_late_pad_instancenorm_layout_results"
     )
     assert _statement_call_name(first_preceding) == (
-        "_optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains"
+        "run_very_late_pad_instancenorm_layout_cleanup"
     )
     first_following = lowerer.body[first_index + 1]
     assert isinstance(first_following, ast.If)

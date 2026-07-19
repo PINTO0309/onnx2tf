@@ -22,6 +22,9 @@ from onnx2tf.tflite_builder.passes.terminal_affine_concat_split_recovery_orchest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 TERMINAL_AFFINE_CONCAT_SPLIT = "_run_terminal_affine_concat_split_recovery_sequence"
+VERY_LATE_PAD_INSTANCENORM = (
+    "run_very_late_pad_instancenorm_layout_cleanup"
+)
 
 
 def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -38,6 +41,15 @@ def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
         and node.name == TERMINAL_AFFINE_CONCAT_SPLIT
     )
     return lowerer, helper
+
+
+def _very_late_pad_instancenorm_call_count(lowerer: ast.FunctionDef) -> int:
+    return sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == VERY_LATE_PAD_INSTANCENORM
+        for node in ast.walk(lowerer)
+    )
 
 
 def _expression_path(node: ast.expr) -> Any:
@@ -642,7 +654,11 @@ def test_pre_terminal_affine_dualstats_captures_complete_mutation_evidence() -> 
             for node in ast.walk(statement)
         )
     ]
-    assert len(direct_statements) == 3
+    assert (
+        len(direct_statements)
+        + _very_late_pad_instancenorm_call_count(lowerer)
+        == 3
+    )
     terminal_owner = _phase_result_owner(
         direct_statements[0],
         "cleanup.terminal.instancenorm_dualstats",
@@ -651,12 +667,7 @@ def test_pre_terminal_affine_dualstats_captures_complete_mutation_evidence() -> 
     assert terminal_owner.func.id == (
         "_optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains"
     )
-    assert isinstance(direct_statements[1], ast.Assign)
-    assert isinstance(direct_statements[1].targets[0], ast.Name)
-    assert direct_statements[1].targets[0].id == (
-        "_very_late_instancenorm_dualstats_stats"
-    )
-    assert direct_statements[2] is invocation
+    assert direct_statements[1] is invocation
 
 
 def test_pre_terminal_affine_residual_mul_concat_captures_mutation_evidence() -> None:
@@ -725,7 +736,11 @@ def test_pre_terminal_affine_residual_mul_concat_captures_mutation_evidence() ->
             for node in ast.walk(statement)
         )
     ]
-    assert len(direct_statements) == 3
+    assert (
+        len(direct_statements)
+        + _very_late_pad_instancenorm_call_count(lowerer)
+        == 3
+    )
     terminal_owner = _phase_result_owner(
         direct_statements[0],
         "cleanup.terminal.instancenorm_residual_mul_concat",
@@ -734,12 +749,7 @@ def test_pre_terminal_affine_residual_mul_concat_captures_mutation_evidence() ->
     assert terminal_owner.func.id == (
         "_optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains"
     )
-    assert isinstance(direct_statements[1], ast.Assign)
-    assert isinstance(direct_statements[1].targets[0], ast.Name)
-    assert direct_statements[1].targets[0].id == (
-        "_very_late_instancenorm_residual_mul_concat_stats"
-    )
-    assert direct_statements[2] is invocation
+    assert direct_statements[1] is invocation
 
 
 def test_pre_terminal_affine_post_bias_captures_mutation_evidence() -> None:
@@ -798,7 +808,11 @@ def test_pre_terminal_affine_post_bias_captures_mutation_evidence() -> None:
             for node in ast.walk(statement)
         )
     ]
-    assert len(direct_statements) == 4
+    assert (
+        len(direct_statements)
+        + _very_late_pad_instancenorm_call_count(lowerer)
+        == 4
+    )
     terminal_owner = _phase_result_owner(
         direct_statements[0],
         "cleanup.terminal.instancenorm_post_bias",
@@ -807,16 +821,11 @@ def test_pre_terminal_affine_post_bias_captures_mutation_evidence() -> None:
     assert terminal_owner.func.id == (
         "_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains"
     )
-    assert isinstance(direct_statements[1], ast.Assign)
-    assert isinstance(direct_statements[1].targets[0], ast.Name)
-    assert direct_statements[1].targets[0].id == (
-        "_very_late_instancenorm_post_bias_stats"
-    )
-    assert direct_statements[2] is invocation
-    assert isinstance(direct_statements[3], ast.Assign)
-    assert len(direct_statements[3].targets) == 1
-    assert isinstance(direct_statements[3].targets[0], ast.Name)
-    assert direct_statements[3].targets[0].id == (
+    assert direct_statements[1] is invocation
+    assert isinstance(direct_statements[2], ast.Assign)
+    assert len(direct_statements[2].targets) == 1
+    assert isinstance(direct_statements[2].targets[0], ast.Name)
+    assert direct_statements[2].targets[0].id == (
         "_absolute_final_instancenorm_post_bias_stats"
     )
 
