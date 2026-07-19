@@ -903,6 +903,31 @@ No root-model corpus conversion was run because this is an observation-
 destination-only change and the synthetic runtime suite executes the terminal
 path.
 
+## Terminal activation cleanup characterization
+
+The next family contains four consecutive unconditional mapping observations
+after terminal Slice/Concat recovery: boundary-input
+StridedSlice/QDQ/Concat cleanup, Swish residual/Concat closure,
+Dequantize/Logistic/Mul/Quantize bridging, and Swish QDQ-island cleanup.
+
+All four have bounded integer schemas fixed by existing terminal contracts,
+have no defaults or consumers, and remain between the Slice/Concat composite
+and terminal InstanceNorm cleanup. The characterization fixes owner calls and
+keywords, four-statement adjacency, both boundaries, and absence of loads. A
+strict expected failure requires four stable `cleanup.terminal.*` records. No
+production source changed.
+
+Validation completed sequentially under core-only `uv`:
+
+- related terminal baseline: `72 passed in 1.99s`;
+- characterization plus related terminal contracts:
+  `73 passed, 1 xfailed in 2.08s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The sole expected failure is the intentionally unimplemented four-result
+destination migration.
+
 ## Primary final SiNet reconciliation implementation
 
 The six ordered SiNet results now record under:

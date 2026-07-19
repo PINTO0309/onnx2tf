@@ -1550,3 +1550,25 @@ changed and the runtime suite exercises the terminal path. After committing
 and pushing, retain the 97/128 phase-cap audit and keep composite results
 outside the bounded integer mapping store. Never create, update, or reopen a
 pull request.
+
+## Terminal activation cleanup characterization
+
+The next family is restricted to four consecutive unconditional results after
+the terminal Slice/Concat composite: boundary StridedSlice/QDQ/Concat, Swish
+residual/Concat, Dequantize/Logistic/Mul/Quantize, and Swish QDQ-island
+cleanup. Existing contracts fix their bounded integer schemas; none has a
+default or consumer.
+
+The contract fixes exact owner expressions, adjacency, both composite/cleanup
+boundaries, and absence of loads. Its strict expected failure requires four
+stable `cleanup.terminal.*` records.
+
+Validation completed sequentially under core-only `uv`: the related baseline
+is `72 passed in 1.99s`; characterization plus related contracts is
+`73 passed, 1 xfailed in 2.08s`; targeted Ruff, bytecode compilation, and
+whitespace checks pass.
+
+Commit and push this characterization before replacing only the four mapping
+destinations. Preserve adjacency and both boundaries, then update terminal
+orchestration and bounded-store contracts, validate, document, commit, and
+push. Never create, update, or reopen a pull request.
