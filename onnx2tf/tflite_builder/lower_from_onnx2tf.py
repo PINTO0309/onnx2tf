@@ -5795,7 +5795,12 @@ def lower_onnx_to_ir(
                     None,
                 )
             )
-            _reconcile_static_tensor_shapes(fallback_ir)
+            _fallback_norm_static_shape_stats = (
+                _reconcile_static_tensor_shapes(
+                    fallback_ir,
+                    include_mutation_count=True,
+                )
+            )
             _topologically_sort_operators(fallback_ir)
         _fallback_dynamic_rank1_stats = (
             _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(fallback_ir)

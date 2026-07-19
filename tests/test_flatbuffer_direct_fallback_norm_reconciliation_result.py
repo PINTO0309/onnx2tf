@@ -4,7 +4,6 @@ import ast
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
@@ -117,7 +116,7 @@ def test_fallback_norm_reconciliation_schema_and_mutation_are_explicit() -> None
     assert model_ir.tensors["output"].shape_signature == [1, 4]
 
 
-def test_fallback_norm_raw_reconciliation_boundary_is_explicit() -> None:
+def test_fallback_norm_reconciliation_boundary_is_explicit() -> None:
     guard = _fallback_norm_guard()
     assert len(guard.body) == 4
     assert _call_name(guard.body[0]) == (
@@ -127,19 +126,18 @@ def test_fallback_norm_raw_reconciliation_boundary_is_explicit() -> None:
         "_run_singleton_consecutive_reshape_pass_cluster"
     )
     reconciliation = guard.body[2]
-    assert isinstance(reconciliation, ast.Expr)
+    assert _single_target(reconciliation) == RESULT_TARGET
     assert _call_name(reconciliation) == RECONCILE_OWNER
     call = _statement_call(reconciliation)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == ["fallback_ir"]
-    assert call.keywords == []
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in call.keywords
+    } == {"include_mutation_count": "True"}
     assert _call_name(guard.body[3]) == SORT_OWNER
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the fallback norm reconciliation result is still discarded",
-)
 def test_fallback_norm_reconciliation_retains_complete_observation() -> None:
     guard = _fallback_norm_guard()
     reconciliation = guard.body[2]

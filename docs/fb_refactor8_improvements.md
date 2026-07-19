@@ -212,3 +212,27 @@ The first test run exposed only an incorrect top-level-only AST search for the
 nested fallback guard. After selecting the unique guard recursively, the sole
 expected failure is the intentionally unimplemented assignment. No production
 source changed in this checkpoint.
+
+## Fallback norm reconciliation result retention
+
+The positive fallback norm branch now retains the opt-in complete result as
+`_fallback_norm_static_shape_stats`. It remains unconsumed. The norm guard,
+binary-adapter and singleton/Reshape predecessors, unconditional
+reconciliation, topological-sort successor, arguments, and graph mutations are
+unchanged. No graph index or additional pass is introduced.
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated result contract: `3 passed in 0.58s`;
+- focused fallback owners, binary adapters, singleton/Reshape orchestration,
+  shape reconciliation, terminal/core/architecture, pass-efficiency, and
+  TensorFlow-import-blocked gate: `461 passed in 28.73s`;
+- all test files changed on `fb-refactor8`: `38 passed in 1.13s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+The first focused run was `460 passed, 1 failed` because an existing singleton
+boundary test still required a raw reconciliation expression. Its structural
+expectation now requires the new observation target and complete schema. No
+model conversion was run because the result assignment does not affect ModelIR
+or artifacts.

@@ -152,6 +152,35 @@ corrected to search the nested fallback block. The sole expected failure is
 the unimplemented result assignment. Commit and push before changing
 production code; do not create or update a pull request.
 
+## Fallback norm reconciliation implementation checkpoint
+
+The guarded reconciliation now retains its complete dictionary as
+`_fallback_norm_static_shape_stats`. The result remains unconsumed. The
+positive norm guard, predecessors, unconditional reconciliation, topological
+sort, arguments, graph behavior, dependency set, public API, and TensorFlow
+boundary are unchanged.
+
+Implementation validation completed sequentially under `uv`:
+
+- dedicated contract: `3 passed in 0.58s`;
+- focused fallback/reconciliation, terminal/core/architecture,
+  pass-efficiency, and TensorFlow-import-blocked gate:
+  `461 passed in 28.73s`;
+- all `fb-refactor8` changed test files: `38 passed in 1.13s`;
+- targeted Ruff, bytecode compilation, and whitespace checks: passed.
+
+The first focused run found one stale singleton-boundary AST expectation and
+was `460 passed, 1 failed`; after requiring the assigned complete result, the
+same gate passed. No model conversion was required.
+
+At resume, audit the remaining raw result-returning topology and layout refresh
+boundaries as a family before selecting another assignment. In particular,
+`_topologically_sort_operators()` returns a dictionary at several primary and
+fallback sites, while `infer_model_ir_logical_layouts()` has a different
+contract. Do not mechanically retain or combine them until schemas, mutation
+semantics, caller conditions, and current consumers are inventoried. Continue
+with commits and pushes only; do not create or update a pull request.
+
 ## Safe-transpose reduction result characterization
 
 The raw no-layout fallback call to

@@ -455,9 +455,20 @@ def test_singleton_consecutive_preserves_fallback_guard_and_boundaries() -> None
     assert _statement_call_name(fallback_guard.body[invocation_index - 1]) == (
         "run_indexed_binary_layout_adapter_cleanup"
     )
-    assert _direct_call_name(fallback_guard.body[invocation_index + 1]) == (
+    reconciliation = fallback_guard.body[invocation_index + 1]
+    assert isinstance(reconciliation, ast.Assign)
+    assert len(reconciliation.targets) == 1
+    assert isinstance(reconciliation.targets[0], ast.Name)
+    assert reconciliation.targets[0].id == (
+        "_fallback_norm_static_shape_stats"
+    )
+    assert _statement_call_name(reconciliation) == (
         "_reconcile_static_tensor_shapes"
     )
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in reconciliation.value.keywords
+    } == {"include_mutation_count": "True"}
 
 
 def test_singleton_consecutive_phase_imports_owners_without_lowerer() -> None:
