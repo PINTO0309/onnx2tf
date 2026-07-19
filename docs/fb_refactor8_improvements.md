@@ -6707,3 +6707,15 @@ Sequential validation passes: focused `18`, affected `404`, and standard
 default direct conversion, and `-cotof`. The phase-result store remains exactly
 128 IDs and 128 owners, while the characterized unconsumed lowerer-result
 inventory decreases from 51 to 49.
+
+## Characterize fallback precision and unbound-input cleanup
+
+The 49-result inventory next exposes an adjacent safety-fallback pair:
+precision cleanup followed by unbound-input repair. Characterization fixes the
+shared fallback ModelIR, explicit absence of LayoutState, session diagnostics,
+child order, complete raw schemas, observation-only results, the preceding
+topology checkpoint, and the following indexed Conv-input summary. Production
+remains unchanged pending one context-owned two-stage extraction. Focused and
+complete affected characterization report `1 passed, 1 xfailed` and
+`29 passed, 1 xfailed`; the sole expected failure is the intentionally absent
+owner.

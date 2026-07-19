@@ -1603,3 +1603,12 @@ result contracts, 2 phase-store, and 11 TensorFlow-isolation/default-direct/
 TensorFlow isolation, and the exactly 128-ID/128-owner phase-result store are
 unchanged. The characterized unconsumed lowerer-result inventory decreases
 from 51 to 49.
+
+The next characterization selects adjacent safety-fallback precision cleanup
+and unbound-input repair. It fixes exact fallback ModelIR identity, the
+no-LayoutState precision policy, session diagnostics, child order, all raw
+schemas, observation-only results, the preceding topology checkpoint, and the
+following indexed Conv-input summary. Production remains unchanged pending a
+straight-line context-owned extraction. Focused and complete affected
+characterization report `1 passed, 1 xfailed` and `29 passed, 1 xfailed`; the
+sole expected failure is the intentionally absent owner.

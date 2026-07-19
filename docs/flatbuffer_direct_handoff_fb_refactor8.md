@@ -5869,3 +5869,28 @@ its context, option, guard, callback, result-schema, independent-route, and
 outer-boundary contracts before changing production. Continue with sequential
 core-only `uv` validation and complete checkpoint commits/pushes only. Do not
 create, update, reopen, or otherwise modify a pull request.
+
+## Fallback precision/unbound characterization checkpoint
+
+The refreshed 49-result inventory selects the two adjacent unconditional
+observations immediately after the fallback post-placeholder topology
+checkpoint: precision cleanup followed by unbound-input repair. Both operate
+on the exact `fallback_ir`; precision cleanup additionally receives no
+LayoutState and the current session diagnostics, while unbound repair retains
+its model-only contract. The following indexed Conv-input summary does not
+consume either result.
+
+The characterization fixes the topology phase predecessor, exact child order,
+ModelIR identity, no-layout precision policy, diagnostics source, complete
+three-mapping precision tuple, one-key unbound mapping, observation-only
+status, and Conv-input successor. Production is unchanged pending one frozen
+`ModelIRPassContext` and straight-line two-child owner.
+
+Focused characterization reports `1 passed, 1 xfailed`; the complete
+reference-based affected suite reports `29 passed, 1 xfailed`. The sole
+expected failure requires the intentionally absent owner module.
+
+At resume, implement the owner with direct public child imports, retain both
+lowerer compatibility wrappers and the final-primary precision route, update
+stale entry assertions, and run all gates sequentially. Commit and push only;
+do not create, update, reopen, or otherwise modify a pull request.
