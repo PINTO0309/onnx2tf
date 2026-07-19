@@ -8,17 +8,8 @@ import pytest
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
-from onnx2tf.tflite_builder.passes.expand_squeeze_reshape import (
-    replace_expand_dims_and_squeeze_with_reshape,
-)
-from onnx2tf.tflite_builder.passes.late_layout_mean_spp_gather_constant_cast_orchestration import (
-    run_late_layout_mean_spp_gather_constant_cast_summary,
-)
-from onnx2tf.tflite_builder.passes.pre_concat_nhwc_layout import (
-    optimize_transpose_pre_concat_nhwc_chains,
-)
-from onnx2tf.tflite_builder.passes.shape_extract_layout import (
-    optimize_transpose_shape_extract_nhwc_to_nchw_chains,
+from onnx2tf.tflite_builder.passes import (
+    terminal_layout_shape_orchestration,
 )
 
 
@@ -39,12 +30,6 @@ CHILD_OWNERS = (
     "optimize_transpose_shape_extract_nhwc_to_nchw_chains",
     "run_late_layout_mean_spp_gather_constant_cast_summary",
     "replace_expand_dims_and_squeeze_with_reshape",
-)
-CURRENT_CHILD_OWNERS = (
-    "_optimize_transpose_pre_concat_nhwc_chains",
-    "_optimize_transpose_shape_extract_nhwc_to_nchw_chains",
-    CHILD_OWNERS[2],
-    "_replace_expand_dims_and_squeeze_with_reshape",
 )
 RESULT_TARGETS = (
     "_absolute_final_pre_concat_stats",
@@ -131,55 +116,25 @@ def test_terminal_layout_shape_current_boundary_and_schema(
     include_layout_transpose: bool,
 ) -> None:
     lowerer = _lowerer()
-    statements = tuple(
-        next(
-            statement
-            for statement in lowerer.body
-            if _single_target(statement) == target
-        )
-        for target in RESULT_TARGETS
+    assignment = next(
+        statement
+        for statement in lowerer.body
+        if _single_target(statement) == COMPOSITE_TARGET
     )
-    indices = tuple(lowerer.body.index(statement) for statement in statements)
-    assert indices == tuple(range(indices[0], indices[0] + len(indices)))
-    assert _single_target(lowerer.body[indices[0] - 1]) == PREDECESSOR_TARGET
-    assert _phase_id(lowerer.body[indices[-1] + 1]) == SUCCESSOR_PHASE_ID
-    assert _call_name(lowerer.body[indices[-1] + 2]) == "_advance_post_progress"
-    assert tuple(_call_name(statement) for statement in statements) == (
-        CURRENT_CHILD_OWNERS
-    )
-
-    pre_concat_call = _call(statements[0])
-    shape_extract_call = _call(statements[1])
-    late_layout_call = _call(statements[2])
-    expand_squeeze_call = _call(statements[3])
-    assert pre_concat_call is not None
-    assert shape_extract_call is not None
-    assert late_layout_call is not None
-    assert expand_squeeze_call is not None
-    assert [ast.unparse(arg) for arg in pre_concat_call.args] == ["model_ir"]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in pre_concat_call.keywords
-    } == {
-        "layout_state": "session.layout_state",
-        "diagnostics": "session.diagnostics",
-    }
-    assert [ast.unparse(arg) for arg in shape_extract_call.args] == ["model_ir"]
-    assert shape_extract_call.keywords == []
-    assert [ast.unparse(arg) for arg in late_layout_call.args] == [
-        "late_layout_mean_spp_gather_constant_cast_context"
+    index = lowerer.body.index(assignment)
+    assert _call_name(assignment) == OWNER
+    call = _call(assignment)
+    assert call is not None
+    assert [ast.unparse(arg) for arg in call.args] == [
+        "shared_model_ir_pass_context"
     ]
     assert {
         keyword.arg: ast.unparse(keyword.value)
-        for keyword in late_layout_call.keywords
+        for keyword in call.keywords
     } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
-    assert [ast.unparse(arg) for arg in expand_squeeze_call.args] == [
-        "model_ir"
-    ]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in expand_squeeze_call.keywords
-    } == {"layout_state": "session.layout_state"}
+    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
+    assert _call_name(lowerer.body[index + 2]) == "_advance_post_progress"
     assert not any(
         isinstance(node, ast.Name)
         and isinstance(node.ctx, ast.Load)
@@ -194,23 +149,12 @@ def test_terminal_layout_shape_current_boundary_and_schema(
         diagnostics=[],
     )
     assert (
-        optimize_transpose_pre_concat_nhwc_chains(
-            context.model_ir,
-            layout_state=context.layout_state,
-            diagnostics=context.diagnostics,
-        ),
-        optimize_transpose_shape_extract_nhwc_to_nchw_chains(
-            context.model_ir
-        ),
-        run_late_layout_mean_spp_gather_constant_cast_summary(
+        terminal_layout_shape_orchestration.run_terminal_layout_shape_cleanup(
             context,
             include_layout_transpose=include_layout_transpose,
-        ),
-        replace_expand_dims_and_squeeze_with_reshape(
-            context.model_ir,
-            layout_state=context.layout_state,
-        ),
-    ) == EXPECTED_SCHEMAS
+        )
+        == EXPECTED_SCHEMAS
+    )
 
 
 def test_terminal_layout_shape_shared_context_alias_is_fixed() -> None:
@@ -225,10 +169,6 @@ def test_terminal_layout_shape_shared_context_alias_is_fixed() -> None:
     assert ast.unparse(alias.value) == "shared_model_ir_pass_context"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="terminal layout/shape tail has no shared-context owner",
-)
 def test_terminal_layout_shape_has_one_context_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -288,3 +228,84 @@ def test_terminal_layout_shape_has_one_context_owner() -> None:
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
+
+
+def test_terminal_layout_shape_runtime_order_and_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = ModelIR("terminal_layout_shape_runtime")
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
+    expected_results = tuple(
+        {f"stage_{index}": index} for index in range(len(CHILD_OWNERS))
+    )
+    observed: list[tuple[str, object, dict[str, object]]] = []
+
+    def _pre_concat(
+        active_model_ir: ModelIR,
+        **kwargs: object,
+    ) -> dict[str, int]:
+        observed.append((CHILD_OWNERS[0], active_model_ir, kwargs))
+        return expected_results[0]
+
+    def _shape_extract(active_model_ir: ModelIR) -> dict[str, int]:
+        observed.append((CHILD_OWNERS[1], active_model_ir, {}))
+        return expected_results[1]
+
+    def _late_layout(
+        active_context: ModelIRPassContext,
+        **kwargs: object,
+    ) -> dict[str, int]:
+        observed.append((CHILD_OWNERS[2], active_context, kwargs))
+        return expected_results[2]
+
+    def _expand_squeeze(
+        active_model_ir: ModelIR,
+        **kwargs: object,
+    ) -> dict[str, int]:
+        observed.append((CHILD_OWNERS[3], active_model_ir, kwargs))
+        return expected_results[3]
+
+    for child, callback in zip(
+        CHILD_OWNERS,
+        (_pre_concat, _shape_extract, _late_layout, _expand_squeeze),
+    ):
+        monkeypatch.setattr(
+            terminal_layout_shape_orchestration,
+            child,
+            callback,
+        )
+
+    actual = terminal_layout_shape_orchestration.run_terminal_layout_shape_cleanup(
+        context,
+        include_layout_transpose=True,
+    )
+    assert actual == expected_results
+    assert all(
+        actual[index] is expected_results[index]
+        for index in range(len(expected_results))
+    )
+    assert observed == [
+        (
+            CHILD_OWNERS[0],
+            context.model_ir,
+            {
+                "layout_state": context.layout_state,
+                "diagnostics": context.diagnostics,
+            },
+        ),
+        (CHILD_OWNERS[1], context.model_ir, {}),
+        (
+            CHILD_OWNERS[2],
+            context,
+            {"include_layout_transpose": True},
+        ),
+        (
+            CHILD_OWNERS[3],
+            context.model_ir,
+            {"layout_state": context.layout_state},
+        ),
+    ]

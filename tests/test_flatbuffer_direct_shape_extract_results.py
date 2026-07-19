@@ -14,7 +14,6 @@ OWNER_PATH = (
 )
 SHAPE_EXTRACT = "_optimize_transpose_shape_extract_nhwc_to_nchw_chains"
 OWNER_NAME = "optimize_transpose_shape_extract_nhwc_to_nchw_chains"
-PRE_CONCAT = "_optimize_transpose_pre_concat_nhwc_chains"
 TERMINAL_QKV_OWNER_PATH = (
     REPO_ROOT
     / "onnx2tf"
@@ -23,6 +22,14 @@ TERMINAL_QKV_OWNER_PATH = (
     / "terminal_qkv_shape_attention_orchestration.py"
 )
 TERMINAL_QKV_OWNER = "run_terminal_qkv_shape_attention_cleanup"
+TERMINAL_LAYOUT_SHAPE_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_layout_shape_orchestration.py"
+)
+TERMINAL_LAYOUT_SHAPE_OWNER = "run_terminal_layout_shape_cleanup"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -47,13 +54,6 @@ def _call_name(statement: ast.stmt) -> str | None:
     if call is None or not isinstance(call.func, ast.Name):
         return None
     return call.func.id
-
-
-def _single_target(statement: ast.stmt) -> str | None:
-    if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
-        return None
-    target = statement.targets[0]
-    return target.id if isinstance(target, ast.Name) else None
 
 
 def test_shape_extract_schema_and_positive_cleanup_are_explicit() -> None:
@@ -103,21 +103,12 @@ def test_lowerer_retains_all_shape_extract_results() -> None:
         for statement in lowerer.body
         if _call_name(statement) == SHAPE_EXTRACT
     ]
-    assert len(direct_results) == 1
+    assert len(direct_results) == 0
     expected_targets = ["_late_pre_layout_cluster_shape_extract_stats"]
-    assert [_single_target(statement) for statement in direct_results] == (
-        expected_targets
-    )
-    for statement in direct_results:
-        call = _statement_call(statement)
-        assert call is not None
-        assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-        assert call.keywords == []
     for target in expected_targets:
         assert not any(
             isinstance(node, ast.Name)
             and node.id == target
-            and isinstance(node.ctx, ast.Load)
             for node in ast.walk(lowerer)
         )
 
@@ -134,11 +125,18 @@ def test_lowerer_retains_all_shape_extract_results() -> None:
         ast.unparse(argument) for argument in terminal_shape_calls[0].args
     ] == ["context.model_ir"]
 
-    late_layout_index = lowerer.body.index(direct_results[0])
-    assert _call_name(lowerer.body[late_layout_index - 1]) == PRE_CONCAT
-    assert _single_target(lowerer.body[late_layout_index - 1]) == (
-        "_absolute_final_pre_concat_stats"
-    )
-    assert _single_target(lowerer.body[late_layout_index + 1]) == (
-        "_late_layout_cluster_stats"
-    )
+    terminal_layout_owner = _functions(TERMINAL_LAYOUT_SHAPE_OWNER_PATH)[
+        TERMINAL_LAYOUT_SHAPE_OWNER
+    ]
+    terminal_layout_shape_calls = [
+        node
+        for node in ast.walk(terminal_layout_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OWNER_NAME
+    ]
+    assert len(terminal_layout_shape_calls) == 1
+    assert [
+        ast.unparse(argument)
+        for argument in terminal_layout_shape_calls[0].args
+    ] == ["context.model_ir"]

@@ -24,6 +24,14 @@ OWNER_PATH = (
     / "passes"
     / "late_layout_mean_spp_gather_constant_cast_orchestration.py"
 )
+TERMINAL_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_layout_shape_orchestration.py"
+)
+TERMINAL_OWNER = "run_terminal_layout_shape_cleanup"
 RAW_WRAPPER = "_run_late_layout_mean_spp_gather_constant_cast_pass_cluster"
 RAW_OWNER = "run_late_layout_mean_spp_gather_constant_cast"
 SUMMARY_OWNER = "run_late_layout_mean_spp_gather_constant_cast_summary"
@@ -33,8 +41,9 @@ SUMMARY_FUNCTION = (
 COUNT_TARGET = "late_layout_cluster_tensor_count"
 RAW_TARGET = "late_layout_cluster_results"
 SUMMARY_TARGET = "_late_layout_cluster_stats"
-PREDECESSOR_TARGET = "_late_pre_layout_cluster_shape_extract_stats"
-SUCCESSOR_TARGET = "_terminal_expand_squeeze_stats"
+COMPOSITE_TARGET = "_terminal_layout_shape_results"
+PREDECESSOR_TARGET = "_terminal_activation_bridge_results"
+SUCCESSOR_PHASE_ID = "shape_reconciliation.terminal.expand_squeeze"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -56,21 +65,48 @@ def _single_target(statement: ast.stmt) -> str | None:
     return target.id if isinstance(target, ast.Name) else None
 
 
+def _phase_id(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, ast.Expr) or not isinstance(
+        statement.value, ast.Call
+    ):
+        return None
+    call = statement.value
+    if (
+        not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != "session"
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
+
+
 def test_late_layout_cluster_prune_aware_summary_boundary_is_fixed() -> None:
+    terminal_owner = _functions(TERMINAL_OWNER_PATH)[TERMINAL_OWNER]
+    summary_call = next(
+        node
+        for node in ast.walk(terminal_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == SUMMARY_OWNER
+    )
+    assert ast.unparse(summary_call) == (
+        f"{SUMMARY_OWNER}(context, "
+        "include_layout_transpose=include_layout_transpose)"
+    )
+
     lowerer = _lowerer()
     summary = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == SUMMARY_TARGET
+        if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(summary)
     assert isinstance(summary, ast.Assign)
-    assert ast.unparse(summary.value) == (
-        f"{SUMMARY_OWNER}(late_layout_mean_spp_gather_constant_cast_context, "
-        "include_layout_transpose=optimize_layout_transpose_chains)"
-    )
+    assert ast.unparse(summary.value).startswith(f"{TERMINAL_OWNER}(")
     assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
-    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
     assert not any(
         isinstance(node, ast.Name) and node.id in {COUNT_TARGET, RAW_TARGET}
         for node in ast.walk(lowerer)
@@ -106,20 +142,26 @@ def test_late_layout_cluster_uses_one_prune_aware_summary_owner() -> None:
     summary = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == SUMMARY_TARGET
+        if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(summary)
     assert isinstance(summary, ast.Assign)
-    assert ast.unparse(summary.value) == (
-        f"{SUMMARY_OWNER}(late_layout_mean_spp_gather_constant_cast_context, "
-        "include_layout_transpose=optimize_layout_transpose_chains)"
-    )
+    assert ast.unparse(summary.value).startswith(f"{TERMINAL_OWNER}(")
     assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
-    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
     assert not any(
         isinstance(node, ast.Name) and node.id in {COUNT_TARGET, RAW_TARGET}
         for node in ast.walk(lowerer)
     )
+    terminal_owner = _functions(TERMINAL_OWNER_PATH)[TERMINAL_OWNER]
+    summary_calls = [
+        node
+        for node in ast.walk(terminal_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == SUMMARY_OWNER
+    ]
+    assert len(summary_calls) == 1
 
     wrapper = next(
         node

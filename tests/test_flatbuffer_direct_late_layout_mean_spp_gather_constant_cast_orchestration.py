@@ -34,6 +34,14 @@ PHASE_PATH = (
     / "passes"
     / "late_layout_mean_spp_gather_constant_cast_orchestration.py"
 )
+TERMINAL_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_layout_shape_orchestration.py"
+)
+TERMINAL_OWNER = "run_terminal_layout_shape_cleanup"
 LATE_LAYOUT = "_run_late_layout_mean_spp_gather_constant_cast_pass_cluster"
 CONSTANT_FOLD_CAST = "_run_constant_fold_cast_cleanup_pass_cluster"
 
@@ -51,6 +59,15 @@ def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
         if isinstance(node, ast.FunctionDef) and node.name == LATE_LAYOUT
     )
     return lowerer, helper
+
+
+def _terminal_owner() -> ast.FunctionDef:
+    tree = ast.parse(TERMINAL_OWNER_PATH.read_text(encoding="utf-8"))
+    return next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == TERMINAL_OWNER
+    )
 
 
 def _expression_path(node: ast.expr) -> Any:
@@ -364,29 +381,21 @@ def test_late_layout_mutation_summary_filters_iterations_and_reports_pruning(
 
 def test_lowerer_captures_late_layout_cluster_mutation_evidence() -> None:
     lowerer, _ = _lowerer_and_helper()
-    summary = next(
-        statement
-        for statement in lowerer.body
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_late_layout_cluster_stats"
-    )
-    summary_call = summary.value
-    assert isinstance(summary_call, ast.Call)
-    assert isinstance(summary_call.func, ast.Name)
-    assert summary_call.func.id == (
-        "run_late_layout_mean_spp_gather_constant_cast_summary"
+    summary_call = next(
+        node
+        for node in ast.walk(_terminal_owner())
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id
+        == "run_late_layout_mean_spp_gather_constant_cast_summary"
     )
     assert len(summary_call.args) == 1
     assert isinstance(summary_call.args[0], ast.Name)
-    assert summary_call.args[0].id == (
-        "late_layout_mean_spp_gather_constant_cast_context"
-    )
+    assert summary_call.args[0].id == "context"
     assert {
         keyword.arg: _expression_path(keyword.value)
         for keyword in summary_call.keywords
-    } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
+    } == {"include_layout_transpose": "include_layout_transpose"}
     assert not any(
         isinstance(node, ast.Name)
         and node.id
@@ -396,10 +405,9 @@ def test_lowerer_captures_late_layout_cluster_mutation_evidence() -> None:
 
 
 def test_late_layout_has_one_required_policy_production_call() -> None:
-    lowerer, _ = _lowerer_and_helper()
     invocations = [
         node
-        for node in ast.walk(lowerer)
+        for node in ast.walk(_terminal_owner())
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id
@@ -408,12 +416,12 @@ def test_late_layout_has_one_required_policy_production_call() -> None:
 
     assert len(invocations) == 1
     assert [ast.unparse(argument) for argument in invocations[0].args] == [
-        "late_layout_mean_spp_gather_constant_cast_context"
+        "context"
     ]
     assert {
         str(keyword.arg): _expression_path(keyword.value)
         for keyword in invocations[0].keywords
-    } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
+    } == {"include_layout_transpose": "include_layout_transpose"}
 
 
 def test_late_layout_preserves_outer_boundaries() -> None:
@@ -424,13 +432,13 @@ def test_late_layout_preserves_outer_boundaries() -> None:
         if isinstance(statement, ast.Assign)
         and any(
             isinstance(target, ast.Name)
-            and target.id == "_late_layout_cluster_stats"
+            and target.id == "_terminal_layout_shape_results"
             for target in statement.targets
         )
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id
-        == "run_late_layout_mean_spp_gather_constant_cast_summary"
+        == TERMINAL_OWNER
     )
 
     previous = lowerer.body[invocation_index - 1]
@@ -438,21 +446,21 @@ def test_late_layout_preserves_outer_boundaries() -> None:
     assert isinstance(previous, ast.Assign)
     assert len(previous.targets) == 1
     assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == (
-        "_late_pre_layout_cluster_shape_extract_stats"
-    )
+    assert previous.targets[0].id == "_terminal_activation_bridge_results"
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
     assert (
         previous.value.func.id
-        == "_optimize_transpose_shape_extract_nhwc_to_nchw_chains"
+        == "run_terminal_activation_bridge_cleanup"
     )
-    assert isinstance(following, ast.Assign)
+    assert isinstance(following, ast.Expr)
     assert isinstance(following.value, ast.Call)
-    assert isinstance(following.value.func, ast.Name)
+    assert isinstance(following.value.func, ast.Attribute)
     assert (
-        following.value.func.id
-        == "_replace_expand_dims_and_squeeze_with_reshape"
+        ast.unparse(following.value.func) == "session.record_phase_result"
+    )
+    assert ast.literal_eval(following.value.args[0]) == (
+        "shape_reconciliation.terminal.expand_squeeze"
     )
 
 

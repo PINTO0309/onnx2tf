@@ -15,8 +15,17 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 EXPAND_RESULT_TARGET = "_terminal_expand_squeeze_stats"
+COMPOSITE_TARGET = "_terminal_layout_shape_results"
 RECONCILE_RESULT_TARGET = "_terminal_expand_squeeze_static_shape_stats"
 RECONCILE_PHASE_ID = "shape_reconciliation.terminal.expand_squeeze"
+TERMINAL_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_layout_shape_orchestration.py"
+)
+TERMINAL_OWNER = "run_terminal_layout_shape_cleanup"
 
 
 def _lowerer() -> ast.FunctionDef:
@@ -61,6 +70,22 @@ def _phase_result_owner(statement: ast.stmt) -> ast.Call | None:
     ):
         return None
     return call.args[1]
+
+
+def _terminal_expand_squeeze_call() -> ast.Call:
+    tree = ast.parse(TERMINAL_OWNER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == TERMINAL_OWNER
+    )
+    return next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "replace_expand_dims_and_squeeze_with_reshape"
+    )
 
 
 def _stale_reshape_model_ir() -> ModelIR:
@@ -115,17 +140,28 @@ def test_terminal_expand_squeeze_reconciliation_contract_is_explicit() -> None:
     expand_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if _single_target(statement) == EXPAND_RESULT_TARGET
+        if _single_target(statement) == COMPOSITE_TARGET
     )
     expand_call = _statement_call(lowerer.body[expand_index])
     assert expand_call is not None
     assert isinstance(expand_call.func, ast.Name)
-    assert expand_call.func.id == "_replace_expand_dims_and_squeeze_with_reshape"
-    assert [ast.unparse(argument) for argument in expand_call.args] == ["model_ir"]
+    assert expand_call.func.id == TERMINAL_OWNER
+    assert [ast.unparse(argument) for argument in expand_call.args] == [
+        "shared_model_ir_pass_context"
+    ]
     assert {
         keyword.arg: ast.unparse(keyword.value)
         for keyword in expand_call.keywords
-    } == {"layout_state": "session.layout_state"}
+    } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
+
+    child_call = _terminal_expand_squeeze_call()
+    assert [ast.unparse(argument) for argument in child_call.args] == [
+        "context.model_ir"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in child_call.keywords
+    } == {"layout_state": "context.layout_state"}
 
     reconciliation = lowerer.body[expand_index + 1]
     record_call = _statement_call(reconciliation)
@@ -168,7 +204,7 @@ def test_terminal_reconciliation_retains_complete_observation_result() -> None:
     expand_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if _single_target(statement) == EXPAND_RESULT_TARGET
+        if _single_target(statement) == COMPOSITE_TARGET
     )
     reconciliation = lowerer.body[expand_index + 1]
     record_call = _statement_call(reconciliation)
@@ -188,6 +224,6 @@ def test_terminal_reconciliation_retains_complete_observation_result() -> None:
     assert _call_name(lowerer.body[expand_index + 2]) == "_advance_post_progress"
     assert not any(
         isinstance(node, ast.Name)
-        and node.id == RECONCILE_RESULT_TARGET
+        and node.id in {EXPAND_RESULT_TARGET, RECONCILE_RESULT_TARGET}
         for node in ast.walk(lowerer)
     )

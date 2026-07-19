@@ -1214,3 +1214,14 @@ schemas and order, terminal-activation predecessor, and the separate recorded
 static-shape-reconciliation successor. Production remains unchanged pending a
 four-stage shared-context owner. Focused and affected validation report
 `3 passed, 1 xfailed` and `404 passed, 1 xfailed`.
+
+The latest checkpoint implements that terminal layout/shape owner. It
+forwards the exact shared ModelIR, LayoutState, diagnostics, context, and
+layout-Transpose option across the four children and returns every raw mapping
+unchanged in source order. The lowerer replaces only the four unconsumed
+locals; the recorded complete static-shape reconciliation and progress update
+remain separate immediate successors, while all compatibility wrappers and
+independent routes remain available. Runtime identity coverage, 406 affected
+tests, and all standard sequential gates pass; public behavior, graph
+rewrites, TensorFlow isolation, and the exactly 128-ID/128-owner store are
+unchanged.

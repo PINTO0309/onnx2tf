@@ -19,6 +19,14 @@ PRE_CONCAT_OWNER_PATH = (
     / "passes"
     / "pre_concat_nhwc_layout.py"
 )
+TERMINAL_LAYOUT_SHAPE_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_layout_shape_orchestration.py"
+)
+TERMINAL_LAYOUT_SHAPE_OWNER = "run_terminal_layout_shape_cleanup"
 PRE_CONCAT = "_optimize_transpose_pre_concat_nhwc_chains"
 PRE_CONCAT_OWNER = "optimize_transpose_pre_concat_nhwc_chains"
 LEGACY_OWNER = "optimize_transpose_pre_concat_nhwc_chains_legacy"
@@ -163,10 +171,9 @@ def test_all_direct_pre_concat_results_are_retained_observation_only() -> None:
         ),
         key=lambda statement: statement.lineno,
     )
-    assert len(direct_results) == 2
+    assert len(direct_results) == 1
     assert tuple(_single_target(statement) for statement in direct_results) == (
         None,
-        RESULT_TARGETS[2],
     )
     for statement in direct_results:
         call = _direct_call(statement)
@@ -179,16 +186,9 @@ def test_all_direct_pre_concat_results_are_retained_observation_only() -> None:
             "layout_state": "session.layout_state",
             "diagnostics": "session.diagnostics",
         }
-    for target in RESULT_TARGETS[:2]:
+    for target in RESULT_TARGETS:
         assert not any(
             isinstance(node, ast.Name) and node.id == target
-            for node in ast.walk(lowerer)
-        )
-    for target in RESULT_TARGETS[2:]:
-        assert not any(
-            isinstance(node, ast.Name)
-            and node.id == target
-            and isinstance(node.ctx, ast.Load)
             for node in ast.walk(lowerer)
         )
 
@@ -197,11 +197,6 @@ def test_all_direct_pre_concat_results_are_retained_observation_only() -> None:
             "run_spp_layout_cleanup",
             None,
             "run_ndhwc_concat_layout_cleanup",
-        ),
-        (
-            "run_terminal_activation_bridge_cleanup",
-            "_terminal_activation_bridge_results",
-            "_optimize_transpose_shape_extract_nhwc_to_nchw_chains",
         ),
     )
     observed_boundaries = []
@@ -218,6 +213,28 @@ def test_all_direct_pre_concat_results_are_retained_observation_only() -> None:
             )
         )
     assert tuple(observed_boundaries) == expected_boundaries
+
+    terminal_owner = _functions(TERMINAL_LAYOUT_SHAPE_OWNER_PATH)[
+        TERMINAL_LAYOUT_SHAPE_OWNER
+    ]
+    terminal_calls = [
+        node
+        for node in ast.walk(terminal_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == PRE_CONCAT_OWNER
+    ]
+    assert len(terminal_calls) == 1
+    assert [ast.unparse(argument) for argument in terminal_calls[0].args] == [
+        "context.model_ir"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in terminal_calls[0].keywords
+    } == {
+        "layout_state": "context.layout_state",
+        "diagnostics": "context.diagnostics",
+    }
 
 
 def test_layout_recovery_keeps_independent_pre_concat_callback_selection() -> None:

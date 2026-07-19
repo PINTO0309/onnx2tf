@@ -5051,3 +5051,32 @@ owner. Accept the shared context plus keyword-only
 mappings unchanged, replace only the four characterized lowerer locals, and
 preserve both outer boundaries. Run affected and standard gates sequentially,
 then commit and push only. Do not create or modify a pull request.
+
+## Terminal layout/shape composite implementation checkpoint
+
+The characterized four-stage owner is now implemented in
+`passes/terminal_layout_shape_orchestration.py`. It runs absolute pre-ConCat,
+Shape-extract, prune-aware late layout/Mean/SPP/Gather/constant-fold/Cast, and
+Expand/Squeeze-to-Reshape cleanup with the exact shared
+`ModelIRPassContext`. It forwards the same ModelIR, LayoutState, diagnostics,
+and layout-Transpose option required by the original calls and returns all
+four raw mapping objects unchanged in source order.
+
+The lowerer replaces only the four unconsumed result locals with
+`_terminal_layout_shape_results`. Compatibility wrappers and independent
+routes remain. Terminal activation remains the predecessor; the complete
+static-shape reconciliation phase record and progress update remain separate
+successors. No phase-store entry was added or removed, so capacity remains
+exactly 128 IDs and 128 owners.
+
+Sequential `uv` validation passed: focused 5, complete affected 406,
+terminal-layout/efficiency 92, core 55, result contracts 196, phase-store 2,
+and TensorFlow import-blocking/default-direct/`-cotof` 11. Ruff, bytecode, and
+whitespace checks passed. No test is failing and no new production issue is
+known. No real-model conversion was repeated for this ownership-only move.
+
+At resume, rerun the read-only inventory of remaining unconsumed lowerer
+results. Select the next smallest source-adjacent, semantically closed cluster
+whose children already have pass-module owners, characterize it before
+production changes, and keep every test sequential and single-process under
+`uv`. Commit and push only; never create, update, or reopen a pull request.

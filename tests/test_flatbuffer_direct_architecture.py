@@ -412,6 +412,30 @@ def _terminal_activation_bridge_calls(function_name: str) -> list[ast.Call]:
     ]
 
 
+def _terminal_layout_shape_calls(function_name: str) -> list[ast.Call]:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "terminal_layout_shape_orchestration.py"
+    )
+    owner_tree = ast.parse(owner_path.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_terminal_layout_shape_cleanup"
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name.removeprefix("_")
+    ]
+
+
 def _late_binary_layout_recovery_call_count(function_name: str) -> int:
     runner_path = (
         REPO_ROOT
@@ -5192,7 +5216,12 @@ def test_nhwc_concat_legacy_optimizer_has_one_module_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == composite_name
     ]
-    assert len(production_calls) + _orchestrated_pass_count(composite_name) == 4
+    assert (
+        len(production_calls)
+        + _orchestrated_pass_count(composite_name)
+        + len(_terminal_layout_shape_calls(composite_name))
+        == 4
+    )
 
 
 def test_slice_prepost_layout_optimizer_has_one_module_owner() -> None:
@@ -5326,6 +5355,7 @@ def test_shape_extract_layout_optimizer_has_one_module_owner() -> None:
         len(production_calls)
         + _orchestrated_pass_count(wrapper_name)
         + _terminal_qkv_shape_attention_call_count(wrapper_name)
+        + len(_terminal_layout_shape_calls(wrapper_name))
         == 3
     )
 
@@ -6491,17 +6521,19 @@ def test_lowerer_late_layout_mean_spp_gather_constant_cast_cluster_reuses_scope(
         if isinstance(statement, ast.Assign)
         and any(
             isinstance(target, ast.Name)
-            and target.id == "_late_layout_cluster_stats"
+            and target.id == "_terminal_layout_shape_results"
             for target in statement.targets
         )
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id
-        == "run_late_layout_mean_spp_gather_constant_cast_summary"
+        == "run_terminal_layout_shape_cleanup"
     )
-    invocation = lowerer.body[invocation_index].value
+    invocation = _terminal_layout_shape_calls(
+        "run_late_layout_mean_spp_gather_constant_cast_summary"
+    )[0]
     assert [ast.unparse(argument) for argument in invocation.args] == [
-        "late_layout_mean_spp_gather_constant_cast_context"
+        "context"
     ]
     include_layout = next(
         keyword
@@ -6509,28 +6541,26 @@ def test_lowerer_late_layout_mean_spp_gather_constant_cast_cluster_reuses_scope(
         if keyword.arg == "include_layout_transpose"
     )
     assert isinstance(include_layout.value, ast.Name)
-    assert include_layout.value.id == "optimize_layout_transpose_chains"
+    assert include_layout.value.id == "include_layout_transpose"
 
     previous_boundary = lowerer.body[invocation_index - 1]
     assert isinstance(previous_boundary, ast.Assign)
     assert len(previous_boundary.targets) == 1
     assert isinstance(previous_boundary.targets[0], ast.Name)
-    assert previous_boundary.targets[0].id == (
-        "_late_pre_layout_cluster_shape_extract_stats"
-    )
+    assert previous_boundary.targets[0].id == "_terminal_activation_bridge_results"
     assert isinstance(previous_boundary.value, ast.Call)
     assert isinstance(previous_boundary.value.func, ast.Name)
     assert (
         previous_boundary.value.func.id
-        == "_optimize_transpose_shape_extract_nhwc_to_nchw_chains"
+        == "run_terminal_activation_bridge_cleanup"
     )
     next_boundary = lowerer.body[invocation_index + 1]
-    assert isinstance(next_boundary, ast.Assign)
+    assert isinstance(next_boundary, ast.Expr)
     assert isinstance(next_boundary.value, ast.Call)
-    assert isinstance(next_boundary.value.func, ast.Name)
-    assert (
-        next_boundary.value.func.id
-        == "_replace_expand_dims_and_squeeze_with_reshape"
+    assert isinstance(next_boundary.value.func, ast.Attribute)
+    assert ast.unparse(next_boundary.value.func) == "session.record_phase_result"
+    assert ast.literal_eval(next_boundary.value.args[0]) == (
+        "shape_reconciliation.terminal.expand_squeeze"
     )
 
     orchestration_path = (
@@ -6739,12 +6769,12 @@ def test_lowerer_late_hard_activation_layout_pair_reuses_scope() -> None:
     assert isinstance(next_boundary, ast.Assign)
     assert len(next_boundary.targets) == 1
     assert isinstance(next_boundary.targets[0], ast.Name)
-    assert next_boundary.targets[0].id == "_absolute_final_pre_concat_stats"
+    assert next_boundary.targets[0].id == "_terminal_layout_shape_results"
     assert isinstance(next_boundary.value, ast.Call)
     assert isinstance(next_boundary.value.func, ast.Name)
     assert (
         next_boundary.value.func.id
-        == "_optimize_transpose_pre_concat_nhwc_chains"
+        == "run_terminal_layout_shape_cleanup"
     )
 
     orchestration_path = (

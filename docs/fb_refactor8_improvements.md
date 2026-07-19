@@ -5834,3 +5834,38 @@ contracts. The sole expected failure requires one shared-context owner that
 returns all four raw mappings unchanged and replaces only the four unconsumed
 lowerer locals. No pass result or store entry changes; the store remains
 exactly 128 IDs and 128 owners.
+
+## Terminal layout/shape composite implementation
+
+`passes/terminal_layout_shape_orchestration.py` now owns the characterized
+four-stage tail before terminal static-shape reconciliation. It forwards the
+exact shared context model, LayoutState, and diagnostics to pre-ConCat
+cleanup; the same model to Shape-extract cleanup; the same complete context
+and unchanged layout-Transpose option to the prune-aware late layout summary;
+and the same model and LayoutState to Expand/Squeeze-to-Reshape cleanup.
+
+The lowerer replaces `_absolute_final_pre_concat_stats`,
+`_late_pre_layout_cluster_shape_extract_stats`, `_late_layout_cluster_stats`,
+and `_terminal_expand_squeeze_stats` with one
+`_terminal_layout_shape_results` tuple. The owner returns all four raw mapping
+objects unchanged and in source order. The lowerer-local compatibility
+wrappers remain available for earlier independent routes and callbacks. Only
+the now-unused direct summary import was removed.
+
+The terminal activation composite remains the exact predecessor. The
+`shape_reconciliation.terminal.expand_squeeze` phase record and
+`_advance_post_progress` remain in the lowerer immediately afterward; the new
+owner does not absorb, condition, or reinterpret either operation.
+Owner-aware pre-ConCat, Shape-extract, late-layout, Expand/Squeeze,
+architecture, and reconciliation tests preserve total production-route
+counts, specialized mutation contracts, exact state identity, option policy,
+raw-result identity, and both outer boundaries.
+
+Final sequential validation under core-only `uv` passed with 5 focused tests,
+406 affected tests, 92 terminal-layout/efficiency tests, 55 core tests, 196
+result-contract tests, 2 phase-store tests, and 11 TensorFlow import-blocking,
+default-direct, and `-cotof` tests. Ruff, bytecode compilation, and whitespace
+checks passed. No graph rewrite, guard, phase result, public API, artifact,
+dependency, or TensorFlow boundary changed; the store remains exactly 128 IDs
+and 128 owners. No real-model conversion was repeated for this straight-line
+ownership extraction.

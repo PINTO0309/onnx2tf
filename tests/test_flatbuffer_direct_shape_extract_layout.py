@@ -30,6 +30,14 @@ TERMINAL_QKV_OWNER_PATH = (
 )
 TERMINAL_QKV_OWNER = "run_terminal_qkv_shape_attention_cleanup"
 TERMINAL_QKV_RESULT = "_terminal_qkv_shape_attention_results"
+TERMINAL_LAYOUT_SHAPE_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_layout_shape_orchestration.py"
+)
+TERMINAL_LAYOUT_SHAPE_OWNER = "run_terminal_layout_shape_cleanup"
 
 
 def _terminal_qkv_shape_calls() -> list[ast.Call]:
@@ -39,6 +47,25 @@ def _terminal_qkv_shape_calls() -> list[ast.Call]:
         for node in tree.body
         if isinstance(node, ast.FunctionDef)
         and node.name == TERMINAL_QKV_OWNER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == SHAPE_EXTRACT_OWNER.removeprefix("_")
+    ]
+
+
+def _terminal_layout_shape_calls() -> list[ast.Call]:
+    tree = ast.parse(
+        TERMINAL_LAYOUT_SHAPE_OWNER_PATH.read_text(encoding="utf-8")
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == TERMINAL_LAYOUT_SHAPE_OWNER
     )
     return [
         node
@@ -407,6 +434,7 @@ def test_pre_qkv_terminal_shape_extract_captures_complete_mutation_evidence() ->
     assert (
         len(all_calls)
         + len(_terminal_qkv_shape_calls())
+        + len(_terminal_layout_shape_calls())
         + TERMINAL_CONCAT_BRIDGE_LAYOUT_PASS_IDS.count(SHAPE_EXTRACT_OWNER)
         == 3
     )
@@ -414,4 +442,9 @@ def test_pre_qkv_terminal_shape_extract_captures_complete_mutation_evidence() ->
     assert [
         ast.unparse(argument)
         for argument in _terminal_qkv_shape_calls()[0].args
+    ] == ["context.model_ir"]
+    assert len(_terminal_layout_shape_calls()) == 1
+    assert [
+        ast.unparse(argument)
+        for argument in _terminal_layout_shape_calls()[0].args
     ] == ["context.model_ir"]

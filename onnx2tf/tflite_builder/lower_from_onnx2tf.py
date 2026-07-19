@@ -261,7 +261,6 @@ from onnx2tf.tflite_builder.passes.terminal_boundary_layout_orchestration import
 )
 from onnx2tf.tflite_builder.passes.late_layout_mean_spp_gather_constant_cast_orchestration import (
     run_late_layout_mean_spp_gather_constant_cast,
-    run_late_layout_mean_spp_gather_constant_cast_summary,
 )
 from onnx2tf.tflite_builder.passes.singleton_consecutive_reshape_orchestration import (
     run_singleton_consecutive_reshape,
@@ -291,6 +290,9 @@ from onnx2tf.tflite_builder.passes.terminal_qkv_shape_attention_orchestration im
 )
 from onnx2tf.tflite_builder.passes.terminal_activation_bridge_orchestration import (
     run_terminal_activation_bridge_cleanup,
+)
+from onnx2tf.tflite_builder.passes.terminal_layout_shape_orchestration import (
+    run_terminal_layout_shape_cleanup,
 )
 from onnx2tf.tflite_builder.passes.shared_late_reconciliation_orchestration import (
     run_shared_late_reconciliation_cleanup,
@@ -5273,25 +5275,11 @@ def lower_onnx_to_ir(
     )
     # Absolute-end cleanup: late bridge rewrites can recreate strict
     # pre/post CONCAT transpose wrappers and SHAPE-extract transposes.
-    _absolute_final_pre_concat_stats = (
-        _optimize_transpose_pre_concat_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-    )
-    _late_pre_layout_cluster_shape_extract_stats = (
-        _optimize_transpose_shape_extract_nhwc_to_nchw_chains(model_ir)
-    )
-    _late_layout_cluster_stats = (
-        run_late_layout_mean_spp_gather_constant_cast_summary(
-            late_layout_mean_spp_gather_constant_cast_context,
+    _terminal_layout_shape_results = (
+        run_terminal_layout_shape_cleanup(
+            shared_model_ir_pass_context,
             include_layout_transpose=optimize_layout_transpose_chains,
         )
-    )
-    _terminal_expand_squeeze_stats = _replace_expand_dims_and_squeeze_with_reshape(
-        model_ir,
-        layout_state=session.layout_state,
     )
     session.record_phase_result(
         "shape_reconciliation.terminal.expand_squeeze",

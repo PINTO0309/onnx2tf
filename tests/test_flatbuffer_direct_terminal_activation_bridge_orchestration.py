@@ -42,7 +42,7 @@ RESULT_TARGETS = (
 )
 COMPOSITE_TARGET = "_terminal_activation_bridge_results"
 PREDECESSOR_TARGET = "_terminal_qkv_shape_attention_results"
-SUCCESSOR_TARGET = "_absolute_final_pre_concat_stats"
+SUCCESSOR_TARGET = "_terminal_layout_shape_results"
 EXPECTED_SCHEMAS = (
     {"optimized_split_conv_concat_transpose_bridge_to_single_post_nchw": 0},
     {

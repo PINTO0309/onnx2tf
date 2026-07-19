@@ -18,6 +18,14 @@ from onnx2tf.tflite_builder.passes.split_all_outputs_layout import _freeze
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+TERMINAL_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_layout_shape_orchestration.py"
+)
+TERMINAL_OWNER = "run_terminal_layout_shape_cleanup"
 
 
 def _dynamic_squeeze_model() -> ModelIR:
@@ -157,19 +165,13 @@ def test_terminal_expand_squeeze_result_is_captured_before_reconciliation() -> N
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_terminal_expand_squeeze_stats"
+        and statement.targets[0].id == "_terminal_layout_shape_results"
     )
     assignment = lowerer.body[assignment_index]
     assert isinstance(assignment, ast.Assign)
     assert isinstance(assignment.value, ast.Call)
     assert isinstance(assignment.value.func, ast.Name)
-    assert (
-        assignment.value.func.id
-        == "_replace_expand_dims_and_squeeze_with_reshape"
-    )
-    assert {keyword.arg for keyword in assignment.value.keywords} == {
-        "layout_state"
-    }
+    assert assignment.value.func.id == TERMINAL_OWNER
     following = lowerer.body[assignment_index + 1]
     assert isinstance(following, ast.Expr)
     assert ast.unparse(following) == (
@@ -178,3 +180,25 @@ def test_terminal_expand_squeeze_result_is_captured_before_reconciliation() -> N
         "_reconcile_static_tensor_shapes(model_ir, "
         "include_mutation_count=True))"
     )
+
+    owner_tree = ast.parse(TERMINAL_OWNER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == TERMINAL_OWNER
+    )
+    calls = [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "replace_expand_dims_and_squeeze_with_reshape"
+    ]
+    assert len(calls) == 1
+    assert [ast.unparse(argument) for argument in calls[0].args] == [
+        "context.model_ir"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in calls[0].keywords
+    } == {"layout_state": "context.layout_state"}
