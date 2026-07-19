@@ -2494,3 +2494,30 @@ On resume, first characterize moving the lowerer-resident pre-Concat
 implementation behind a pass-module compatibility wrapper; only then reassess
 the deferred final Slice/pre-Concat pair. Continue with coherent commits and
 pushes only; do not create, update, or reopen a pull request.
+
+## Pre-Concat NHWC pass-module owner characterization
+
+The prerequisite audit found that
+`_optimize_transpose_pre_concat_nhwc_chains` still owns a three-stage composite
+inside the lowerer: indexed NHWC Concat cleanup, quantized indexed cleanup, and
+legacy fallback. The first two receive layout state and diagnostics; the last
+is model-only. Only the named indexed and quantized detail keys plus the legacy
+aggregate contribute to the returned one-counter mapping.
+
+`tests/test_flatbuffer_direct_pre_concat_nhwc_owner.py` fixes stage order,
+argument identity, aggregation and ignored-detail behavior, return schema, and
+the public lowerer compatibility name. Its strict expected failure requires a
+new `passes/pre_concat_nhwc_layout.py` owner and a one-return lowerer wrapper.
+No production source changed.
+
+Run the dedicated characterization, targeted Ruff, bytecode compilation, and
+whitespace checks, then commit and push this test-first checkpoint. During
+implementation, import the three existing owners directly into the new module,
+preserve all four production uses and the legacy lowerer wrapper, and avoid
+callback injection or lowerer imports. Keep the store fixed at 128/128 and
+never create, update, or reopen a pull request.
+
+The characterization gate completed with `2 passed, 1 xfailed in 0.57s`;
+the sole xfail is the intentionally absent pass-module owner. Targeted Ruff,
+bytecode compilation, and whitespace checks passed. Commit and push this
+checkpoint before production changes.

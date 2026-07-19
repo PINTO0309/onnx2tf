@@ -1454,6 +1454,33 @@ owner extraction with focused runtime equivalence and unchanged serialization
 inputs. The deferred final Slice/pre-Concat pair still requires a separate
 pass-module compatibility-wrapper checkpoint before safe extraction.
 
+## Pre-Concat NHWC pass-module owner characterization
+
+The lowerer-resident `_optimize_transpose_pre_concat_nhwc_chains` composite was
+selected as the prerequisite for the deferred final Slice/pre-Concat pair. It
+currently invokes indexed NHWC Concat cleanup, quantized indexed cleanup, and
+the legacy fallback in that order, then returns one aggregate integer counter.
+The first two stages share the caller's layout state and diagnostics; the
+legacy stage remains model-only.
+
+The focused characterization fixes this order, argument identity, recognized
+counter aggregation, ignored-detail behavior, public lowerer compatibility
+name, and final one-counter schema. A strict expected failure requires the
+implementation to move to `passes/pre_concat_nhwc_layout.py` while the lowerer
+function becomes a one-return compatibility wrapper. No production source
+changed.
+
+Implementation must import the three existing pass-module owners directly,
+without callback injection or a lowerer import, preserve all four production
+uses, and leave the existing legacy lowerer wrapper available to callers.
+Keep the phase-result store at 128/128 and do not create, update, or reopen a
+pull request.
+
+Sequential characterization under core-only `uv` completed with
+`2 passed, 1 xfailed in 0.57s`; the sole xfail is the intentionally absent
+pass-module owner. Targeted Ruff, bytecode compilation, and whitespace checks
+passed.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:
