@@ -3891,3 +3891,24 @@ No real-model corpus conversion was repeated because focused runtime coverage
 proves exact context/flag forwarding plus stable and prune-only behavior, while
 the affected and architecture gates preserve raw ownership and both neighboring
 boundaries.
+
+## Late layout-cluster prune-aware summary characterization
+
+The next evidence triple snapshots tensor count, invokes the late
+layout/Mean/SPP/Gather/constant-fold/Cast ordered owner with the runtime
+layout-Transpose flag, and applies its existing strict prune-aware normalizer.
+The count and raw tuple are consumed only by the normalized mapping, which does
+not control subsequent work.
+
+`tests/test_flatbuffer_direct_late_layout_cluster_summary_orchestration.py`
+fixes the exact three statements, flag and prune expression, retained raw
+wrapper, pre-cluster shape-extract predecessor, terminal Expand/Squeeze
+successor, and absence of a summary consumer. Its strict expected failure
+requires one pass-module prune-aware summary owner. No production source, pass
+selection, graph mutation, store entry, public API, artifact, dependency, or
+TensorFlow boundary changed.
+
+Sequential characterization under core-only `uv` completed with
+`21 passed, 1 xfailed in 0.98s` across the dedicated contract and related late
+layout-cluster, shape-extract result, and phase-store contracts. The sole
+expected failure is the intentionally absent summary owner.

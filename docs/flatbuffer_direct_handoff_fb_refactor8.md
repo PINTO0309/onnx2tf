@@ -3425,3 +3425,26 @@ Final sequential validation under core-only `uv`:
 Commit and push this implementation checkpoint. At resume, characterize the
 next adjacent non-store evidence boundary before production changes. Continue
 with commits and pushes only; never create, update, or reopen a pull request.
+
+## Late layout-cluster prune-aware summary characterization
+
+The next selected unit is the three-statement late
+layout/Mean/SPP/Gather/constant-fold/Cast evidence boundary. It snapshots tensor
+count, runs the existing ordered owner with the runtime layout-Transpose flag,
+and applies the existing strict prune-aware normalizer. The summary is
+unconsumed.
+
+The focused contract fixes the current representation, exact flag and prune
+expression, raw wrapper retention, shape-extract predecessor, and terminal
+Expand/Squeeze successor. One strict xfail requires
+`run_late_layout_mean_spp_gather_constant_cast_summary(context, flags...)`.
+
+Sequential validation under core-only `uv` completed with
+`21 passed, 1 xfailed in 0.98s` across the new characterization and related
+late-layout, shape-extract result, and store contracts. The sole expected
+failure is the unimplemented summary owner.
+
+Commit and push this characterization separately. At resume, implement only
+the prune-aware owner and direct late site, retain the raw lowerer wrapper,
+update owner-aware structural contracts, and validate sequentially. Continue
+with commits and pushes only; never create, update, or reopen a pull request.
