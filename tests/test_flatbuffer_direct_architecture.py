@@ -9603,17 +9603,13 @@ def test_shared_late_reconciliation_uses_all_mutation_results() -> None:
     assert len(tensor_len_calls) == 1
     assert len(guard.body) == 1
     reconcile = guard.body[0]
-    assert isinstance(reconcile, ast.Assign)
-    assert len(reconcile.targets) == 1
-    assert isinstance(reconcile.targets[0], ast.Name)
-    assert reconcile.targets[0].id == "_shared_late_static_shape_stats"
-    assert isinstance(reconcile.value, ast.Call)
-    assert isinstance(reconcile.value.func, ast.Name)
-    assert reconcile.value.func.id == "_reconcile_static_tensor_shapes"
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in reconcile.value.keywords
-    } == {"include_mutation_count": "True"}
+    assert isinstance(reconcile, ast.Expr)
+    assert ast.unparse(reconcile) == (
+        "session.record_phase_result("
+        "'shape_reconciliation.primary.shared_late', "
+        "_reconcile_static_tensor_shapes(model_ir, "
+        "include_mutation_count=True))"
+    )
 
 
 def test_window_partition_rewrite_has_indexed_owner() -> None:

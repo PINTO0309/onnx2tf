@@ -5444,9 +5444,12 @@ def lower_onnx_to_ir(
         shared_duplicate_fanout_stats,
         shared_consecutive_reshape_stats,
     ) or len(model_ir.tensors) < shared_late_tensor_count:
-        _shared_late_static_shape_stats = _reconcile_static_tensor_shapes(
-            model_ir,
-            include_mutation_count=True,
+        session.record_phase_result(
+            "shape_reconciliation.primary.shared_late",
+            _reconcile_static_tensor_shapes(
+                model_ir,
+                include_mutation_count=True,
+            ),
         )
     late_binary_repair_tensor_count = len(model_ir.tensors)
     late_signature_stats = _sanitize_static_shape_signature_consistency(

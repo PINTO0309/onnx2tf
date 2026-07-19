@@ -1633,19 +1633,14 @@ def test_primary_path_retains_shared_late_shape_result() -> None:
     )
 
     statement = guard.body[0]
-    assert isinstance(statement, ast.Assign)
-    assert len(statement.targets) == 1
-    assert isinstance(statement.targets[0], ast.Name)
-    assert statement.targets[0].id == "_shared_late_static_shape_stats"
-    call = statement.value
-    assert isinstance(call, ast.Call)
-    assert isinstance(call.func, ast.Name)
-    assert call.func.id == "_reconcile_static_tensor_shapes"
-    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in call.keywords
-    } == {"include_mutation_count": "True"}
+    _assert_phase_result_record(
+        statement,
+        phase_id="shape_reconciliation.primary.shared_late",
+        owner_expression=(
+            "_reconcile_static_tensor_shapes(model_ir, "
+            "include_mutation_count=True)"
+        ),
+    )
 
     following = body[guard_index + 1]
     assert isinstance(following, ast.Assign)

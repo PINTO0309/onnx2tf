@@ -3,9 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 RESULT_TARGET = "_shared_late_static_shape_stats"
@@ -66,12 +63,13 @@ def test_shared_late_reconciliation_is_guarded_and_unconsumed() -> None:
     )
     assert guard.orelse == []
     assert len(guard.body) == 1
-    assignment = guard.body[0]
-    assert isinstance(assignment, ast.Assign)
-    assert _single_target(assignment) == RESULT_TARGET
-    assert ast.unparse(assignment.value) == (
+    record = guard.body[0]
+    assert isinstance(record, ast.Expr)
+    assert ast.unparse(record) == (
+        "session.record_phase_result("
+        f"'{PHASE_ID}', "
         "_reconcile_static_tensor_shapes(model_ir, "
-        "include_mutation_count=True)"
+        "include_mutation_count=True))"
     )
 
     evidence_assignments = lowerer.body[guard_index - 6 : guard_index]
@@ -88,32 +86,15 @@ def test_shared_late_reconciliation_is_guarded_and_unconsumed() -> None:
     assert _single_target(successor) == "late_binary_repair_tensor_count"
     assert ast.unparse(successor.value) == "len(model_ir.tensors)"
 
-    target_names = [
-        node
+    assert not any(
+        isinstance(node, ast.Name) and node.id == RESULT_TARGET
         for node in ast.walk(lowerer)
-        if isinstance(node, ast.Name) and node.id == RESULT_TARGET
-    ]
-    assert len(target_names) == 1
-    assert isinstance(target_names[0].ctx, ast.Store)
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="shared-late reconciliation result has not moved to a phase record",
-)
-def test_shared_late_reconciliation_uses_phase_result_store() -> None:
-    lowerer = _lowerer()
-    _, guard = _shared_late_guard(lowerer)
-
-    assert len(guard.body) == 1
-    record = guard.body[0]
-    assert isinstance(record, ast.Expr)
-    assert ast.unparse(record) == (
-        "session.record_phase_result("
-        f"'{PHASE_ID}', "
-        "_reconcile_static_tensor_shapes(model_ir, "
-        "include_mutation_count=True))"
     )
+
+
+def test_shared_late_reconciliation_local_is_removed() -> None:
+    lowerer = _lowerer()
+
     assert not any(
         isinstance(node, ast.Name) and node.id == RESULT_TARGET
         for node in ast.walk(lowerer)

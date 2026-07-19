@@ -990,3 +990,25 @@ boundaries. Then update terminal, architecture, and bounded-store contracts,
 validate, document, commit, and push. Do not alter the post-split fallback
 boundary in the same implementation checkpoint, and never create, update, or
 reopen a pull request.
+
+## Shared-late reconciliation implementation
+
+The shared-late result now uses the stable
+`shape_reconciliation.primary.shared_late` record. Its exact nine-result plus
+prune-delta predicate and both surrounding tensor-count snapshots remain
+unchanged. Only the unconsumed result destination changed; no default existed.
+The bounded store now covers 50 phase IDs.
+
+Validation completed sequentially under core-only `uv`:
+
+- focused shared-late, late-binary, terminal, runtime, and store contracts:
+  `75 passed in 2.31s`;
+- broader affected contracts: `190 passed in 5.03s`;
+- lowerer architecture contracts: `258 passed in 16.57s`;
+- targeted Ruff, bytecode compilation, and whitespace checks: passed.
+
+No real-model conversion was required. The post-split fallback result is the
+only remaining unconsumed static-shape observation. Characterize its
+unconditional zero default, conditional invocation, fallback owner argument,
+and successor before changing its destination. Never create, update, or reopen
+a pull request.

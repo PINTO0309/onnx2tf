@@ -875,6 +875,36 @@ Validation completed sequentially under core-only `uv`:
 The sole expected failure is the intentionally unimplemented result-destination
 migration.
 
+## Shared-late reconciliation implementation
+
+The guarded result now records under
+`shape_reconciliation.primary.shared_late`. Its predicate still contains the
+same nine mutation-result dictionaries in the same order plus the tensor-count
+decrease for cleanup-only pruning. The record remains between the same
+`shared_late_tensor_count` and `late_binary_repair_tensor_count` snapshots.
+
+Only the destination of the already-computed reconciliation counters changed.
+The `_reconcile_static_tensor_shapes(model_ir,
+include_mutation_count=True)` owner, evaluation count, guard, graph traversal,
+ModelIR mutations, successors, public results, reports, artifacts,
+dependencies, and TensorFlow import boundaries are unchanged. No default
+existed at this boundary. The bounded store now covers 50 phase IDs.
+
+Validation completed sequentially under core-only `uv`:
+
+- focused shared-late, late-binary, terminal, runtime, and bounded-store
+  contracts: `75 passed in 2.31s`;
+- broader phase-result, owner, fallback, terminal, shape, and topology
+  contracts: `190 passed in 5.03s`;
+- lowerer architecture contracts: `258 passed in 16.57s`;
+- targeted Ruff, Python bytecode compilation, and whitespace validation:
+  passed.
+
+No real-model conversion was run because this is a result-destination-only
+change at a runtime-characterized boundary. The post-split fallback result is
+now the sole remaining unconsumed static-shape observation and must be
+characterized separately before migration.
+
 ## Primary final cleanup reconciliation implementation
 
 The final PReLU and consecutive-Reshape reconciliation results now record as:
