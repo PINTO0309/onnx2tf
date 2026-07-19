@@ -135,36 +135,24 @@ def test_concat_unary_conv_runner_schema_and_mutation_contract_are_explicit() ->
     )
 
 
-def test_lowerer_retains_terminal_concat_unary_conv_result() -> None:
+def test_lowerer_moves_terminal_concat_unary_conv_to_composite() -> None:
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
     direct_results = [
         statement
         for statement in lowerer.body
         if _call_name(statement) == RUNNER
     ]
-    assert len(direct_results) == 1
-    result = direct_results[0]
+    assert direct_results == []
     target = "_terminal_concat_unary_conv_stats"
-    assert _single_target(result) == target
-    call = _statement_call(result)
-    assert call is not None
-    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in call.keywords
-    } == {
-        "layout_state": "session.layout_state",
-        "diagnostics": "session.diagnostics",
-    }
     assert not any(
-        isinstance(node, ast.Name)
-        and node.id == target
-        and isinstance(node.ctx, ast.Load)
+        isinstance(node, ast.Name) and node.id == target
         for node in ast.walk(lowerer)
     )
-
-    result_index = lowerer.body.index(result)
-    previous = lowerer.body[result_index - 1]
-    assert _single_target(previous) == "_terminal_concat_input_adapter_stats"
-    assert _call_name(previous) == CONCAT_INPUT_ADAPTER
-    assert _call_name(lowerer.body[result_index + 1]) == SHAPE_EXTRACT
+    composite = next(
+        statement
+        for statement in lowerer.body
+        if _single_target(statement) == "_terminal_concat_bridge_layout_results"
+    )
+    assert _call_name(composite) == (
+        "run_terminal_concat_bridge_layout_cleanup"
+    )

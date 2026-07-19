@@ -146,7 +146,7 @@ def test_concat_input_adapter_schema_cleanup_and_selections_are_explicit() -> No
     ) == 1
 
 
-def test_lowerer_retains_both_concat_input_adapter_results() -> None:
+def test_lowerer_retains_guarded_input_adapter_and_terminal_composite() -> None:
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
     layout_guard = next(
         statement
@@ -165,18 +165,9 @@ def test_lowerer_retains_both_concat_input_adapter_results() -> None:
     )
     guarded_result = layout_guard.body[guarded_index]
 
-    terminal_index = next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if _call_name(statement) == CONCAT_INPUT_ADAPTER
-    )
-    terminal_result = lowerer.body[terminal_index]
-    direct_results = [guarded_result, terminal_result]
+    direct_results = [guarded_result]
     old_guarded_target = "_layout_opt_concat_input_adapter_stats"
-    expected_targets = [
-        None,
-        "_terminal_concat_input_adapter_stats",
-    ]
+    expected_targets = [None]
     assert [_single_target(statement) for statement in direct_results] == (
         expected_targets
     )
@@ -186,7 +177,7 @@ def test_lowerer_retains_both_concat_input_adapter_results() -> None:
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == CONCAT_INPUT_ADAPTER
-    ) == 2
+    ) == 1
     for statement in direct_results:
         call = _statement_call(statement)
         assert call is not None
@@ -199,14 +190,6 @@ def test_lowerer_retains_both_concat_input_adapter_results() -> None:
         isinstance(node, ast.Name) and node.id == old_guarded_target
         for node in ast.walk(lowerer)
     )
-    for target in expected_targets[1:]:
-        assert not any(
-            isinstance(node, ast.Name)
-            and node.id == target
-            and isinstance(node.ctx, ast.Load)
-            for node in ast.walk(lowerer)
-        )
-
     guarded_previous = layout_guard.body[guarded_index - 1]
     assert _single_target(guarded_previous) is None
     assert _call_name(guarded_previous) == SPLIT_MIXED_CONCAT
@@ -214,9 +197,11 @@ def test_lowerer_retains_both_concat_input_adapter_results() -> None:
         SLICE_LOGISTIC_CONCAT
     )
 
-    terminal_previous = lowerer.body[terminal_index - 1]
-    assert _single_target(terminal_previous) == (
-        "_terminal_split_mixed_pre_concat_stats"
+    terminal_composite = next(
+        statement
+        for statement in lowerer.body
+        if _single_target(statement) == "_terminal_concat_bridge_layout_results"
     )
-    assert _call_name(terminal_previous) == SPLIT_MIXED_CONCAT
-    assert _call_name(lowerer.body[terminal_index + 1]) == CONCAT_UNARY_CONV
+    assert _call_name(terminal_composite) == (
+        "run_terminal_concat_bridge_layout_cleanup"
+    )

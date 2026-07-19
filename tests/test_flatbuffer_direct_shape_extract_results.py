@@ -95,9 +95,8 @@ def test_lowerer_retains_all_shape_extract_results() -> None:
         for statement in lowerer.body
         if _call_name(statement) == SHAPE_EXTRACT
     ]
-    assert len(direct_results) == 3
+    assert len(direct_results) == 2
     expected_targets = [
-        "_terminal_shape_extract_stats",
         "_late_pre_qkv_shape_extract_stats",
         "_late_pre_layout_cluster_shape_extract_stats",
     ]
@@ -117,24 +116,13 @@ def test_lowerer_retains_all_shape_extract_results() -> None:
             for node in ast.walk(lowerer)
         )
 
-    terminal_index = lowerer.body.index(direct_results[0])
-    assert _single_target(lowerer.body[terminal_index - 1]) == (
-        "_terminal_concat_unary_conv_stats"
-    )
-    terminal_guard = lowerer.body[terminal_index + 1]
-    assert isinstance(terminal_guard, ast.If)
-    assert ast.unparse(terminal_guard.test) == "optimize_layout_transpose_chains"
-    assert _single_target(terminal_guard.body[0]) == (
-        "_terminal_elementwise_fanout_stats"
-    )
-
-    pre_qkv_index = lowerer.body.index(direct_results[1])
+    pre_qkv_index = lowerer.body.index(direct_results[0])
     assert _single_target(lowerer.body[pre_qkv_index - 1]) == "_late_spp_stats"
     assert _single_target(lowerer.body[pre_qkv_index + 1]) == (
         "late_qkv_tensor_count"
     )
 
-    late_layout_index = lowerer.body.index(direct_results[2])
+    late_layout_index = lowerer.body.index(direct_results[1])
     assert _call_name(lowerer.body[late_layout_index - 1]) == PRE_CONCAT
     assert _single_target(lowerer.body[late_layout_index - 1]) == (
         "_absolute_final_pre_concat_stats"

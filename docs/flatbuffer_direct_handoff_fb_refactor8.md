@@ -2462,3 +2462,35 @@ first. Implementation must add runtime order/context/argument/tuple coverage,
 update source-boundary and ownership contracts, run sequential gates,
 document, commit, and push. Keep the store at 128/128 and never create, update,
 or reopen a pull request.
+
+## Terminal Concat-bridge composite implementation
+
+`run_terminal_concat_bridge_layout_cleanup` now invokes the six characterized
+pass-module owners in their original order. The first four receive layout
+state, Concat-unary-Conv receives layout state and diagnostics, and Shape
+extract remains model-only. The ordered tuple is retained as
+`_terminal_concat_bridge_layout_results` outside the full store.
+
+The six old result locals are gone. Existing compatibility wrappers, guards,
+owner implementations, graph-index behavior, the retained pre-Concat result,
+and the guarded elementwise-fanout successor are unchanged. Focused runtime
+coverage proves order, shared context identity, exact argument policy, and
+tuple order. Broad failures were limited to stale source-representation and
+direct-call-count assertions; no graph or numerical behavior failed.
+
+Final sequential validation under core-only `uv`:
+
+- focused composite and affected result contracts: `17 passed in 1.48s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.99s`;
+- synthetic core runtime contracts: `55 passed in 1.03s`;
+- result contracts: `196 passed in 9.40s`;
+- full architecture contracts: `258 passed in 19.32s`;
+- phase-store capacity contracts: `2 passed in 0.54s`;
+- Ruff, bytecode compilation, 128/128 capacity audit, and whitespace checks:
+  passed.
+
+The store remains fixed at 128/128. Commit and push this implementation unit.
+On resume, first characterize moving the lowerer-resident pre-Concat
+implementation behind a pass-module compatibility wrapper; only then reassess
+the deferred final Slice/pre-Concat pair. Continue with coherent commits and
+pushes only; do not create, update, or reopen a pull request.

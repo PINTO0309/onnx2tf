@@ -1416,6 +1416,44 @@ composite. Targeted Ruff, bytecode compilation, and whitespace checks passed.
 Commit and push characterization first, keep the store at 128/128, and never
 create, update, or reopen a pull request.
 
+## Terminal Concat-bridge composite implementation
+
+`run_terminal_concat_bridge_layout_cleanup(context)` now owns the six
+characterized callbacks in their original order. The first four receive the
+shared ModelIR and conversion-local layout state, the Concat-unary-Conv owner
+also receives the shared diagnostics list, and the final Shape-extract owner
+remains model-only. Their independent counter mappings are returned as an
+ordered tuple.
+
+The lowerer retains one `_terminal_concat_bridge_layout_results` composite via
+`shared_model_ir_pass_context`. The six old unconsumed locals are absent, and
+the composite remains outside `ConversionSession.phase_results`; the store is
+still exactly 128/128. Existing lowerer compatibility wrappers, guards, graph
+index behavior, owner implementations, and the following guarded
+elementwise-fanout phase remain unchanged.
+
+Focused runtime coverage proves callback order, ModelIR/layout/diagnostics
+identity, the final model-only argument policy, and tuple ordering. Structural
+contracts now account for nested composite ownership and require the composite
+between the retained final pre-Concat result and the guarded fanout successor.
+No graph, numerical, diagnostics, or artifact failure occurred.
+
+Validation completed sequentially under core-only `uv`:
+
+- focused composite and affected result contracts: `17 passed in 1.48s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.99s`;
+- synthetic core runtime contracts: `55 passed in 1.03s`;
+- broader result contracts: `196 passed in 9.40s`;
+- full lowerer architecture contracts: `258 passed in 19.32s`;
+- phase-result capacity contracts: `2 passed in 0.54s`;
+- targeted Ruff, bytecode compilation, fixed-capacity audit, and whitespace
+  checks: passed.
+
+No root-model conversion was run because this is a characterized six-call
+owner extraction with focused runtime equivalence and unchanged serialization
+inputs. The deferred final Slice/pre-Concat pair still requires a separate
+pass-module compatibility-wrapper checkpoint before safe extraction.
+
 ## Guarded terminal BatchMatMul implementation
 
 The three characterized results now record inside their original guard under:

@@ -1745,11 +1745,11 @@ def test_primary_path_retains_guarded_elementwise_fanout_results() -> None:
                 "_late_concat_layout_results",
                 "run_late_reshape_layout_cleanup",
             ),
-        (
-            "_terminal_elementwise_fanout_stats",
-            "_terminal_shape_extract_stats",
-            "_run_terminal_singleton_maxpool_reshape_pass_pair",
-        ),
+            (
+                "_terminal_elementwise_fanout_stats",
+                "_terminal_concat_bridge_layout_results",
+                "_run_terminal_singleton_maxpool_reshape_pass_pair",
+            ),
     )
     for guard, (target_name, predecessor_name, successor_name) in zip(
         guards,

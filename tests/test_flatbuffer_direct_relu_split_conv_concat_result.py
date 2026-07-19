@@ -174,11 +174,8 @@ def test_lowerer_records_post_sinet_relu_split_conv_concat_result() -> None:
         for statement in lowerer.body
         if _call_name(statement) == RELU_SPLIT_CONV_CONCAT
     ]
-    assert len(direct_results) == 2
-    expected_targets = [
-        None,
-        "_terminal_relu_split_conv_concat_stats",
-    ]
+    assert len(direct_results) == 1
+    expected_targets = [None]
     assert [_single_target(statement) for statement in direct_results] == (
         expected_targets
     )
@@ -213,14 +210,6 @@ def test_lowerer_records_post_sinet_relu_split_conv_concat_result() -> None:
     )
     assert _call_name(first_following) == SPLIT_CONV_CONCAT_BRIDGE
 
-    second_index = lowerer.body.index(direct_results[1])
-    second_previous = lowerer.body[second_index - 1]
-    second_following = lowerer.body[second_index + 1]
-    assert _single_target(second_previous) == (
-        "_terminal_relu_split_all_outputs_stats"
-    )
-    assert _call_name(second_previous) == RELU_SPLIT_ALL
-    assert _call_name(second_following) == SPLIT_MIXED_PRE_CONCAT
 
 
 def test_post_sinet_relu_split_results_use_phase_result_store() -> None:

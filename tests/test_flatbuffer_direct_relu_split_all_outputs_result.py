@@ -142,11 +142,8 @@ def test_lowerer_records_post_sinet_relu_split_all_outputs_result() -> None:
         for statement in lowerer.body
         if _call_name(statement) == RELU_SPLIT_ALL
     ]
-    assert len(direct_results) == 2
-    assert [_single_target(statement) for statement in direct_results] == [
-        None,
-        "_terminal_relu_split_all_outputs_stats",
-    ]
+    assert len(direct_results) == 1
+    assert [_single_target(statement) for statement in direct_results] == [None]
     assert _phase_id(direct_results[0]) == (
         "cleanup.post_sinet.relu_split_all_outputs"
     )
@@ -165,10 +162,3 @@ def test_lowerer_records_post_sinet_relu_split_all_outputs_result() -> None:
     assert _single_target(first_previous) == "_post_sinet_qkv_attention_results"
     assert _call_name(first_previous) == "_run_qkv_attention_layout_pass_cluster"
     assert _call_name(first_following) == SPLIT_CONV_CONCAT
-
-    second_index = lowerer.body.index(direct_results[1])
-    second_previous = lowerer.body[second_index - 1]
-    second_following = lowerer.body[second_index + 1]
-    assert _call_name(second_previous) == "_optimize_transpose_pre_concat_nhwc_chains"
-    assert _single_target(second_previous) == "_final_pre_concat_stats"
-    assert _call_name(second_following) == SPLIT_CONV_CONCAT

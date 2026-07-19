@@ -5,6 +5,16 @@ from pathlib import Path
 
 import pytest
 
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
+from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import (
+    terminal_concat_bridge_layout_orchestration,
+)
+from onnx2tf.tflite_builder.passes.terminal_concat_bridge_layout_orchestration import (
+    TERMINAL_CONCAT_BRIDGE_LAYOUT_PASS_IDS,
+)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
@@ -77,65 +87,40 @@ def _call_name(statement: ast.stmt) -> str | None:
     return call.func.id
 
 
-def test_terminal_concat_bridge_cluster_is_ordered_and_unconsumed() -> None:
+def test_terminal_concat_bridge_cluster_uses_composite_result_outside_store() -> None:
     lowerer = _lowerer()
-    indices: list[int] = []
-    expected_keywords = (
-        {"layout_state": "session.layout_state"},
-        {"layout_state": "session.layout_state"},
-        {"layout_state": "session.layout_state"},
-        {"layout_state": "session.layout_state"},
-        {
-            "layout_state": "session.layout_state",
-            "diagnostics": "session.diagnostics",
-        },
-        {},
+    assignment = next(
+        statement
+        for statement in lowerer.body
+        if _single_target(statement) == RESULT_TARGET
     )
-
-    for target, owner, keywords in zip(
-        OLD_RESULT_TARGETS,
-        LOWERER_PASS_IDS,
-        expected_keywords,
-        strict=True,
-    ):
-        matches = [
-            index
-            for index, statement in enumerate(lowerer.body)
-            if _single_target(statement) == target
-        ]
-        assert len(matches) == 1
-        index = matches[0]
-        indices.append(index)
-        statement = lowerer.body[index]
-        assert _call_name(statement) == owner
-        call = _statement_call(statement)
-        assert call is not None
-        assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-        assert {
-            keyword.arg: ast.unparse(keyword.value)
-            for keyword in call.keywords
-        } == keywords
-
-    assert indices == list(range(indices[0], indices[0] + len(indices)))
-    assert _single_target(lowerer.body[indices[0] - 1]) == PREDECESSOR_TARGET
-    successor = lowerer.body[indices[-1] + 1]
+    index = lowerer.body.index(assignment)
+    assert ast.unparse(assignment.value) == (
+        "run_terminal_concat_bridge_layout_cleanup("
+        "shared_model_ir_pass_context)"
+    )
+    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    successor = lowerer.body[index + 1]
     assert isinstance(successor, ast.If)
     assert ast.unparse(successor.test) == "optimize_layout_transpose_chains"
     assert len(successor.body) == 1
     assert _single_target(successor.body[0]) == SUCCESSOR_TARGET
-    for target in OLD_RESULT_TARGETS:
-        assert not any(
-            isinstance(node, ast.Name)
-            and node.id == target
-            and isinstance(node.ctx, ast.Load)
-            for node in ast.walk(lowerer)
+    assert not any(
+        isinstance(node, ast.Name) and node.id in OLD_RESULT_TARGETS
+        for node in ast.walk(lowerer)
+    )
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "record_phase_result"
+        and any(
+            isinstance(child, ast.Name) and child.id == OWNER
+            for child in ast.walk(node)
         )
+        for node in ast.walk(lowerer)
+    )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="terminal concat bridge cluster has not moved to one composite owner",
-)
 def test_terminal_concat_bridge_cluster_uses_one_composite_owner() -> None:
     owner = _functions(OWNER_PATH)[OWNER]
     owner_calls = [
@@ -168,13 +153,74 @@ def test_terminal_concat_bridge_cluster_uses_one_composite_owner() -> None:
         isinstance(node, ast.Name) and node.id in OLD_RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
-    assert not any(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "record_phase_result"
-        and any(
-            isinstance(child, ast.Name) and child.id == OWNER
-            for child in ast.walk(node)
-        )
-        for node in ast.walk(lowerer)
+
+
+def test_terminal_concat_bridge_owner_preserves_argument_and_result_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = ModelIR("terminal_concat_bridge_layout_owner")
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
     )
+    observed: list[tuple[str, object, object | None, object | None]] = []
+    expected_results = tuple(
+        {f"result_{index}": index}
+        for index in range(1, len(PASS_IDS) + 1)
+    )
+
+    def _layout_callback(name: str, result: dict[str, int]):
+        def _run(
+            candidate: ModelIR,
+            *,
+            layout_state: object,
+        ) -> dict[str, int]:
+            observed.append((name, candidate, layout_state, None))
+            return dict(result)
+
+        return _run
+
+    def _diagnostic_callback(
+        candidate: ModelIR,
+        *,
+        layout_state: object,
+        diagnostics: object,
+    ) -> dict[str, int]:
+        observed.append((PASS_IDS[4], candidate, layout_state, diagnostics))
+        return dict(expected_results[4])
+
+    def _model_callback(candidate: ModelIR) -> dict[str, int]:
+        observed.append((PASS_IDS[5], candidate, None, None))
+        return dict(expected_results[5])
+
+    for pass_id, result in zip(PASS_IDS[:4], expected_results[:4], strict=True):
+        monkeypatch.setattr(
+            terminal_concat_bridge_layout_orchestration,
+            pass_id,
+            _layout_callback(pass_id, result),
+        )
+    monkeypatch.setattr(
+        terminal_concat_bridge_layout_orchestration,
+        PASS_IDS[4],
+        _diagnostic_callback,
+    )
+    monkeypatch.setattr(
+        terminal_concat_bridge_layout_orchestration,
+        PASS_IDS[5],
+        _model_callback,
+    )
+
+    assert (
+        terminal_concat_bridge_layout_orchestration.run_terminal_concat_bridge_layout_cleanup(
+            context
+        )
+        == expected_results
+    )
+    assert [entry[0] for entry in observed] == list(PASS_IDS)
+    assert all(entry[1] is context.model_ir for entry in observed)
+    assert all(entry[2] is context.layout_state for entry in observed[:5])
+    assert all(entry[3] is None for entry in observed[:4])
+    assert observed[4][3] is context.diagnostics
+    assert observed[5][2:] == (None, None)
+    assert TERMINAL_CONCAT_BRIDGE_LAYOUT_PASS_IDS == LOWERER_PASS_IDS

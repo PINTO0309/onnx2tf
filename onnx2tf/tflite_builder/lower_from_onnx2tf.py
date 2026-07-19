@@ -281,6 +281,9 @@ from onnx2tf.tflite_builder.passes.late_window_layout_orchestration import (
 from onnx2tf.tflite_builder.passes.final_boundary_channel_layout_orchestration import (
     run_final_boundary_channel_layout_cleanup,
 )
+from onnx2tf.tflite_builder.passes.terminal_concat_bridge_layout_orchestration import (
+    run_terminal_concat_bridge_layout_cleanup,
+)
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     run_channel_shuffle_gather,
 )
@@ -552,7 +555,6 @@ from onnx2tf.tflite_builder.passes.stale_binary_adapter_repair import (
 )
 from onnx2tf.tflite_builder.passes.concat_unary_conv_layout import (
     _optimize_transpose_concat_unary_fanout_conv_nhwc_chains as _optimize_transpose_concat_unary_fanout_conv_nhwc_chains_pass,
-    run_concat_unary_conv_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.spp_layout import (
     _optimize_transpose_resize_add_concat_affine_conv_spp_nhwc_chains as _optimize_transpose_resize_add_concat_affine_conv_spp_nhwc_chains_pass,
@@ -5222,39 +5224,10 @@ def lower_onnx_to_ir(
             diagnostics=session.diagnostics,
         )
     )
-    _terminal_relu_split_all_outputs_stats = (
-        _optimize_transpose_relu_split_all_outputs_to_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
+    _terminal_concat_bridge_layout_results = (
+        run_terminal_concat_bridge_layout_cleanup(
+            shared_model_ir_pass_context,
         )
-    )
-    _terminal_relu_split_conv_concat_stats = (
-        _optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-    )
-    _terminal_split_mixed_pre_concat_stats = (
-        _optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-    )
-    _terminal_concat_input_adapter_stats = (
-        _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(
-            model_ir,
-            layout_state=session.layout_state,
-        )
-    )
-    _terminal_concat_unary_conv_stats = (
-        run_concat_unary_conv_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-    )
-    _terminal_shape_extract_stats = (
-        _optimize_transpose_shape_extract_nhwc_to_nchw_chains(model_ir)
     )
     if optimize_layout_transpose_chains:
         _terminal_elementwise_fanout_stats = (

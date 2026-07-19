@@ -151,7 +151,7 @@ def test_split_mixed_concat_schema_cleanup_and_orchestration_are_explicit() -> N
     )
 
 
-def test_lowerer_retains_both_split_mixed_concat_results() -> None:
+def test_lowerer_retains_guarded_split_mixed_and_terminal_composite() -> None:
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
     layout_guard = next(
         statement
@@ -168,18 +168,9 @@ def test_lowerer_retains_both_split_mixed_concat_results() -> None:
     )
     guarded_result = layout_guard.body[guarded_index]
 
-    terminal_index = next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if _call_name(statement) == SPLIT_MIXED_CONCAT
-    )
-    terminal_result = lowerer.body[terminal_index]
-    direct_results = [guarded_result, terminal_result]
+    direct_results = [guarded_result]
     old_guarded_target = "_layout_opt_split_mixed_pre_concat_stats"
-    expected_targets = [
-        None,
-        "_terminal_split_mixed_pre_concat_stats",
-    ]
+    expected_targets = [None]
     assert [_single_target(statement) for statement in direct_results] == (
         expected_targets
     )
@@ -189,7 +180,7 @@ def test_lowerer_retains_both_split_mixed_concat_results() -> None:
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == SPLIT_MIXED_CONCAT
-    ) == 2
+    ) == 1
     for statement in direct_results:
         call = _statement_call(statement)
         assert call is not None
@@ -202,23 +193,17 @@ def test_lowerer_retains_both_split_mixed_concat_results() -> None:
         isinstance(node, ast.Name) and node.id == old_guarded_target
         for node in ast.walk(lowerer)
     )
-    for target in expected_targets[1:]:
-        assert not any(
-            isinstance(node, ast.Name)
-            and node.id == target
-            and isinstance(node.ctx, ast.Load)
-            for node in ast.walk(lowerer)
-        )
-
     assert _call_name(layout_guard.body[guarded_index - 1]) == (
         STRIDED_SLICE_PRE_CONCAT
     )
     assert _single_target(layout_guard.body[guarded_index - 1]) is None
     assert _call_name(layout_guard.body[guarded_index + 1]) == INPUT_PRE_CONCAT
 
-    terminal_previous = lowerer.body[terminal_index - 1]
-    assert _single_target(terminal_previous) == (
-        "_terminal_relu_split_conv_concat_stats"
+    terminal_composite = next(
+        statement
+        for statement in lowerer.body
+        if _single_target(statement) == "_terminal_concat_bridge_layout_results"
     )
-    assert _call_name(terminal_previous) == RELU_SPLIT_CONV_CONCAT
-    assert _call_name(lowerer.body[terminal_index + 1]) == INPUT_PRE_CONCAT
+    assert _call_name(terminal_composite) == (
+        "run_terminal_concat_bridge_layout_cleanup"
+    )

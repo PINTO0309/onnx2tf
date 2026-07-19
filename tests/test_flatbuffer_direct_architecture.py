@@ -107,6 +107,9 @@ from onnx2tf.tflite_builder.passes.late_window_layout_orchestration import (
 from onnx2tf.tflite_builder.passes.final_boundary_channel_layout_orchestration import (
     FINAL_BOUNDARY_CHANNEL_LAYOUT_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.terminal_concat_bridge_layout_orchestration import (
+    TERMINAL_CONCAT_BRIDGE_LAYOUT_PASS_IDS,
+)
 from onnx2tf.tflite_builder.passes.channel_shuffle_gather_orchestration import (
     CHANNEL_SHUFFLE_GATHER_BASE_PASS_IDS,
     CHANNEL_SHUFFLE_GATHER_DEFAULT_PASS_IDS,
@@ -191,6 +194,7 @@ ORCHESTRATED_PASS_ID_SEQUENCE = (
     *LATE_ATTENTION_LAYOUT_PASS_IDS,
     *LATE_WINDOW_LAYOUT_PASS_IDS,
     *FINAL_BOUNDARY_CHANNEL_LAYOUT_PASS_IDS,
+    *TERMINAL_CONCAT_BRIDGE_LAYOUT_PASS_IDS,
     *CHANNEL_SHUFFLE_GATHER_PASS_IDS,
     *MEAN_ATTENTION_PASS_IDS,
     *SINGLETON_RESHAPE_PASS_IDS,
@@ -4806,7 +4810,7 @@ def test_shape_extract_layout_optimizer_has_one_module_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 3
+    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 3
 
 
 def test_recurrent_alias_repair_has_one_shared_indexed_owner() -> None:
@@ -13167,10 +13171,7 @@ def test_concat_unary_conv_layout_rewrite_has_single_owner() -> None:
         == "onnx2tf.tflite_builder.passes.concat_unary_conv_layout"
     ]
     assert len(imports) == 1
-    assert {alias.name for alias in imports[0].names} == {
-        function_name,
-        "run_concat_unary_conv_layout_cleanup",
-    }
+    assert {alias.name for alias in imports[0].names} == {function_name}
     production_calls = [
         call
         for call in ast.walk(lowering_tree)
@@ -16646,7 +16647,7 @@ def test_indexed_split_adapter_owners_are_bounded_and_transactional() -> None:
             and isinstance(node.func, ast.Name)
             and node.func.id == wrapper_name
         ]
-        assert len(production_calls) == 2
+        assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 2
         for production_call in production_calls:
             layout_keyword = next(
                 keyword

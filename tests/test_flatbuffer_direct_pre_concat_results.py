@@ -168,10 +168,10 @@ def test_all_direct_pre_concat_results_are_retained_observation_only() -> None:
             "run_ndhwc_concat_layout_cleanup",
         ),
         (
-            "_optimize_transpose_slice_prepost_nhwc_passthrough_chains",
-            "_final_slice_prepost_passthrough_stats",
-            "_optimize_transpose_relu_split_all_outputs_to_nhwc_chains",
-        ),
+                "_optimize_transpose_slice_prepost_nhwc_passthrough_chains",
+                "_final_slice_prepost_passthrough_stats",
+                "run_terminal_concat_bridge_layout_cleanup",
+            ),
         (
             "summarize_late_hard_activation_layout_mutations",
             "_late_hard_activation_stats",
