@@ -771,6 +771,7 @@ from onnx2tf.tflite_builder.passes.input_passthrough_layout import (
 )
 from onnx2tf.tflite_builder.passes.hardswish_se_layout import (
     optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains as _optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains_pass,
+    run_hardswish_se_layout_summary,
 )
 from onnx2tf.tflite_builder.passes.boundary_input_layout import (
     _optimize_boundary_input_layout_transposes as _optimize_boundary_input_layout_transposes_pass,
@@ -5373,16 +5374,7 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
     )
-    terminal_hardswish_se_tensor_count = len(model_ir.tensors)
-    _terminal_hardswish_se_stats = {
-        **_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains(
-            model_ir
-        ),
-        "pruned_unused_tensors": max(
-            0,
-            int(terminal_hardswish_se_tensor_count - len(model_ir.tensors)),
-        ),
-    }
+    _terminal_hardswish_se_stats = run_hardswish_se_layout_summary(model_ir)
     # Late affine/fusion cleanups can recreate
     # TRANSPOSE->(ADD/MUL hard-sigmoid-like)->MUL->TRANSPOSE wrappers.
     # Run strict hard-sigmoid transpose passthrough once more at terminal stage.

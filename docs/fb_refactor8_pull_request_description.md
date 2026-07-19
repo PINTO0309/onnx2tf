@@ -106,7 +106,7 @@ text. Cycle behavior and stale-error removal are covered explicitly.
 
 ### Late composite orchestration owners
 
-Twenty-one late lowerer clusters now have focused orchestration owners. The first
+Twenty-two late lowerer clusters now have focused orchestration owners. The first
 combines adjacent NDHWC gate and cost-volume ScatterND cleanup into the final
 bounded phase result while sharing one short-lived pass state. The second runs
 four late Concat/layout owners with one internal state scope and returns their
@@ -215,11 +215,16 @@ layout-Transpose flag and prefix cleanup disabled, and returns the unchanged
 strict summary schema. The two default-policy raw-wrapper uses and the raw
 lowerer compatibility wrapper remain unchanged.
 
+The twenty-second owns terminal HardSwish/SE prune-aware evidence. It snapshots
+tensor count inside the pass module, invokes the existing raw layout owner, and
+extends the unchanged one-key mapping with a non-negative prune delta. The raw
+lowerer wrapper and its earlier phase-store call remain unchanged.
+
 These extractions preserve callback order, model/layout/diagnostics identity,
 and result schemas while removing forty-five former unconsumed locals and two
 lowerer scope locals. They also replace eighteen consumed mutation-evidence or
-aggregate-result locals and six tensor-count snapshots with three explicit
-boolean decisions, five reusable summary calls, and one prune-aware cleanup
+aggregate-result locals and seven tensor-count snapshots with three explicit
+boolean decisions, six reusable summary calls, and one prune-aware cleanup
 call.
 Focused runtime tests verify shared scope identity, exact argument policy,
 ordered results, every positive-evidence path, and prune-only cleanup.
@@ -505,6 +510,9 @@ Final checkpoint results:
   contracts: **405 passed**;
 - terminal HardSwish/SE prune-aware summary characterization and related
   contracts: **76 passed, 1 intentional strict xfail**;
+- terminal HardSwish/SE prune-aware summary owner contracts: **4 passed**;
+- affected terminal HardSwish/SE, late hard-activation, indexed bridge, store,
+  and architecture contracts: **337 passed**;
 - TensorFlow/tf-keras import blocker, default/direct conversion, and `-cotof`
   contracts: **11 passed**;
 - pre-Concat NHWC pass-owner and compatibility contracts: **3 passed**;
@@ -572,3 +580,9 @@ The next characterization fixes the terminal HardSwish/SE tensor snapshot,
 raw mapping, prune delta, and neighboring pass boundaries. It intentionally
 leaves production unchanged until the generic prune-aware summary owner is
 implemented in a separate checkpoint.
+
+The latest checkpoint implements that terminal HardSwish/SE summary owner. It
+moves only the tensor snapshot and mapping extension into the pass module,
+retaining the raw wrapper, earlier phase-store raw call, pass order, exact
+mapping schema, neighboring boundaries, and the full 128/128 phase-result
+store.

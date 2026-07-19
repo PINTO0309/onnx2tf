@@ -3342,3 +3342,33 @@ the prune-aware owner and late direct site, retain the raw lowerer wrapper and
 the earlier phase-store raw call, update owner-aware structural contracts, and
 validate sequentially. Continue with commits and pushes only; never create,
 update, or reopen a pull request.
+
+## Terminal HardSwish/SE prune-aware summary implementation
+
+The pass module now exposes `run_hardswish_se_layout_summary(model_ir)`. It
+captures tensor count, invokes the existing raw HardSwish/SE owner, and returns
+the raw one-key mapping plus `pruned_unused_tensors`. The late lowerer site
+keeps `_terminal_hardswish_se_stats` but removes its local count and inline
+mapping composition.
+
+The raw lowerer wrapper and earlier phase-store call remain intact. The
+terminal QKV bridge predecessor, late hard-activation successor, raw pruning,
+graph behavior, mapping schema, and 128/128 store are unchanged.
+
+Final sequential validation under core-only `uv`:
+
+- focused summary-owner contracts: `4 passed in 0.57s`;
+- affected owner, boundary, store, and architecture contracts:
+  `337 passed in 19.54s`;
+- related HardSwish/SE and late recovery contracts: `87 passed in 1.42s`;
+- terminal-layout/pass-efficiency contracts: `92 passed in 1.93s`;
+- synthetic core runtime contracts: `55 passed in 0.93s`;
+- result contracts: `196 passed in 9.13s`;
+- phase-store capacity contracts: `2 passed in 0.54s`;
+- TensorFlow/tf-keras blocker, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.73s`;
+- Ruff, bytecode compilation, 128/128 audit, and whitespace checks: passed.
+
+Commit and push this implementation checkpoint. At resume, characterize the
+next adjacent non-store evidence boundary before production changes. Continue
+with commits and pushes only; never create, update, or reopen a pull request.

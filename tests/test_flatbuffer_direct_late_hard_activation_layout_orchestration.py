@@ -395,13 +395,12 @@ def test_late_hard_activation_layout_preserves_outer_boundaries() -> None:
     assert len(previous.targets) == 1
     assert isinstance(previous.targets[0], ast.Name)
     assert previous.targets[0].id == "_terminal_hardswish_se_stats"
-    assert isinstance(previous.value, ast.Dict)
-    previous_call = previous.value.values[0]
-    assert isinstance(previous_call, ast.Call)
-    assert isinstance(previous_call.func, ast.Name)
-    assert previous_call.func.id == (
-        "_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains"
-    )
+    assert isinstance(previous.value, ast.Call)
+    assert isinstance(previous.value.func, ast.Name)
+    assert previous.value.func.id == "run_hardswish_se_layout_summary"
+    assert [ast.unparse(argument) for argument in previous.value.args] == [
+        "model_ir"
+    ]
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)

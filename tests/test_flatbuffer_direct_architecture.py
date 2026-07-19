@@ -4651,7 +4651,29 @@ def test_hardswish_se_layout_optimizer_has_one_module_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) == 2
+    assert len(production_calls) == 1
+    summary_owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_hardswish_se_layout_summary"
+    )
+    summary_owner_calls = [
+        node
+        for node in ast.walk(summary_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == owner_name
+    ]
+    assert len(summary_owner_calls) == 1
+    summary_production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_hardswish_se_layout_summary"
+    ]
+    assert len(summary_production_calls) == 1
 
 
 def test_nhwc_concat_legacy_optimizer_has_one_module_owner() -> None:
@@ -6192,13 +6214,12 @@ def test_lowerer_late_hard_activation_layout_pair_reuses_scope() -> None:
     assert len(previous_boundary.targets) == 1
     assert isinstance(previous_boundary.targets[0], ast.Name)
     assert previous_boundary.targets[0].id == "_terminal_hardswish_se_stats"
-    assert isinstance(previous_boundary.value, ast.Dict)
-    previous_call = previous_boundary.value.values[0]
-    assert isinstance(previous_call, ast.Call)
-    assert isinstance(previous_call.func, ast.Name)
-    assert previous_call.func.id == (
-        "_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains"
-    )
+    assert isinstance(previous_boundary.value, ast.Call)
+    assert isinstance(previous_boundary.value.func, ast.Name)
+    assert previous_boundary.value.func.id == "run_hardswish_se_layout_summary"
+    assert [
+        ast.unparse(argument) for argument in previous_boundary.value.args
+    ] == ["model_ir"]
     next_boundary = lowerer.body[invocation_index + 2]
     assert isinstance(next_boundary, ast.Assign)
     assert len(next_boundary.targets) == 1

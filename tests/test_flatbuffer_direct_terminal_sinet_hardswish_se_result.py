@@ -130,7 +130,7 @@ def test_hardswish_se_has_exactly_two_production_forms() -> None:
             for node in ast.walk(statement)
         )
     ]
-    assert len(owner_statements) == 2
+    assert len(owner_statements) == 1
 
     first_call = next(
         node
@@ -142,15 +142,20 @@ def test_hardswish_se_has_exactly_two_production_forms() -> None:
     assert [ast.unparse(argument) for argument in first_call.args] == ["model_ir"]
     assert first_call.keywords == []
 
-    late_statement = owner_statements[1]
+    late_statement = next(
+        statement
+        for statement in lowerer.body
+        if _single_target(statement) == LATE_RESULT_TARGET
+    )
     assert _single_target(late_statement) == LATE_RESULT_TARGET
     assert isinstance(late_statement, ast.Assign)
-    assert isinstance(late_statement.value, ast.Dict)
-    assert len(late_statement.value.keys) == 2
-    assert late_statement.value.keys[0] is None
-    prune_key = late_statement.value.keys[1]
-    assert isinstance(prune_key, ast.Constant)
-    assert prune_key.value == "pruned_unused_tensors"
+    assert isinstance(late_statement.value, ast.Call)
+    assert isinstance(late_statement.value.func, ast.Name)
+    assert late_statement.value.func.id == "run_hardswish_se_layout_summary"
+    assert [ast.unparse(argument) for argument in late_statement.value.args] == [
+        "model_ir"
+    ]
+    assert late_statement.value.keywords == []
 
 
 def test_terminal_hardswish_hardsigmoid_results_use_phase_result_store() -> None:

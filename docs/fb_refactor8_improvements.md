@@ -3797,3 +3797,40 @@ Sequential characterization under core-only `uv` completed with
 `76 passed, 1 xfailed in 1.22s` across the dedicated contract and related
 HardSwish/SE, late hard-activation, indexed bridge, and phase-store contracts.
 The sole expected failure is the intentionally absent summary owner.
+
+## Terminal HardSwish/SE prune-aware summary implementation
+
+`run_hardswish_se_layout_summary(model_ir)` now owns the characterized tensor
+snapshot, raw HardSwish/SE layout invocation, and non-negative prune delta. The
+late lowerer site retains `_terminal_hardswish_se_stats` at the same boundary,
+while the lowerer-local `terminal_hardswish_se_tensor_count` and inline mapping
+extension are removed.
+
+The existing lowerer compatibility wrapper remains the dispatch boundary for
+the earlier phase-store call. The raw owner still executes once at each of the
+two production policies: indirectly through the wrapper at the earlier site
+and through the new summary owner at the late site. Its internal pruning,
+one-key raw schema, graph mutations, terminal QKV-bridge predecessor, late
+hard-activation successor, public behavior, artifacts, dependencies, and
+TensorFlow isolation are unchanged. The summary remains outside the already-
+full 128/128 phase-result store.
+
+Final sequential validation under core-only `uv`:
+
+- focused summary-owner contracts: `4 passed in 0.57s`;
+- affected owner, boundary, store, and architecture contracts:
+  `337 passed in 19.54s`;
+- related HardSwish/SE, late hard-activation, indexed bridge, and recovery
+  contracts: `87 passed in 1.42s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.93s`;
+- synthetic core runtime contracts: `55 passed in 0.93s`;
+- result contracts: `196 passed in 9.13s`;
+- phase-store capacity contracts: `2 passed in 0.54s`;
+- TensorFlow/tf-keras import blocking, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.73s`;
+- targeted Ruff, bytecode compilation, 128/128 audit, and whitespace checks:
+  passed.
+
+No real-model corpus conversion was repeated because the focused runtime tests
+prove stable and prune-only summary behavior, while affected owner and
+architecture gates preserve both production policies and their boundaries.

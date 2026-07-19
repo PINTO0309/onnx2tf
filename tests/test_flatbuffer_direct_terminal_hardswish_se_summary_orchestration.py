@@ -5,6 +5,9 @@ from pathlib import Path
 
 import pytest
 
+from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
+from onnx2tf.tflite_builder.passes import hardswish_se_layout
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = (
@@ -53,32 +56,20 @@ def _single_target(statement: ast.stmt) -> str | None:
 
 def test_terminal_hardswish_se_prune_aware_boundary_is_fixed() -> None:
     lowerer = _lowerer()
-    count = next(
+    summary = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == COUNT_TARGET
+        if _single_target(statement) == SUMMARY_TARGET
     )
-    index = lowerer.body.index(count)
-    summary = lowerer.body[index + 1]
-    assert isinstance(count, ast.Assign)
-    assert ast.unparse(count.value) == "len(model_ir.tensors)"
-    assert _single_target(summary) == SUMMARY_TARGET
+    index = lowerer.body.index(summary)
     assert isinstance(summary, ast.Assign)
-    assert isinstance(summary.value, ast.Dict)
-    assert len(summary.value.keys) == 2
-    assert summary.value.keys[0] is None
-    assert ast.unparse(summary.value.values[0]) == f"{RAW_WRAPPER}(model_ir)"
-    assert ast.unparse(summary.value.keys[1]) == "'pruned_unused_tensors'"
-    assert ast.unparse(summary.value.values[1]) == (
-        "max(0, int(terminal_hardswish_se_tensor_count - "
-        "len(model_ir.tensors)))"
-    )
+    assert ast.unparse(summary.value) == f"{SUMMARY_OWNER}(model_ir)"
     assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
-    assert _single_target(lowerer.body[index + 2]) == SUCCESSOR_TARGET
-    assert sum(
+    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert not any(
         isinstance(node, ast.Name) and node.id == COUNT_TARGET
         for node in ast.walk(lowerer)
-    ) == 2
+    )
     assert not any(
         isinstance(node, ast.Name)
         and isinstance(node.ctx, ast.Load)
@@ -87,10 +78,6 @@ def test_terminal_hardswish_se_prune_aware_boundary_is_fixed() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="terminal HardSwish/SE lacks one prune-aware summary owner",
-)
 def test_terminal_hardswish_se_uses_one_prune_aware_summary_owner() -> None:
     owner = _functions(OWNER_PATH)[SUMMARY_OWNER]
     raw_calls = [
@@ -127,3 +114,38 @@ def test_terminal_hardswish_se_uses_one_prune_aware_summary_owner() -> None:
 
     wrapper = _functions(LOWERER_PATH)[RAW_WRAPPER]
     assert ast.unparse(wrapper.body[0]) == f"return {RAW_WRAPPER}_pass(model_ir)"
+
+
+@pytest.mark.parametrize("prune", (False, True))
+def test_hardswish_se_summary_owner_preserves_schema_and_pruning(
+    monkeypatch: pytest.MonkeyPatch,
+    prune: bool,
+) -> None:
+    model_ir = ModelIR("terminal_hardswish_se_summary")
+    model_ir.tensors["probe"] = TensorIR(
+        name="probe",
+        dtype="float32",
+        shape=[1],
+    )
+    raw_result = {
+        "optimized_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains": 7,
+    }
+    observed: list[ModelIR] = []
+
+    def _run(candidate: ModelIR) -> dict[str, int]:
+        observed.append(candidate)
+        if prune:
+            del candidate.tensors["probe"]
+        return raw_result
+
+    monkeypatch.setattr(
+        hardswish_se_layout,
+        RAW_OWNER,
+        _run,
+    )
+
+    assert hardswish_se_layout.run_hardswish_se_layout_summary(model_ir) == {
+        **raw_result,
+        "pruned_unused_tensors": int(prune),
+    }
+    assert observed == [model_ir]

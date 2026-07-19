@@ -373,45 +373,22 @@ def test_terminal_hardswish_se_call_captures_complete_mutation_evidence() -> Non
         for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
-    target_names = (
-        "terminal_hardswish_se_tensor_count",
-        "_terminal_hardswish_se_stats",
+    first_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "_terminal_hardswish_se_stats"
     )
-    assignment_indices: dict[str, int] = {}
-    assignments: dict[str, ast.expr] = {}
-    for index, statement in enumerate(lowerer.body):
-        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
-            continue
-        target = statement.targets[0]
-        if isinstance(target, ast.Name) and target.id in target_names:
-            assignment_indices[target.id] = index
-            assignments[target.id] = statement.value
-
-    first_index = min(assignment_indices.values())
-    assert assignment_indices == {
-        target_names[0]: first_index,
-        target_names[1]: first_index + 1,
-    }
-    tensor_count = assignments[target_names[0]]
-    assert isinstance(tensor_count, ast.Call)
-    assert isinstance(tensor_count.func, ast.Name)
-    assert tensor_count.func.id == "len"
-
-    summary = assignments[target_names[1]]
-    assert isinstance(summary, ast.Dict)
-    assert len(summary.keys) == 2
-    assert summary.keys[0] is None
-    prune_key = summary.keys[1]
-    assert isinstance(prune_key, ast.Constant)
-    assert prune_key.value == "pruned_unused_tensors"
-    owner_call = summary.values[0]
-    assert isinstance(owner_call, ast.Call)
-    assert isinstance(owner_call.func, ast.Name)
-    assert owner_call.func.id == TERMINAL_HARDSWISH_SE_OWNER
-    prune_call = summary.values[1]
-    assert isinstance(prune_call, ast.Call)
-    assert isinstance(prune_call.func, ast.Name)
-    assert prune_call.func.id == "max"
+    statement = lowerer.body[first_index]
+    assert isinstance(statement, ast.Assign)
+    summary = statement.value
+    assert isinstance(summary, ast.Call)
+    assert isinstance(summary.func, ast.Name)
+    assert summary.func.id == "run_hardswish_se_layout_summary"
+    assert [ast.unparse(argument) for argument in summary.args] == ["model_ir"]
+    assert summary.keywords == []
 
     previous = lowerer.body[first_index - 1]
     assert isinstance(previous, ast.Assign)
@@ -424,7 +401,7 @@ def test_terminal_hardswish_se_call_captures_complete_mutation_evidence() -> Non
         previous.value.func.id
         == "_optimize_split_conv_concat_transpose_bridge_to_single_post_nchw"
     )
-    following = lowerer.body[first_index + 2]
+    following = lowerer.body[first_index + 1]
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
