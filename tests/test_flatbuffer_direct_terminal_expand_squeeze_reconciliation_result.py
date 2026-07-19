@@ -15,7 +15,7 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 EXPAND_RESULT_TARGET = "_terminal_expand_squeeze_stats"
-COMPOSITE_TARGET = "_terminal_layout_shape_results"
+COMPOSITE_TARGET = "_terminal_qkv_activation_layout_shape_results"
 RECONCILE_RESULT_TARGET = "_terminal_expand_squeeze_static_shape_stats"
 RECONCILE_PHASE_ID = "shape_reconciliation.terminal.expand_squeeze"
 TERMINAL_OWNER_PATH = (
@@ -26,6 +26,14 @@ TERMINAL_OWNER_PATH = (
     / "terminal_layout_shape_orchestration.py"
 )
 TERMINAL_OWNER = "run_terminal_layout_shape_cleanup"
+OUTER_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_qkv_activation_layout_shape_orchestration.py"
+)
+OUTER_OWNER = "run_terminal_qkv_activation_layout_shape_cleanup"
 
 
 def _lowerer() -> ast.FunctionDef:
@@ -145,7 +153,7 @@ def test_terminal_expand_squeeze_reconciliation_contract_is_explicit() -> None:
     expand_call = _statement_call(lowerer.body[expand_index])
     assert expand_call is not None
     assert isinstance(expand_call.func, ast.Name)
-    assert expand_call.func.id == TERMINAL_OWNER
+    assert expand_call.func.id == OUTER_OWNER
     assert [ast.unparse(argument) for argument in expand_call.args] == [
         "shared_model_ir_pass_context"
     ]
@@ -153,6 +161,19 @@ def test_terminal_expand_squeeze_reconciliation_contract_is_explicit() -> None:
         keyword.arg: ast.unparse(keyword.value)
         for keyword in expand_call.keywords
     } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
+
+    outer_tree = ast.parse(OUTER_OWNER_PATH.read_text(encoding="utf-8"))
+    outer_owner = next(
+        node
+        for node in outer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == OUTER_OWNER
+    )
+    assert sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == TERMINAL_OWNER
+        for node in ast.walk(outer_owner)
+    ) == 1
 
     child_call = _terminal_expand_squeeze_call()
     assert [ast.unparse(argument) for argument in child_call.args] == [

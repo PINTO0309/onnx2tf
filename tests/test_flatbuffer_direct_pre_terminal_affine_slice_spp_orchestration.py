@@ -37,7 +37,7 @@ COMPOSITE_TARGET = "_pre_terminal_affine_slice_spp_results"
 PREDECESSOR_GUARD = (
     "_late_binary_layout_recovery_requires_reconciliation"
 )
-SUCCESSOR_TARGET = "_terminal_qkv_activation_bridge_results"
+SUCCESSOR_TARGET = "_terminal_qkv_activation_layout_shape_results"
 EXPECTED_SCHEMAS = (
     (
         (

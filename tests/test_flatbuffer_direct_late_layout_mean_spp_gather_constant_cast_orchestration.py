@@ -42,6 +42,15 @@ TERMINAL_OWNER_PATH = (
     / "terminal_layout_shape_orchestration.py"
 )
 TERMINAL_OWNER = "run_terminal_layout_shape_cleanup"
+OUTER_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_qkv_activation_layout_shape_orchestration.py"
+)
+OUTER_OWNER = "run_terminal_qkv_activation_layout_shape_cleanup"
+OUTER_RESULT = "_terminal_qkv_activation_layout_shape_results"
 LATE_LAYOUT = "_run_late_layout_mean_spp_gather_constant_cast_pass_cluster"
 CONSTANT_FOLD_CAST = "_run_constant_fold_cast_cleanup_pass_cluster"
 
@@ -68,6 +77,22 @@ def _terminal_owner() -> ast.FunctionDef:
         for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name == TERMINAL_OWNER
     )
+
+
+def _outer_calls() -> list[ast.Call]:
+    tree = ast.parse(OUTER_OWNER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == OUTER_OWNER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == TERMINAL_OWNER
+    ]
 
 
 def _expression_path(node: ast.expr) -> Any:
@@ -432,13 +457,13 @@ def test_late_layout_preserves_outer_boundaries() -> None:
         if isinstance(statement, ast.Assign)
         and any(
             isinstance(target, ast.Name)
-            and target.id == "_terminal_layout_shape_results"
+            and target.id == OUTER_RESULT
             for target in statement.targets
         )
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id
-        == TERMINAL_OWNER
+        == OUTER_OWNER
     )
 
     previous = lowerer.body[invocation_index - 1]
@@ -446,14 +471,12 @@ def test_late_layout_preserves_outer_boundaries() -> None:
     assert isinstance(previous, ast.Assign)
     assert len(previous.targets) == 1
     assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == (
-        "_terminal_qkv_activation_bridge_results"
-    )
+    assert previous.targets[0].id == "_pre_terminal_affine_slice_spp_results"
     assert isinstance(previous.value, ast.Call)
     assert isinstance(previous.value.func, ast.Name)
     assert (
         previous.value.func.id
-        == "run_terminal_qkv_activation_bridge_cleanup"
+        == "run_pre_terminal_affine_slice_spp_cleanup"
     )
     assert isinstance(following, ast.Expr)
     assert isinstance(following.value, ast.Call)
@@ -464,6 +487,7 @@ def test_late_layout_preserves_outer_boundaries() -> None:
     assert ast.literal_eval(following.value.args[0]) == (
         "shape_reconciliation.terminal.expand_squeeze"
     )
+    assert len(_outer_calls()) == 1
 
 
 def test_late_layout_composes_child_builder_without_lowerer_import() -> None:

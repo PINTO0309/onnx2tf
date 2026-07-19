@@ -53,6 +53,16 @@ OUTER_OWNER_PATH = (
 OUTER_OWNER = "run_terminal_qkv_activation_bridge_cleanup"
 OUTER_TARGET = "_terminal_qkv_activation_bridge_results"
 OUTER_PREDECESSOR_TARGET = "_pre_terminal_affine_slice_spp_results"
+TOP_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_qkv_activation_layout_shape_orchestration.py"
+)
+TOP_OWNER = "run_terminal_qkv_activation_layout_shape_cleanup"
+TOP_TARGET = "_terminal_qkv_activation_layout_shape_results"
+TOP_SUCCESSOR_PHASE_ID = "shape_reconciliation.terminal.expand_squeeze"
 EXPECTED_SCHEMAS = (
     {"optimized_split_conv_concat_transpose_bridge_to_single_post_nchw": 0},
     {
@@ -116,6 +126,31 @@ def _outer_calls() -> list[ast.Call]:
     ]
 
 
+def _top_calls() -> list[ast.Call]:
+    owner = _functions(TOP_OWNER_PATH)[TOP_OWNER]
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OUTER_OWNER
+    ]
+
+
+def _phase_id(statement: ast.stmt) -> str | None:
+    call = _call(statement)
+    if (
+        call is None
+        or not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != "session"
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
+
+
 @pytest.mark.parametrize("include_layout_transpose", [False, True])
 def test_terminal_activation_bridge_current_boundary_and_schema(
     include_layout_transpose: bool,
@@ -124,10 +159,10 @@ def test_terminal_activation_bridge_current_boundary_and_schema(
     assignment = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == OUTER_TARGET
+        if _single_target(statement) == TOP_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == OUTER_OWNER
+    assert _call_name(assignment) == TOP_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
@@ -140,7 +175,9 @@ def test_terminal_activation_bridge_current_boundary_and_schema(
     assert _single_target(lowerer.body[index - 1]) == (
         OUTER_PREDECESSOR_TARGET
     )
-    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert _phase_id(lowerer.body[index + 1]) == TOP_SUCCESSOR_PHASE_ID
+    assert _call_name(lowerer.body[index + 2]) == "_advance_post_progress"
+    assert len(_top_calls()) == 1
     assert len(_outer_calls()) == 1
     assert [ast.unparse(argument) for argument in _outer_calls()[0].args] == [
         "context"
@@ -216,10 +253,10 @@ def test_terminal_activation_bridge_has_one_context_owner() -> None:
     assignment = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == OUTER_TARGET
+        if _single_target(statement) == TOP_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == OUTER_OWNER
+    assert _call_name(assignment) == TOP_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
@@ -232,7 +269,9 @@ def test_terminal_activation_bridge_has_one_context_owner() -> None:
     assert _single_target(lowerer.body[index - 1]) == (
         OUTER_PREDECESSOR_TARGET
     )
-    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert _phase_id(lowerer.body[index + 1]) == TOP_SUCCESSOR_PHASE_ID
+    assert _call_name(lowerer.body[index + 2]) == "_advance_post_progress"
+    assert len(_top_calls()) == 1
     assert len(_outer_calls()) == 1
     assert not any(
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS

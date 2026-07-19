@@ -35,7 +35,16 @@ RESULT_TARGETS = (
 )
 COMPOSITE_TARGET = "_terminal_qkv_activation_bridge_results"
 PREDECESSOR_TARGET = "_pre_terminal_affine_slice_spp_results"
-SUCCESSOR_TARGET = "_terminal_layout_shape_results"
+SUCCESSOR_PHASE_ID = "shape_reconciliation.terminal.expand_squeeze"
+OUTER_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_qkv_activation_layout_shape_orchestration.py"
+)
+OUTER_OWNER = "run_terminal_qkv_activation_layout_shape_cleanup"
+OUTER_TARGET = "_terminal_qkv_activation_layout_shape_results"
 EXPECTED_SCHEMAS = (
     (
         {"optimized_transpose_shape_extract_nhwc_to_nchw_chains": 0},
@@ -105,6 +114,31 @@ def _call_name(statement: ast.stmt) -> str | None:
     return call.func.id
 
 
+def _phase_id(statement: ast.stmt) -> str | None:
+    call = _call(statement)
+    if (
+        call is None
+        or not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != "session"
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
+
+
+def _outer_calls() -> list[ast.Call]:
+    owner = _functions(OUTER_OWNER_PATH)[OUTER_OWNER]
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OWNER
+    ]
+
+
 @pytest.mark.parametrize("include_layout_transpose", [False, True])
 def test_terminal_qkv_activation_bridge_current_boundary_and_schema(
     include_layout_transpose: bool,
@@ -113,10 +147,10 @@ def test_terminal_qkv_activation_bridge_current_boundary_and_schema(
     assignment = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == COMPOSITE_TARGET
+        if _single_target(statement) == OUTER_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == OWNER
+    assert _call_name(assignment) == OUTER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
@@ -127,7 +161,16 @@ def test_terminal_qkv_activation_bridge_current_boundary_and_schema(
         for keyword in call.keywords
     } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
     assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
-    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
+    assert _call_name(lowerer.body[index + 2]) == "_advance_post_progress"
+    assert len(_outer_calls()) == 1
+    assert [ast.unparse(argument) for argument in _outer_calls()[0].args] == [
+        "context"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in _outer_calls()[0].keywords
+    } == {"include_layout_transpose": "include_layout_transpose"}
     assert not any(
         isinstance(node, ast.Name)
         and isinstance(node.ctx, ast.Load)
@@ -177,10 +220,10 @@ def test_terminal_qkv_activation_bridge_has_one_context_owner() -> None:
     assignment = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == COMPOSITE_TARGET
+        if _single_target(statement) == OUTER_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == OWNER
+    assert _call_name(assignment) == OUTER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
@@ -191,7 +234,9 @@ def test_terminal_qkv_activation_bridge_has_one_context_owner() -> None:
         for keyword in call.keywords
     } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
     assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
-    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
+    assert _call_name(lowerer.body[index + 2]) == "_advance_post_progress"
+    assert len(_outer_calls()) == 1
     assert not any(
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)

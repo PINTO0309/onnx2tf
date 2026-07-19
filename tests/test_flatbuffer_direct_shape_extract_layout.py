@@ -39,6 +39,15 @@ OUTER_OWNER_PATH = (
 )
 OUTER_OWNER = "run_terminal_qkv_activation_bridge_cleanup"
 OUTER_RESULT = "_terminal_qkv_activation_bridge_results"
+TOP_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_qkv_activation_layout_shape_orchestration.py"
+)
+TOP_OWNER = "run_terminal_qkv_activation_layout_shape_cleanup"
+TOP_RESULT = "_terminal_qkv_activation_layout_shape_results"
 TERMINAL_LAYOUT_SHAPE_OWNER_PATH = (
     REPO_ROOT
     / "onnx2tf"
@@ -79,6 +88,22 @@ def _outer_calls() -> list[ast.Call]:
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == TERMINAL_QKV_OWNER
+    ]
+
+
+def _top_calls() -> list[ast.Call]:
+    tree = ast.parse(TOP_OWNER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == TOP_OWNER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OUTER_OWNER
     ]
 
 
@@ -413,13 +438,13 @@ def test_pre_qkv_terminal_shape_extract_captures_complete_mutation_evidence() ->
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == OUTER_RESULT
+        and statement.targets[0].id == TOP_RESULT
     )
     invocation = lowerer.body[invocation_index]
     assert isinstance(invocation, ast.Assign)
     assert isinstance(invocation.value, ast.Call)
     assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == OUTER_OWNER
+    assert invocation.value.func.id == TOP_OWNER
     assert len(invocation.value.args) == 1
     assert isinstance(invocation.value.args[0], ast.Name)
     assert invocation.value.args[0].id == "shared_model_ir_pass_context"
@@ -445,13 +470,14 @@ def test_pre_qkv_terminal_shape_extract_captures_complete_mutation_evidence() ->
     ]
     assert previous.value.keywords == []
     following = lowerer.body[invocation_index + 1]
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_terminal_layout_shape_results"
+    assert isinstance(following, ast.Expr)
     assert isinstance(following.value, ast.Call)
-    assert isinstance(following.value.func, ast.Name)
-    assert following.value.func.id == "run_terminal_layout_shape_cleanup"
+    assert isinstance(following.value.func, ast.Attribute)
+    assert ast.unparse(following.value.func) == "session.record_phase_result"
+    assert ast.literal_eval(following.value.args[0]) == (
+        "shape_reconciliation.terminal.expand_squeeze"
+    )
+    assert len(_top_calls()) == 1
     assert len(_outer_calls()) == 1
 
     all_calls = [

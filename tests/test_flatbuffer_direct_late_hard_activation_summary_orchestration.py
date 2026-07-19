@@ -52,6 +52,16 @@ OUTER_PATH = (
 OUTER_OWNER = "run_terminal_qkv_activation_bridge_cleanup"
 OUTER_TARGET = "_terminal_qkv_activation_bridge_results"
 OUTER_PREDECESSOR_TARGET = "_pre_terminal_affine_slice_spp_results"
+TOP_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_qkv_activation_layout_shape_orchestration.py"
+)
+TOP_OWNER = "run_terminal_qkv_activation_layout_shape_cleanup"
+TOP_TARGET = "_terminal_qkv_activation_layout_shape_results"
+TOP_SUCCESSOR_PHASE_ID = "shape_reconciliation.terminal.expand_squeeze"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -84,6 +94,32 @@ def _outer_calls() -> list[ast.Call]:
     ]
 
 
+def _top_calls() -> list[ast.Call]:
+    owner = _functions(TOP_PATH)[TOP_OWNER]
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OUTER_OWNER
+    ]
+
+
+def _phase_id(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, ast.Expr) or not isinstance(
+        statement.value, ast.Call
+    ):
+        return None
+    call = statement.value
+    if (
+        not isinstance(call.func, ast.Attribute)
+        or ast.unparse(call.func) != "session.record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
+
+
 def test_late_hard_activation_prune_aware_summary_boundary_is_fixed() -> None:
     terminal_owner = _functions(TERMINAL_OWNER_PATH)[TERMINAL_OWNER]
     summary_call = next(
@@ -102,15 +138,16 @@ def test_late_hard_activation_prune_aware_summary_boundary_is_fixed() -> None:
     summary = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == OUTER_TARGET
+        if _single_target(statement) == TOP_TARGET
     )
     index = lowerer.body.index(summary)
     assert isinstance(summary, ast.Assign)
-    assert ast.unparse(summary.value).startswith(f"{OUTER_OWNER}(")
+    assert ast.unparse(summary.value).startswith(f"{TOP_OWNER}(")
     assert _single_target(lowerer.body[index - 1]) == (
         OUTER_PREDECESSOR_TARGET
     )
-    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert _phase_id(lowerer.body[index + 1]) == TOP_SUCCESSOR_PHASE_ID
+    assert len(_top_calls()) == 1
     assert len(_outer_calls()) == 1
     assert not any(
         isinstance(node, ast.Name) and node.id in {COUNT_TARGET, RAW_TARGET}
@@ -147,15 +184,16 @@ def test_late_hard_activation_uses_one_prune_aware_summary_owner() -> None:
     summary = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == OUTER_TARGET
+        if _single_target(statement) == TOP_TARGET
     )
     index = lowerer.body.index(summary)
     assert isinstance(summary, ast.Assign)
-    assert ast.unparse(summary.value).startswith(f"{OUTER_OWNER}(")
+    assert ast.unparse(summary.value).startswith(f"{TOP_OWNER}(")
     assert _single_target(lowerer.body[index - 1]) == (
         OUTER_PREDECESSOR_TARGET
     )
-    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert _phase_id(lowerer.body[index + 1]) == TOP_SUCCESSOR_PHASE_ID
+    assert len(_top_calls()) == 1
     assert len(_outer_calls()) == 1
     assert not any(
         isinstance(node, ast.Name) and node.id in {COUNT_TARGET, RAW_TARGET}

@@ -8,9 +8,8 @@ import pytest
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
-from onnx2tf.tflite_builder.passes import terminal_layout_shape_orchestration
 from onnx2tf.tflite_builder.passes import (
-    terminal_qkv_activation_bridge_orchestration,
+    terminal_qkv_activation_layout_shape_orchestration,
 )
 
 
@@ -152,32 +151,25 @@ def test_terminal_qkv_activation_layout_shape_current_boundary_and_schema(
     include_layout_transpose: bool,
 ) -> None:
     lowerer = _lowerer()
-    statements = tuple(
-        next(
-            statement
-            for statement in lowerer.body
-            if _single_target(statement) == target
-        )
-        for target in RESULT_TARGETS
+    assignment = next(
+        statement
+        for statement in lowerer.body
+        if _single_target(statement) == COMPOSITE_TARGET
     )
-    indices = tuple(lowerer.body.index(statement) for statement in statements)
-    assert indices == (indices[0], indices[0] + 1)
-    assert _single_target(lowerer.body[indices[0] - 1]) == PREDECESSOR_TARGET
-    assert _phase_id(lowerer.body[indices[-1] + 1]) == SUCCESSOR_PHASE_ID
-    assert _call_name(lowerer.body[indices[-1] + 2]) == "_advance_post_progress"
-    assert tuple(_call_name(statement) for statement in statements) == (
-        CHILD_OWNERS
-    )
-    for statement in statements:
-        call = _call(statement)
-        assert call is not None
-        assert [ast.unparse(argument) for argument in call.args] == [
-            "shared_model_ir_pass_context"
-        ]
-        assert {
-            keyword.arg: ast.unparse(keyword.value)
-            for keyword in call.keywords
-        } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
+    index = lowerer.body.index(assignment)
+    assert _call_name(assignment) == OWNER
+    call = _call(assignment)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == [
+        "shared_model_ir_pass_context"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in call.keywords
+    } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
+    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
+    assert _call_name(lowerer.body[index + 2]) == "_advance_post_progress"
     assert not any(
         isinstance(node, ast.Name)
         and isinstance(node.ctx, ast.Load)
@@ -192,21 +184,13 @@ def test_terminal_qkv_activation_layout_shape_current_boundary_and_schema(
         diagnostics=[],
     )
     assert (
-        terminal_qkv_activation_bridge_orchestration.run_terminal_qkv_activation_bridge_cleanup(
+        terminal_qkv_activation_layout_shape_orchestration.run_terminal_qkv_activation_layout_shape_cleanup(
             context,
             include_layout_transpose=include_layout_transpose,
-        ),
-        terminal_layout_shape_orchestration.run_terminal_layout_shape_cleanup(
-            context,
-            include_layout_transpose=include_layout_transpose,
-        ),
+        )
     ) == EXPECTED_SCHEMAS
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="terminal QKV/activation/layout/shape has no shared-context owner",
-)
 def test_terminal_qkv_activation_layout_shape_has_one_context_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -252,3 +236,57 @@ def test_terminal_qkv_activation_layout_shape_has_one_context_owner() -> None:
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
+
+
+@pytest.mark.parametrize("include_layout_transpose", [False, True])
+def test_terminal_qkv_activation_layout_shape_runtime_order_and_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    include_layout_transpose: bool,
+) -> None:
+    model_ir = ModelIR("terminal_qkv_activation_layout_shape_runtime")
+    context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
+    expected_results = (
+        tuple({f"qkv_activation_{index}": index} for index in range(2)),
+        tuple({f"layout_shape_{index}": index} for index in range(4)),
+    )
+    observed: list[
+        tuple[str, ModelIRPassContext, dict[str, bool]]
+    ] = []
+
+    def _callback(index: int):
+        def _run(
+            active_context: ModelIRPassContext,
+            **kwargs: bool,
+        ) -> tuple[dict[str, int], ...]:
+            observed.append((CHILD_OWNERS[index], active_context, kwargs))
+            return expected_results[index]
+
+        return _run
+
+    for index, child_owner in enumerate(CHILD_OWNERS):
+        monkeypatch.setattr(
+            terminal_qkv_activation_layout_shape_orchestration,
+            child_owner,
+            _callback(index),
+        )
+
+    actual = (
+        terminal_qkv_activation_layout_shape_orchestration.run_terminal_qkv_activation_layout_shape_cleanup(
+            context,
+            include_layout_transpose=include_layout_transpose,
+        )
+    )
+    assert actual == expected_results
+    assert actual[0] is expected_results[0]
+    assert actual[1] is expected_results[1]
+    expected_kwargs = {
+        "include_layout_transpose": include_layout_transpose
+    }
+    assert observed == [
+        (CHILD_OWNERS[0], context, expected_kwargs),
+        (CHILD_OWNERS[1], context, expected_kwargs),
+    ]

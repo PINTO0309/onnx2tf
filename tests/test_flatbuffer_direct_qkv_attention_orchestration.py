@@ -51,6 +51,15 @@ OUTER_OWNER_PATH = (
 )
 OUTER_OWNER = "run_terminal_qkv_activation_bridge_cleanup"
 OUTER_RESULT = "_terminal_qkv_activation_bridge_results"
+TOP_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_qkv_activation_layout_shape_orchestration.py"
+)
+TOP_OWNER = "run_terminal_qkv_activation_layout_shape_cleanup"
+TOP_RESULT = "_terminal_qkv_activation_layout_shape_results"
 
 
 def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -98,6 +107,22 @@ def _outer_calls() -> list[ast.Call]:
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == TERMINAL_QKV_OWNER
+    ]
+
+
+def _top_calls() -> list[ast.Call]:
+    tree = ast.parse(TOP_OWNER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == TOP_OWNER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OUTER_OWNER
     ]
 
 
@@ -429,14 +454,14 @@ def test_lowerer_captures_terminal_qkv_mutation_evidence() -> None:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == OUTER_RESULT
+        and statement.targets[0].id == TOP_RESULT
     )
     summary = lowerer.body[summary_index]
     assert isinstance(summary, ast.Assign)
     summary_call = summary.value
     assert isinstance(summary_call, ast.Call)
     assert isinstance(summary_call.func, ast.Name)
-    assert summary_call.func.id == OUTER_OWNER
+    assert summary_call.func.id == TOP_OWNER
     assert [_expression_path(argument) for argument in summary_call.args] == [
         "shared_model_ir_pass_context"
     ]
@@ -454,11 +479,14 @@ def test_lowerer_captures_terminal_qkv_mutation_evidence() -> None:
     assert previous.targets[0].id == (
         "_pre_terminal_affine_slice_spp_results"
     )
-    following = lowerer.body[summary_index + 1]
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_terminal_layout_shape_results"
+    _assert_phase_result_record(
+        lowerer.body[summary_index + 1],
+        "shape_reconciliation.terminal.expand_squeeze",
+    )
+    assert _call_name(lowerer.body[summary_index + 2]) == (
+        "_advance_post_progress"
+    )
+    assert len(_top_calls()) == 1
     assert len(_outer_calls()) == 1
     owner_calls = _terminal_qkv_owner_calls("run_qkv_attention_summary")
     assert len(owner_calls) == 1
@@ -633,11 +661,11 @@ def test_qkv_attention_retains_both_default_policy_results() -> None:
         for statement in lowerer.body
         if isinstance(statement, ast.Assign)
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == OUTER_RESULT
+        and statement.targets[0].id == TOP_RESULT
     )
     assert isinstance(late_result.value, ast.Call)
     assert isinstance(late_result.value.func, ast.Name)
-    assert late_result.value.func.id == OUTER_OWNER
+    assert late_result.value.func.id == TOP_OWNER
     assert [ast.unparse(argument) for argument in late_result.value.args] == [
         "shared_model_ir_pass_context"
     ]
@@ -648,6 +676,7 @@ def test_qkv_attention_retains_both_default_policy_results() -> None:
         "include_layout_transpose": "optimize_layout_transpose_chains",
     }
     assert len(_terminal_qkv_owner_calls("run_qkv_attention_summary")) == 1
+    assert len(_top_calls()) == 1
     assert len(_outer_calls()) == 1
 
 
@@ -659,10 +688,10 @@ def test_qkv_attention_preserves_late_bridge_boundaries() -> None:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == OUTER_RESULT
+        and statement.targets[0].id == TOP_RESULT
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == OUTER_OWNER
+        and statement.value.func.id == TOP_OWNER
     )
 
     previous_boundary = lowerer.body[late_index - 1]
@@ -672,19 +701,13 @@ def test_qkv_attention_preserves_late_bridge_boundaries() -> None:
     assert previous_boundary.targets[0].id == (
         "_pre_terminal_affine_slice_spp_results"
     )
-    next_boundary = lowerer.body[late_index + 1]
-    assert isinstance(next_boundary, ast.Assign)
-    assert len(next_boundary.targets) == 1
-    assert isinstance(next_boundary.targets[0], ast.Name)
-    assert next_boundary.targets[0].id == (
-        "_terminal_layout_shape_results"
+    _assert_phase_result_record(
+        lowerer.body[late_index + 1],
+        "shape_reconciliation.terminal.expand_squeeze",
     )
-    assert isinstance(next_boundary.value, ast.Call)
-    assert isinstance(next_boundary.value.func, ast.Name)
-    assert next_boundary.value.func.id == (
-        "run_terminal_layout_shape_cleanup"
-    )
+    assert _call_name(lowerer.body[late_index + 2]) == "_advance_post_progress"
     assert len(_terminal_qkv_owner_calls("run_qkv_attention_summary")) == 1
+    assert len(_top_calls()) == 1
     assert len(_outer_calls()) == 1
 
 

@@ -53,6 +53,15 @@ OUTER_OWNER_PATH = (
 )
 OUTER_OWNER = "run_terminal_qkv_activation_bridge_cleanup"
 OUTER_RESULT = "_terminal_qkv_activation_bridge_results"
+TOP_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_qkv_activation_layout_shape_orchestration.py"
+)
+TOP_OWNER = "run_terminal_qkv_activation_layout_shape_cleanup"
+TOP_RESULT = "_terminal_qkv_activation_layout_shape_results"
 PUBLIC_SPLIT_CONV_CONCAT_BRIDGE_OWNER = (
     "optimize_split_conv_concat_transpose_bridge_to_single_post_nchw"
 )
@@ -799,13 +808,13 @@ def test_terminal_split_conv_concat_bridge_captures_complete_mutation_evidence()
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == OUTER_RESULT
+        and statement.targets[0].id == TOP_RESULT
     )
     composite = lowerer.body[invocation_index]
     assert isinstance(composite, ast.Assign)
     assert isinstance(composite.value, ast.Call)
     assert isinstance(composite.value.func, ast.Name)
-    assert composite.value.func.id == OUTER_OWNER
+    assert composite.value.func.id == TOP_OWNER
     assert {
         keyword.arg: ast.unparse(keyword.value)
         for keyword in composite.value.keywords
@@ -829,16 +838,27 @@ def test_terminal_split_conv_concat_bridge_captures_complete_mutation_evidence()
     ]
     assert previous.value.keywords == []
     following = lowerer.body[invocation_index + 1]
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_terminal_layout_shape_results"
+    assert isinstance(following, ast.Expr)
     assert isinstance(following.value, ast.Call)
-    assert isinstance(following.value.func, ast.Name)
-    assert (
-        following.value.func.id
-        == "run_terminal_layout_shape_cleanup"
+    assert isinstance(following.value.func, ast.Attribute)
+    assert ast.unparse(following.value.func) == "session.record_phase_result"
+    assert ast.literal_eval(following.value.args[0]) == (
+        "shape_reconciliation.terminal.expand_squeeze"
     )
+    top_tree = ast.parse(TOP_OWNER_PATH.read_text(encoding="utf-8"))
+    top_owner = next(
+        node
+        for node in top_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == TOP_OWNER
+    )
+    top_calls = [
+        node
+        for node in ast.walk(top_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OUTER_OWNER
+    ]
+    assert len(top_calls) == 1
     outer_tree = ast.parse(OUTER_OWNER_PATH.read_text(encoding="utf-8"))
     outer_owner = next(
         node

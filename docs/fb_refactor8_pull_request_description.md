@@ -1320,3 +1320,22 @@ remain successors outside the proposed owner. Production is unchanged pending
 one straight-line two-child owner. Focused and affected sequential validation
 report `2 passed, 1 xfailed` and `507 passed, 1 xfailed`; the sole expected
 failure is the intentionally absent owner.
+
+The latest checkpoint implements that terminal
+QKV/activation/layout/shape owner. It forwards the exact shared
+`ModelIRPassContext` and unchanged layout-Transpose option through both
+existing child composites in their original order. Their complete nested
+tuples are returned without copying, flattening, or normalization, preserving
+both raw identities and every result schema.
+
+The lowerer replaces only the two observation-only locals with one outer
+result. Pre-terminal affine/Slice/SPP remains the immediate predecessor; the
+recorded terminal Expand/Squeeze reconciliation and progress update remain
+separate immediate successors. Specialized child owners, raw wrappers,
+callbacks, independent routes, guards, graph behavior, and progress behavior
+remain intact. Runtime identity coverage, 510 affected tests, and all standard
+sequential gates pass: 92 terminal-layout/efficiency, 55 core, 196 result
+contracts, 2 phase-store, and 11 TensorFlow-isolation/default-direct/`-cotof`
+tests. Public behavior, artifacts, dependencies, TensorFlow isolation, and the
+exactly 128-ID/128-owner phase-result store are unchanged; the unconsumed
+lowerer assignment inventory decreases from 59 to 58.
