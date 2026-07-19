@@ -1674,3 +1674,17 @@ Focused `5`, affected `429`, and standard `92 / 55 / 196 / 2 / 11` sequential
 tests pass. TensorFlow isolation and the exactly 128-ID/128-owner phase store
 remain unchanged, while the unconsumed-result inventory decreases from 47 to
 46.
+
+The latest characterization fixes the next layout-pass-set-1 ownership
+boundary before any production edit. QLinear/Mean/Concat recovery must run
+before final layout/reshape/attention recovery through the exact shared session
+pass context. The callback-bearing layout context, complete nested result
+schemas, recorded dequant-Mean and InstanceNorm phase neighbors, and all
+independent wrapper routes are now protected by structural and runtime schema
+checks.
+
+Production behavior is unchanged at this checkpoint. Focused sequential
+validation reports `1 passed, 1 xfailed`, where the strict expected failure is
+the deliberately absent future composite owner. Ruff, bytecode compilation,
+and whitespace checks pass. The unconsumed-result inventory remains 46 and the
+phase-result store remains exactly 128 IDs and 128 owners.

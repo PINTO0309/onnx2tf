@@ -6176,3 +6176,36 @@ both complete nested schemas, observation-only status, raw-result identity
 requirements, and independent routes. The expected inventory reduction after
 a correct implementation is 46 to 45. No production or test change was made
 during this audit.
+
+## QLinear/final-attention characterization checkpoint
+
+`tests/test_flatbuffer_direct_layout_pass_set_1_qlinear_attention_recovery_orchestration.py`
+now freezes the current and intended contracts for the next extraction. The
+current contract proves adjacency under `optimize_layout_transpose_chains`, the
+recorded dequant-Mean and InstanceNorm phase boundaries, observation-only raw
+locals, shared session pass-context identity, all three layout-recovery
+callbacks, exact recursively nested result schemas, and the retained direct
+wrapper call counts.
+
+The strict expected-failure contract reserves
+`passes/layout_pass_set_1_qlinear_attention_recovery_orchestration.py` and
+`run_layout_pass_set_1_qlinear_attention_recovery()`. That owner must call
+`run_qlinear_mean_concat_recovery(context.pass_context)` and then
+`run_layout_reshape_attention_recovery_prefix(context)`, returning both raw
+tuples unchanged and by identity. The lowerer must replace only the two
+observation locals with
+`_layout_pass_set_1_qlinear_attention_recovery_results`; both compatibility
+wrappers and all independent layout-pass-set-2 and recovery-prefix routes must
+remain intact.
+
+Focused sequential validation reports `1 passed, 1 xfailed`. Ruff, bytecode
+compilation, and whitespace checks pass. Production is unchanged, the
+unconsumed-result inventory remains 46, and the phase-result store remains
+exactly 128 IDs and 128 owners.
+
+At resume, implement only this characterized owner and lowerer replacement,
+then convert the strict xfail to runtime order/context/result-identity
+coverage. Run the freshly discovered affected suite and all standard gates
+sequentially under `uv`, confirm the expected inventory reduction from 46 to
+45, update these documents, and create a complete commit and push. Do not
+create, update, reopen, or otherwise modify a pull request.

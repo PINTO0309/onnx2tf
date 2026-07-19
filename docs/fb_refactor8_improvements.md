@@ -6816,3 +6816,25 @@ focused `5`, affected `429`, and standard `92 / 55 / 196 / 2 / 11`. Ruff,
 bytecode compilation, and whitespace validation pass. The phase store remains
 exactly 128 IDs and 128 owners, and the unconsumed lowerer-result inventory
 decreases from 47 to 46.
+
+## Characterize the layout-pass-set-1 QLinear/attention boundary
+
+The next strict characterization freezes the audited boundary without changing
+production code. It proves that QLinear/Mean/Concat recovery and final
+layout/reshape/attention recovery are adjacent, unconditional observations
+inside the existing layout-Transpose guard. The recorded dequant-Mean and
+InstanceNorm phases remain their immediate neighbors, and neither raw result is
+consumed by later lowerer logic.
+
+The contract also fixes the exact shared `ModelIRPassContext`, all three
+callback identities carried by `LayoutRecoveryContext`, the complete five-slot
+QLinear result, and the complete fifteen-slot attention result including its
+nineteen-slot nested layout prefix. Existing lowerer wrappers and every
+independent call route are counted explicitly so a future extraction cannot
+silently remove compatibility entry points.
+
+Production remains unchanged pending one two-child context owner. Focused
+sequential validation reports `1 passed, 1 xfailed`; the sole expected failure
+requires the intentionally absent owner module. Ruff, bytecode compilation,
+and whitespace validation pass. The unconsumed-result inventory remains 46 and
+the phase-result store remains unchanged.
