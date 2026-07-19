@@ -243,6 +243,22 @@ def _repair_stale_nchw_to_nhwc_conv_input_transposes(
     }
 
 
+def run_stale_conv_input_adapter_repair_summary(
+    model_ir: ModelIR,
+) -> Dict[str, int]:
+    """Run stale Conv-input repair and retain prune-only evidence."""
+
+    initial_tensor_count = len(model_ir.tensors)
+    result = _repair_stale_nchw_to_nhwc_conv_input_transposes(model_ir)
+    return {
+        **result,
+        "pruned_unused_tensors": max(
+            0,
+            int(initial_tensor_count - len(model_ir.tensors)),
+        ),
+    }
+
+
 def _run_indexed_conv_input_adapter_repairs(model_ir: ModelIR) -> Dict[str, int]:
     """Run singleton-Reshape and stale-Transpose Conv repairs with one index."""
 

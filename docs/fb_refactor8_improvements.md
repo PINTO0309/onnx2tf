@@ -4145,3 +4145,37 @@ Sequential characterization under core-only `uv` completed with
 indexed Conv-input, terminal-layout, phase-store, and architecture contracts.
 The sole expected failure is the intentionally absent dedicated summary owner.
 Targeted Ruff and whitespace checks passed.
+
+## Final stale Conv-input summary implementation
+
+`run_stale_conv_input_adapter_repair_summary(model_ir)` now owns the
+tensor-count snapshot, one raw stale Conv-input Transpose repair invocation,
+and the non-negative prune delta. The final-primary stats target remains while
+its lowerer-local count variable and inline mapping extension are removed.
+
+The raw lowerer wrapper remains defined and continues to forward an optional
+`ModelIRGraphIndex`. The two indexed summary sites retain their shared
+singleton-Reshape plus stale-Transpose owner and two-key schema. The final-Pad
+predecessor, mutation-positive reconciliation guard and phase ID, mixed-Concat
+successor, public behavior, artifacts, dependencies, TensorFlow isolation, and
+the full 128/128 phase-result store are unchanged. The dedicated summary
+remains outside that store.
+
+Final sequential validation under core-only `uv`:
+
+- focused dedicated-summary contracts: `4 passed in 0.56s`;
+- affected indexed Conv-input, terminal-layout, store, and architecture
+  contracts: `339 passed in 20.54s`;
+- terminal-layout and pass-efficiency contracts: `92 passed in 1.85s`;
+- synthetic core runtime contracts: `55 passed in 0.92s`;
+- result contracts: `196 passed in 9.17s`;
+- phase-store capacity contracts: `2 passed in 0.53s`;
+- TensorFlow/tf-keras import blocking, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.65s`;
+- targeted Ruff, bytecode compilation, 128/128 audit, and whitespace checks:
+  passed.
+
+No real-model corpus conversion was repeated because focused runtime coverage
+proves stable and prune-only schema preservation, while the affected and
+architecture gates preserve the raw and indexed owners, all three production
+summary sites, optional graph-index forwarding, and neighboring boundaries.

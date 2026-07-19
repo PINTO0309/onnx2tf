@@ -106,7 +106,7 @@ text. Cycle behavior and stale-error removal are covered explicitly.
 
 ### Late composite orchestration owners
 
-Twenty-seven late lowerer clusters now have focused orchestration owners. The first
+Twenty-eight late lowerer clusters now have focused orchestration owners. The first
 combines adjacent NDHWC gate and cost-volume ScatterND cleanup into the final
 bounded phase result while sharing one short-lived pass state. The second runs
 four late Concat/layout owners with one internal state scope and returns their
@@ -247,11 +247,17 @@ exact raw schema and mutation-positive reconciliation guards, keeps the raw
 wrapper and optional graph-index forwarding available, and explicitly leaves
 the iterative indexed convergence owner unchanged.
 
+The twenty-eighth provides a dedicated prune-aware summary for the
+final-primary one-repair stale Conv-input site. It preserves the distinct
+one-key raw schema, raw wrapper and optional graph-index forwarding, final-Pad
+predecessor, reconciliation guard, and mixed-Concat successor while leaving
+the indexed two-repair summary sites unchanged.
+
 These extractions preserve callback order, model/layout/diagnostics identity,
 and result schemas while removing forty-five former unconsumed locals and two
 lowerer scope locals. They also replace twenty-one consumed mutation-evidence
-or aggregate-result locals and fourteen tensor-count snapshots with three
-explicit boolean decisions, thirteen reusable summary calls, and one prune-aware
+or aggregate-result locals and fifteen tensor-count snapshots with three
+explicit boolean decisions, fourteen reusable summary calls, and one prune-aware
 cleanup call.
 Focused runtime tests verify shared scope identity, exact argument policy,
 ordered results, every positive-evidence path, and prune-only cleanup.
@@ -565,6 +571,11 @@ Final checkpoint results:
 - stale channelwise-binary adapter shared-summary contracts: **4 passed**;
 - affected stale binary-adapter, fallback, terminal-layout, indexed
   convergence, store, and architecture contracts: **354 passed**;
+- final stale Conv-input dedicated-summary characterization and related
+  contracts: **336 passed, 1 intentional strict xfail**;
+- final stale Conv-input dedicated-summary contracts: **4 passed**;
+- affected indexed Conv-input, terminal-layout, store, and architecture
+  contracts: **339 passed**;
 - TensorFlow/tf-keras import blocker, default/direct conversion, and `-cotof`
   contracts: **11 passed**;
 - pre-Concat NHWC pass-owner and compatibility contracts: **3 passed**;
@@ -699,3 +710,8 @@ predecessor, mutation-positive reconciliation guard, mixed-Concat successor,
 and raw wrapper with optional graph-index forwarding. It remains separate from
 the indexed two-repair family, and production is unchanged until its dedicated
 summary owner is implemented separately.
+
+The latest checkpoint implements that dedicated final stale Conv-input summary
+owner. It removes the final tensor snapshot and inline mapping extension while
+retaining the raw wrapper, optional graph-index forwarding, both indexed
+summary sites, neighboring boundaries, and the full 128/128 phase-result store.

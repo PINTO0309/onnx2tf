@@ -3666,3 +3666,33 @@ the dedicated one-repair summary owner and final-primary site, retain the raw
 lowerer wrapper, leave both indexed sites unchanged, update owner-aware
 structural contracts, and validate sequentially. Continue with commits and
 pushes only; never create, update, or reopen a pull request.
+
+## Final stale Conv-input summary implementation
+
+The pass module now exposes
+`run_stale_conv_input_adapter_repair_summary(model_ir)`. It captures tensor
+count, invokes the existing raw stale Conv-input Transpose repair once, and
+returns the exact raw mapping plus prune evidence. The final-primary stats
+target remains, while its count local and inline mapping extension are removed.
+
+The raw lowerer wrapper and optional graph-index forwarding remain intact. The
+two indexed sites, indexed two-repair owner, final-Pad predecessor,
+mutation-positive reconciliation guard, mixed-Concat successor, and 128/128
+store are unchanged.
+
+Final sequential validation under core-only `uv`:
+
+- focused dedicated-summary contracts: `4 passed in 0.56s`;
+- affected family, boundary, store, and architecture contracts:
+  `339 passed in 20.54s`;
+- terminal-layout/pass-efficiency contracts: `92 passed in 1.85s`;
+- synthetic core runtime contracts: `55 passed in 0.92s`;
+- result contracts: `196 passed in 9.17s`;
+- phase-store capacity contracts: `2 passed in 0.53s`;
+- TensorFlow/tf-keras blocker, default/direct conversion, and `-cotof`
+  contracts: `11 passed in 9.65s`;
+- Ruff, bytecode compilation, 128/128 audit, and whitespace checks: passed.
+
+Commit and push this implementation checkpoint. At resume, characterize the
+next compatible repeated evidence family before production changes. Continue
+with commits and pushes only; never create, update, or reopen a pull request.

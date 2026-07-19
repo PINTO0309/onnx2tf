@@ -475,7 +475,7 @@ def test_primary_path_stages_final_pad_reconciliation() -> None:
     following = body[stats_index + 2]
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "final_conv_input_tensor_count"
+    assert following.targets[0].id == "final_conv_input_stats"
 
 
 def test_primary_path_stages_complete_final_conv_input_evidence() -> None:
@@ -489,26 +489,10 @@ def test_primary_path_stages_complete_final_conv_input_evidence() -> None:
         and statement.targets[0].id == "final_conv_input_stats"
     )
 
-    tensor_count = body[stats_index - 1]
-    assert isinstance(tensor_count, ast.Assign)
-    assert isinstance(tensor_count.targets[0], ast.Name)
-    assert tensor_count.targets[0].id == "final_conv_input_tensor_count"
-    assert ast.unparse(tensor_count.value) == "len(model_ir.tensors)"
-
     stats = body[stats_index]
-    assert isinstance(stats.value, ast.Dict)
-    assert stats.value.keys[0] is None
-    owner = stats.value.values[0]
-    assert isinstance(owner, ast.Call)
-    assert isinstance(owner.func, ast.Name)
-    assert owner.func.id == "_repair_stale_nchw_to_nhwc_conv_input_transposes"
-    assert [ast.unparse(argument) for argument in owner.args] == ["model_ir"]
-    assert owner.keywords == []
-    prune_key = stats.value.keys[1]
-    assert isinstance(prune_key, ast.Constant)
-    assert prune_key.value == "pruned_unused_tensors"
-    assert ast.unparse(stats.value.values[1]) == (
-        "max(0, final_conv_input_tensor_count - len(model_ir.tensors))"
+    assert isinstance(stats, ast.Assign)
+    assert ast.unparse(stats.value) == (
+        "run_stale_conv_input_adapter_repair_summary(model_ir)"
     )
 
     guard = body[stats_index + 1]

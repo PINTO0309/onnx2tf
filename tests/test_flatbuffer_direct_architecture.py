@@ -4028,15 +4028,36 @@ def test_conv_input_adapter_repairs_use_one_graph_index() -> None:
         and node.func.id == helper_name
     ]
     assert len(summary_owner_calls) == 1
-    direct_transpose_invocations = [
+    stale_summary_name = "run_stale_conv_input_adapter_repair_summary"
+    stale_summary_invocations = [
         node
         for node in ast.walk(lowerer)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
+        and node.func.id == stale_summary_name
+    ]
+    assert len(stale_summary_invocations) == 1
+    assert stale_summary_invocations[0].args[0].id == "model_ir"
+    stale_summary_owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == stale_summary_name
+    )
+    stale_summary_owner_calls = [
+        node
+        for node in ast.walk(stale_summary_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
         and node.func.id == repair_names[1]
     ]
-    assert len(direct_transpose_invocations) == 1
-    assert direct_transpose_invocations[0].args[0].id == "model_ir"
+    assert len(stale_summary_owner_calls) == 1
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == repair_names[1]
+        for node in ast.walk(lowerer)
+    )
 
 
 def test_mixed_nhwc_nchw_concat_repair_has_module_owner() -> None:

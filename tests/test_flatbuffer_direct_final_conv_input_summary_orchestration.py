@@ -5,6 +5,9 @@ from pathlib import Path
 
 import pytest
 
+from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
+from onnx2tf.tflite_builder.passes import conv_input_adapter_repair
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = (
@@ -46,24 +49,19 @@ def _single_target(statement: ast.stmt) -> str | None:
 
 def test_final_stale_conv_input_prune_aware_boundary_is_fixed() -> None:
     lowerer = _lowerer()
-    count = next(
+    stats = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == COUNT_TARGET
+        if _single_target(statement) == SUMMARY_TARGET
     )
-    index = lowerer.body.index(count)
-    stats = lowerer.body[index + 1]
-    assert isinstance(count, ast.Assign)
-    assert ast.unparse(count.value) == "len(model_ir.tensors)"
-    assert _single_target(stats) == SUMMARY_TARGET
+    index = lowerer.body.index(stats)
     assert isinstance(stats, ast.Assign)
-    assert isinstance(stats.value, ast.Dict)
-    assert len(stats.value.keys) == 2
-    assert stats.value.keys[0] is None
-    assert ast.unparse(stats.value.values[0]) == f"{RAW_OWNER}(model_ir)"
-    assert ast.unparse(stats.value.keys[1]) == "'pruned_unused_tensors'"
-    assert ast.unparse(stats.value.values[1]) == (
-        f"max(0, {COUNT_TARGET} - len(model_ir.tensors))"
+    assert ast.unparse(stats.value) == (
+        f"{SUMMARY_OWNER}(model_ir)"
+    )
+    assert not any(
+        isinstance(node, ast.Name) and node.id == COUNT_TARGET
+        for node in ast.walk(lowerer)
     )
 
     predecessor = lowerer.body[index - 1]
@@ -74,7 +72,7 @@ def test_final_stale_conv_input_prune_aware_boundary_is_fixed() -> None:
         and node.id == PREDECESSOR_TARGET
         for node in ast.walk(predecessor.test)
     )
-    guard = lowerer.body[index + 2]
+    guard = lowerer.body[index + 1]
     assert isinstance(guard, ast.If)
     assert any(
         isinstance(node, ast.Name)
@@ -82,13 +80,9 @@ def test_final_stale_conv_input_prune_aware_boundary_is_fixed() -> None:
         and node.id == SUMMARY_TARGET
         for node in ast.walk(guard.test)
     )
-    assert _single_target(lowerer.body[index + 3]) == SUCCESSOR_TARGET
+    assert _single_target(lowerer.body[index + 2]) == SUCCESSOR_TARGET
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="final stale Conv-input site lacks its prune-aware summary owner",
-)
 def test_final_stale_conv_input_uses_dedicated_prune_aware_summary_owner() -> None:
     owner = _functions(OWNER_PATH)[SUMMARY_OWNER]
     raw_calls = [
@@ -141,3 +135,37 @@ def test_final_stale_conv_input_uses_dedicated_prune_aware_summary_owner() -> No
     assert ast.unparse(wrapper.body[0]) == (
         f"return {RAW_OWNER}_pass(model_ir, graph_index=graph_index)"
     )
+
+
+@pytest.mark.parametrize("prune", (False, True))
+def test_final_stale_conv_input_summary_preserves_schema_and_pruning(
+    monkeypatch: pytest.MonkeyPatch,
+    prune: bool,
+) -> None:
+    model_ir = ModelIR("final_stale_conv_input_summary")
+    model_ir.tensors["probe"] = TensorIR(
+        name="probe",
+        dtype="float32",
+        shape=[1],
+    )
+    raw_result = {
+        "repaired_stale_nchw_to_nhwc_conv_input_transposes": 3,
+    }
+    observed: list[ModelIR] = []
+
+    def _run(candidate: ModelIR) -> dict[str, int]:
+        observed.append(candidate)
+        if prune:
+            del candidate.tensors["probe"]
+        return raw_result
+
+    monkeypatch.setattr(conv_input_adapter_repair, RAW_OWNER, _run)
+
+    assert (
+        conv_input_adapter_repair
+        .run_stale_conv_input_adapter_repair_summary(model_ir)
+    ) == {
+        **raw_result,
+        "pruned_unused_tensors": int(prune),
+    }
+    assert observed == [model_ir]

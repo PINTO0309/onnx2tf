@@ -574,6 +574,7 @@ from onnx2tf.tflite_builder.passes.conv_input_adapter_repair import (
     _repair_stale_nchw_to_nhwc_conv_input_transposes as _repair_stale_nchw_to_nhwc_conv_input_transposes_pass,
     _run_indexed_conv_input_adapter_repairs as _run_indexed_conv_input_adapter_repairs_pass,
     run_indexed_conv_input_adapter_repairs_summary,
+    run_stale_conv_input_adapter_repair_summary,
 )
 from onnx2tf.tflite_builder.passes.mixed_concat_input_repair import (
     _repair_mixed_nhwc_inputs_for_nchw_concat as _repair_mixed_nhwc_inputs_for_nchw_concat_pass,
@@ -6195,14 +6196,9 @@ def lower_onnx_to_ir(
             "shape_topology.primary.final_pad_layout",
             run_static_shape_topology_reconciliation(model_ir),
         )
-    final_conv_input_tensor_count = len(model_ir.tensors)
-    final_conv_input_stats = {
-        **_repair_stale_nchw_to_nhwc_conv_input_transposes(model_ir),
-        "pruned_unused_tensors": max(
-            0,
-            final_conv_input_tensor_count - len(model_ir.tensors),
-        ),
-    }
+    final_conv_input_stats = run_stale_conv_input_adapter_repair_summary(
+        model_ir
+    )
     if int(
         final_conv_input_stats.get(
             "repaired_stale_nchw_to_nhwc_conv_input_transposes",
