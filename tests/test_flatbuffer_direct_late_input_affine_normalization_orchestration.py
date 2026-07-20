@@ -46,6 +46,11 @@ RESULT_TARGETS = (
     "_very_late_normalization_stats",
 )
 FINAL_COMPOSITE_TARGET = "_final_input_dynamic_results"
+FINAL_SHAPE_OWNER_EXPRESSION = (
+    "run_final_input_dynamic_shape_cleanup("
+    "shared_model_ir_pass_context, "
+    "shape_reconciler=_reconcile_static_tensor_shapes)[1]"
+)
 EXPECTED_EMPTY_RESULTS = (
     {"repaired_orphan_recurrent_step_tensors": 0},
     {"repaired_unbound_nonconstant_inputs_with_layout_transpose": 0},
@@ -116,16 +121,17 @@ def _phase_id(statement: ast.stmt) -> str | None:
 
 def test_late_input_affine_normalization_current_boundary_and_schemas() -> None:
     lowerer = _lowerer()
-    index, invocation = next(
+    index, record = next(
         (index, statement)
         for index, statement in enumerate(lowerer.body)
-        if _single_target(statement) == FINAL_COMPOSITE_TARGET
+        if _phase_id(statement)
+        == "shape_reconciliation.primary.very_late_final"
     )
-    assert _call_name(invocation) == FINAL_OWNER
     assert _call_name(lowerer.body[index - 1]) == "_advance_post_progress"
-    assert _phase_id(lowerer.body[index + 1]) == (
-        "shape_reconciliation.primary.very_late_final"
-    )
+    record_call = _call(record)
+    assert record_call is not None
+    assert ast.unparse(record_call.args[1]) == FINAL_SHAPE_OWNER_EXPRESSION
+    assert _single_target(lowerer.body[index + 1]) == "split_fallback_stats"
     child_calls = [
         node
         for node in ast.walk(_final_owner())
@@ -139,6 +145,10 @@ def test_late_input_affine_normalization_current_boundary_and_schemas() -> None:
     ]
     assert not any(
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
+        for node in ast.walk(lowerer)
+    )
+    assert not any(
+        isinstance(node, ast.Name) and node.id == FINAL_COMPOSITE_TARGET
         for node in ast.walk(lowerer)
     )
 
@@ -185,22 +195,17 @@ def test_late_input_affine_normalization_has_one_context_owner() -> None:
     assert [ast.unparse(argument) for argument in calls[3].args] == ["context"]
 
     lowerer = _lowerer()
-    index, invocation = next(
+    index, record = next(
         (index, statement)
         for index, statement in enumerate(lowerer.body)
-        if _single_target(statement) == FINAL_COMPOSITE_TARGET
+        if _phase_id(statement)
+        == "shape_reconciliation.primary.very_late_final"
     )
-    assert _call_name(invocation) == FINAL_OWNER
-    call = _call(invocation)
-    assert call is not None
-    assert [ast.unparse(argument) for argument in call.args] == [
-        "shared_model_ir_pass_context"
-    ]
-    assert call.keywords == []
     assert _call_name(lowerer.body[index - 1]) == "_advance_post_progress"
-    assert _phase_id(lowerer.body[index + 1]) == (
-        "shape_reconciliation.primary.very_late_final"
-    )
+    record_call = _call(record)
+    assert record_call is not None
+    assert ast.unparse(record_call.args[1]) == FINAL_SHAPE_OWNER_EXPRESSION
+    assert _single_target(lowerer.body[index + 1]) == "split_fallback_stats"
     child_calls = [
         node
         for node in ast.walk(_final_owner())
@@ -214,6 +219,10 @@ def test_late_input_affine_normalization_has_one_context_owner() -> None:
     ]
     assert not any(
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
+        for node in ast.walk(lowerer)
+    )
+    assert not any(
+        isinstance(node, ast.Name) and node.id == FINAL_COMPOSITE_TARGET
         for node in ast.walk(lowerer)
     )
 

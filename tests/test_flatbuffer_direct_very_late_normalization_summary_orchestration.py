@@ -41,6 +41,11 @@ FINAL_COMPOSITE_PATH = (
 )
 FINAL_COMPOSITE_OWNER = "run_final_input_dynamic_cleanup"
 FINAL_COMPOSITE_TARGET = "_final_input_dynamic_results"
+FINAL_SHAPE_OWNER_EXPRESSION = (
+    "run_final_input_dynamic_shape_cleanup("
+    "shared_model_ir_pass_context, "
+    "shape_reconciler=_reconcile_static_tensor_shapes)[1]"
+)
 RAW_WRAPPER = "_run_very_late_gather_constant_normalization_pass_cluster"
 RAW_OWNER = "run_very_late_gather_constant_normalization"
 SUMMARY_OWNER = "run_very_late_gather_constant_normalization_summary"
@@ -111,18 +116,17 @@ def _phase_id(statement: ast.stmt) -> str | None:
 
 def test_very_late_normalization_prune_aware_summary_boundary_is_fixed() -> None:
     lowerer = _lowerer()
-    composite = next(
+    record = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == FINAL_COMPOSITE_TARGET
+        if _phase_id(statement) == SUCCESSOR_PHASE_ID
     )
-    index = lowerer.body.index(composite)
-    assert isinstance(composite, ast.Assign)
-    assert ast.unparse(composite.value) == (
-        f"{FINAL_COMPOSITE_OWNER}(shared_model_ir_pass_context)"
-    )
+    index = lowerer.body.index(record)
+    assert isinstance(record, ast.Expr)
+    assert isinstance(record.value, ast.Call)
+    assert ast.unparse(record.value.args[1]) == FINAL_SHAPE_OWNER_EXPRESSION
     assert ast.unparse(lowerer.body[index - 1]) == "_advance_post_progress()"
-    assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
+    assert _single_target(lowerer.body[index + 1]) == "split_fallback_stats"
     assert len(_final_composite_calls()) == 1
     summary_calls = _composite_summary_calls()
     assert len(summary_calls) == 1
@@ -137,6 +141,10 @@ def test_very_late_normalization_prune_aware_summary_boundary_is_fixed() -> None
         isinstance(node, ast.Name)
         and isinstance(node.ctx, ast.Load)
         and node.id == SUMMARY_TARGET
+        for node in ast.walk(lowerer)
+    )
+    assert not any(
+        isinstance(node, ast.Name) and node.id == FINAL_COMPOSITE_TARGET
         for node in ast.walk(lowerer)
     )
 
@@ -161,22 +169,25 @@ def test_very_late_normalization_uses_one_prune_aware_summary_owner() -> None:
     assert ast.unparse(initial_count.value) == "len(context.model_ir.tensors)"
 
     lowerer = _lowerer()
-    composite = next(
+    record = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == FINAL_COMPOSITE_TARGET
+        if _phase_id(statement) == SUCCESSOR_PHASE_ID
     )
-    index = lowerer.body.index(composite)
-    assert isinstance(composite, ast.Assign)
-    assert ast.unparse(composite.value) == (
-        f"{FINAL_COMPOSITE_OWNER}(shared_model_ir_pass_context)"
-    )
+    index = lowerer.body.index(record)
+    assert isinstance(record, ast.Expr)
+    assert isinstance(record.value, ast.Call)
+    assert ast.unparse(record.value.args[1]) == FINAL_SHAPE_OWNER_EXPRESSION
     assert ast.unparse(lowerer.body[index - 1]) == "_advance_post_progress()"
-    assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
+    assert _single_target(lowerer.body[index + 1]) == "split_fallback_stats"
     assert len(_final_composite_calls()) == 1
     assert len(_composite_summary_calls()) == 1
     assert not any(
         isinstance(node, ast.Name) and node.id in {COUNT_TARGET, RAW_TARGET}
+        for node in ast.walk(lowerer)
+    )
+    assert not any(
+        isinstance(node, ast.Name) and node.id == FINAL_COMPOSITE_TARGET
         for node in ast.walk(lowerer)
     )
 

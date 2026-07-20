@@ -68,8 +68,8 @@ from onnx2tf.tflite_builder.passes.fallback_precision_unbound_orchestration impo
 from onnx2tf.tflite_builder.passes.no_layout_final_cleanup_orchestration import (
     run_no_layout_final_cleanup,
 )
-from onnx2tf.tflite_builder.passes.final_input_dynamic_orchestration import (
-    run_final_input_dynamic_cleanup,
+from onnx2tf.tflite_builder.passes.final_input_dynamic_shape_orchestration import (
+    run_final_input_dynamic_shape_cleanup,
 )
 from onnx2tf.tflite_builder.passes.recurrent_alias_repair_orchestration import (
     repair_orphan_recurrent_step_tensors_summary,
@@ -5090,15 +5090,12 @@ def lower_onnx_to_ir(
     # Fold them again before final shape/topology reconciliation.
     # Very late terminal bridge/transpose rewrites above can also stale out
     # RESHAPE constant inputs. Re-resolve before the final static-shape pass.
-    _final_input_dynamic_results = run_final_input_dynamic_cleanup(
-        shared_model_ir_pass_context,
-    )
     session.record_phase_result(
         "shape_reconciliation.primary.very_late_final",
-        _reconcile_static_tensor_shapes(
-            model_ir,
-            include_mutation_count=True,
-        ),
+        run_final_input_dynamic_shape_cleanup(
+            shared_model_ir_pass_context,
+            shape_reconciler=_reconcile_static_tensor_shapes,
+        )[1],
     )
     split_fallback_stats = _replace_unsupported_split_with_slice(
         model_ir,

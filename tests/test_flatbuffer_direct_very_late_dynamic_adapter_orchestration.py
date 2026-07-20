@@ -30,6 +30,12 @@ FINAL_OWNER_PATH = (
 )
 FINAL_OWNER = "run_final_input_dynamic_cleanup"
 FINAL_RESULT_NAME = "_final_input_dynamic_results"
+FINAL_SHAPE_PHASE_ID = "shape_reconciliation.primary.very_late_final"
+FINAL_SHAPE_OWNER_EXPRESSION = (
+    "run_final_input_dynamic_shape_cleanup("
+    "shared_model_ir_pass_context, "
+    "shape_reconciler=_reconcile_static_tensor_shapes)[1]"
+)
 RAW_CONTRACTS = (
     (
         "_very_late_dynamic_reshape_stats",
@@ -127,6 +133,21 @@ def _assignment_name(statement: ast.stmt) -> str | None:
     return target.id if isinstance(target, ast.Name) else None
 
 
+def _final_shape_record(
+    body: list[ast.stmt],
+) -> tuple[int, ast.Expr]:
+    return next(
+        (index, statement)
+        for index, statement in enumerate(body)
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Attribute)
+        and ast.unparse(statement.value.func) == "session.record_phase_result"
+        and len(statement.value.args) == 2
+        and ast.literal_eval(statement.value.args[0]) == FINAL_SHAPE_PHASE_ID
+    )
+
+
 def _assert_call(
     expression: ast.expr,
     *,
@@ -155,8 +176,9 @@ def _assert_reconciliation_successor(
     assert ast.unparse(reconciliation) == (
         "session.record_phase_result("
         "'shape_reconciliation.primary.very_late_final', "
-        "_reconcile_static_tensor_shapes("
-        "model_ir, include_mutation_count=True))"
+        "run_final_input_dynamic_shape_cleanup("
+        "shared_model_ir_pass_context, "
+        "shape_reconciler=_reconcile_static_tensor_shapes)[1])"
     )
     split = body[index + 1]
     assert isinstance(split, ast.Assign)
@@ -198,20 +220,8 @@ def test_very_late_dynamic_adapter_context_owner_preserves_raw_contracts() -> No
         )
 
     body = _lowerer().body
-    matches = [
-        (index, statement)
-        for index, statement in enumerate(body)
-        if _assignment_name(statement) == FINAL_RESULT_NAME
-    ]
-    assert len(matches) == 1
-    index, statement = matches[0]
-    assert isinstance(statement, ast.Assign)
-    _assert_call(
-        statement.value,
-        name=FINAL_OWNER,
-        arguments=("shared_model_ir_pass_context",),
-        keywords={},
-    )
+    index, _ = _final_shape_record(body)
+    assert ast.unparse(body[index - 1]) == "_advance_post_progress()"
     child_call = _final_dynamic_child_call()
     _assert_call(
         child_call,
@@ -219,7 +229,10 @@ def test_very_late_dynamic_adapter_context_owner_preserves_raw_contracts() -> No
         arguments=("context",),
         keywords={},
     )
-    _assert_reconciliation_successor(body, index + 1)
+    _assert_reconciliation_successor(body, index)
+    assert not any(
+        _assignment_name(statement) == FINAL_RESULT_NAME for statement in body
+    )
 
     assert not any(
         _assignment_name(statement) in {
@@ -229,22 +242,11 @@ def test_very_late_dynamic_adapter_context_owner_preserves_raw_contracts() -> No
     )
 
 
-def test_very_late_dynamic_adapter_lowerer_retains_one_composite_result() -> None:
+def test_very_late_dynamic_adapter_lowerer_uses_one_composite_phase_owner() -> None:
     body = _lowerer().body
-    matches = [
-        (index, statement)
-        for index, statement in enumerate(body)
-        if _assignment_name(statement) == FINAL_RESULT_NAME
-    ]
-    assert len(matches) == 1
-    index, statement = matches[0]
-    assert isinstance(statement, ast.Assign)
-    _assert_call(
-        statement.value,
-        name=FINAL_OWNER,
-        arguments=("shared_model_ir_pass_context",),
-        keywords={},
-    )
+    index, record = _final_shape_record(body)
+    assert ast.unparse(record.value.args[1]) == FINAL_SHAPE_OWNER_EXPRESSION
+    assert ast.unparse(body[index - 1]) == "_advance_post_progress()"
     child_call = _final_dynamic_child_call()
     _assert_call(
         child_call,
@@ -252,7 +254,10 @@ def test_very_late_dynamic_adapter_lowerer_retains_one_composite_result() -> Non
         arguments=("context",),
         keywords={},
     )
-    _assert_reconciliation_successor(body, index + 1)
+    _assert_reconciliation_successor(body, index)
+    assert not any(
+        _assignment_name(statement) == FINAL_RESULT_NAME for statement in body
+    )
 
 
 def test_very_late_dynamic_adapter_runtime_preserves_identity_order_and_tuple(

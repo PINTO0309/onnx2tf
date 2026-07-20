@@ -30,6 +30,11 @@ FINAL_COMPOSITE_PATH = (
 )
 FINAL_COMPOSITE_OWNER = "run_final_input_dynamic_cleanup"
 FINAL_COMPOSITE_TARGET = "_final_input_dynamic_results"
+FINAL_SHAPE_OWNER_EXPRESSION = (
+    "run_final_input_dynamic_shape_cleanup("
+    "shared_model_ir_pass_context, "
+    "shape_reconciler=_reconcile_static_tensor_shapes)[1]"
+)
 OWNERS = (
     "_repair_orphan_recurrent_step_tensors",
     "_repair_unbound_nonconstant_operator_inputs_with_layout_transpose",
@@ -135,11 +140,17 @@ def test_late_input_repair_direct_boundary_is_explicit() -> None:
     index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if _single_target(statement) == FINAL_COMPOSITE_TARGET
+        if _phase_id(statement) == SUCCESSOR_PHASE_ID
     )
-    assert _call_name(lowerer.body[index]) == FINAL_COMPOSITE_OWNER
+    record_call = _statement_call(lowerer.body[index])
+    assert record_call is not None
+    assert ast.unparse(record_call.args[1]) == FINAL_SHAPE_OWNER_EXPRESSION
     assert _call_name(lowerer.body[index - 1]) == PREDECESSOR
-    assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
+    assert _single_target(lowerer.body[index + 1]) == "split_fallback_stats"
+    assert not any(
+        isinstance(node, ast.Name) and node.id == FINAL_COMPOSITE_TARGET
+        for node in ast.walk(lowerer)
+    )
     final_owner = _functions(FINAL_COMPOSITE_PATH)[FINAL_COMPOSITE_OWNER]
     child_calls = [
         node

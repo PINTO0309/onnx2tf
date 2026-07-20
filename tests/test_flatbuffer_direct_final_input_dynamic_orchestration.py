@@ -35,6 +35,11 @@ RESULT_TARGETS = (
 )
 COMPOSITE_TARGET = "_final_input_dynamic_results"
 SUCCESSOR_PHASE_ID = "shape_reconciliation.primary.very_late_final"
+FINAL_SHAPE_OWNER_EXPRESSION = (
+    "run_final_input_dynamic_shape_cleanup("
+    "shared_model_ir_pass_context, "
+    "shape_reconciler=_reconcile_static_tensor_shapes)[1]"
+)
 EXPECTED_SCHEMAS = (
     (
         {"repaired_orphan_recurrent_step_tensors": 0},
@@ -115,22 +120,21 @@ def _phase_id(statement: ast.stmt) -> str | None:
 
 def test_final_input_dynamic_current_boundary_and_schema() -> None:
     lowerer = _lowerer()
-    assignment = next(
+    record = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == COMPOSITE_TARGET
+        if _phase_id(statement) == SUCCESSOR_PHASE_ID
     )
-    index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == OWNER
-    call = _call(assignment)
+    index = lowerer.body.index(record)
+    call = _call(record)
     assert call is not None
-    assert [ast.unparse(argument) for argument in call.args] == [
-        "shared_model_ir_pass_context"
-    ]
-    assert call.keywords == []
+    assert ast.unparse(call.args[1]) == FINAL_SHAPE_OWNER_EXPRESSION
     assert _call_name(lowerer.body[index - 1]) == "_advance_post_progress"
-    assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
-    assert _single_target(lowerer.body[index + 2]) == "split_fallback_stats"
+    assert _single_target(lowerer.body[index + 1]) == "split_fallback_stats"
+    assert not any(
+        isinstance(node, ast.Name) and node.id == COMPOSITE_TARGET
+        for node in ast.walk(lowerer)
+    )
     assert not any(
         isinstance(node, ast.Name)
         and isinstance(node.ctx, ast.Load)
@@ -171,22 +175,21 @@ def test_final_input_dynamic_has_one_context_owner() -> None:
         assert call.keywords == []
 
     lowerer = _lowerer()
-    assignment = next(
+    record = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == COMPOSITE_TARGET
+        if _phase_id(statement) == SUCCESSOR_PHASE_ID
     )
-    index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == OWNER
-    call = _call(assignment)
+    index = lowerer.body.index(record)
+    call = _call(record)
     assert call is not None
-    assert [ast.unparse(argument) for argument in call.args] == [
-        "shared_model_ir_pass_context"
-    ]
-    assert call.keywords == []
+    assert ast.unparse(call.args[1]) == FINAL_SHAPE_OWNER_EXPRESSION
     assert _call_name(lowerer.body[index - 1]) == "_advance_post_progress"
-    assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
-    assert _single_target(lowerer.body[index + 2]) == "split_fallback_stats"
+    assert _single_target(lowerer.body[index + 1]) == "split_fallback_stats"
+    assert not any(
+        isinstance(node, ast.Name) and node.id == COMPOSITE_TARGET
+        for node in ast.walk(lowerer)
+    )
     assert not any(
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)

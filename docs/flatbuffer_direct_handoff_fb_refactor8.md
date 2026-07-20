@@ -7997,11 +7997,180 @@ characterization.
 At resume, implement only the characterized two-child owner. Replace the final
 input/dynamic assignment and current very-late final shape owner expression
 with `run_final_input_dynamic_shape_cleanup(`
-`shared_model_ir_pass_context)[1]`, preserve progress advancement and the
-Split-fallback assignment, retain the lowerer shape wrapper and existing
-final-input owner, and keep post-Split reconciliation independent. Add runtime
-order/context/model/option/result-identity coverage. Capture the fixed affected
-suite before updating stale structural assertions, then run affected and
-standard gates sequentially under `uv`, confirm the expected 25/23 inventory,
-and commit and push the complete implementation. Do not create, update,
-reopen, or otherwise modify a pull request.
+`shared_model_ir_pass_context,`
+` shape_reconciler=_reconcile_static_tensor_shapes)[1]`, preserve progress
+advancement and the Split-fallback assignment, retain the lowerer shape wrapper
+and existing final-input owner, and keep post-Split reconciliation independent.
+Add runtime order/context/model/option/result-identity coverage. Capture the
+fixed affected suite before updating stale structural assertions, then run
+affected and standard gates sequentially under `uv`, confirm the expected
+25/23 inventory, and commit and push the complete implementation. Do not
+create, update, reopen, or otherwise modify a pull request.
+
+## Final input/dynamic static-shape implementation checkpoint
+
+`passes/final_input_dynamic_shape_orchestration.py` now provides
+`run_final_input_dynamic_shape_cleanup()`. It receives the exact shared
+`ModelIRPassContext`, calls `run_final_input_dynamic_cleanup()` first, then
+calls its `shape_reconciler` dependency with the same context's model and
+`include_mutation_count=True`. The dependency defaults to the public
+`reconcile_static_tensor_shapes()` implementation. The production lowerer
+passes its retained `_reconcile_static_tensor_shapes` wrapper explicitly,
+preserving compatibility with existing runtime instrumentation and monkeypatch
+routes. Both complete raw child results are returned by identity.
+
+The lowerer removes `_final_input_dynamic_results` and supplies the new
+owner's element `[1]` directly to the unchanged
+`shape_reconciliation.primary.very_late_final` record.
+`_advance_post_progress()` remains its direct predecessor and the
+`split_fallback_stats` assignment remains its direct successor. The existing
+final-input owner, all ten nested children, the lowerer shape wrapper, and the
+conditional post-Split reconciliation route remain intact.
+
+The first fixed 11-file affected run was deliberately executed before stale
+expectations were changed and recorded `293 passed / 15 failed`, with failures
+across 9 files. All failures were stale composite-target, direct-owner,
+neighboring-boundary, or Call/Subscript-count assertions caused by the
+ownership move. No runtime identity, schema, or phase-count failure appeared.
+After owner-aware updates, affected validation passed. The first standard core
+run then reported `54 passed / 1 failed`: binding the public reconciler
+directly bypassed the lowerer wrapper exercised by the existing final
+SE/FC/Gather reconciliation instrumentation test. Explicit callback injection
+restored that compatibility; the focused file plus this probe report
+`6 passed`.
+
+Final sequential validation passes: focused `5`, fixed affected `308`,
+terminal-layout/efficiency `92`, core `55`, result contracts `196`, phase store
+`2`, and TensorFlow import-blocking, default-direct, and `-cotof` `11`. Ruff,
+bytecode compilation, and whitespace checks pass. The read-only AST audit
+reports 25 raw unconsumed results and 23 managed results after excluding
+exactly `_layout_pass_set_1_initial_attention_recovery_results` and
+`_layout_pass_set_1_post_binary_attention_recovery_results`. The removed final
+input/dynamic target has zero stores, the new owner expression occurs once,
+and the phase store remains exactly 128 calls, 128 unique IDs, and 128 owner
+expressions. Public APIs, artifacts, dependencies, and TensorFlow isolation
+remain unchanged. No real-model conversion was repeated for this ownership-
+only extraction.
+
+At resume, refresh the managed 23-result inventory and choose the next smallest
+source-adjacent, semantically closed observation-only boundary. Characterize
+its guards, recorded phase neighbors, option policy, exact context and
+callback identities, complete child schemas, and independent routes before
+changing production. Continue to run all `uv` validation sequentially, then
+commit and push each complete unit. Do not create, update, reopen, or otherwise
+modify a pull request.
+
+## Pause checkpoint after final input/dynamic shape extraction
+
+### Completed work
+
+- Characterized and extracted terminal Slice/Concat recovery plus boundary
+  StridedSlice/QDQ/Concat cleanup. Its characterization and implementation are
+  already committed and pushed as `25e45dac` and `2b021a80`.
+- Characterized final input/dynamic cleanup plus very-late final static-shape
+  reconciliation and committed/pushed that contract as `a1861867`.
+- Implemented the final input/dynamic shape owner, removed the unconsumed
+  `_final_input_dynamic_results` local, retained complete child results and
+  phase timing, updated all affected structural contracts, and restored lowerer
+  wrapper instrumentation through explicit callback injection.
+- Preserved the public reconciler as the owner's default, the lowerer wrapper as
+  the production callback, and the independent conditional post-Split
+  reconciliation route.
+- Reduced the read-only AST inventory from raw/managed 27/25 at the start of
+  this work interval to 25/23, without changing the 128 phase IDs or phase-
+  result cardinality.
+
+### Remaining work
+
+The broader `flatbuffer_direct` refactor goal is not complete. Twenty-three
+managed unconsumed lowerer observations remain. In source order they comprise:
+
+- five layout-pass-set-1 composites;
+- three layout-pass-set-2 composites and one layout-opt gate composite;
+- terminal mean-attention and QKV-attention composites;
+- late affine/final-shape/terminal-ConvPool, no-layout affine fallback, and
+  late Dequant/Swish composites;
+- terminal affine/QKV/layout/shape cleanup;
+- fallback norm/adapter/Reshape, dynamic-rank-one, precision/unbound, and
+  binary-layout convergence observations;
+- final precision, no-layout final, absolute-final, and terminal-stabilization
+  composites.
+
+The two layout-pass-set-1 recovery-prefix observations remain intentionally
+excluded from the managed inventory. No Tier corpus or real-model conversion
+was repeated for these ownership-only extractions; broader corpus validation
+remains governed by the existing tier/exclusion records.
+
+### Branch and checkpoint files
+
+The branch is `fb-refactor8`. This implementation checkpoint contains:
+
+- `onnx2tf/tflite_builder/lower_from_onnx2tf.py`
+- `onnx2tf/tflite_builder/passes/final_input_dynamic_shape_orchestration.py`
+- `tests/test_flatbuffer_direct_final_input_dynamic_shape_orchestration.py`
+- `tests/test_flatbuffer_direct_final_input_dynamic_orchestration.py`
+- `tests/test_flatbuffer_direct_late_input_affine_normalization_orchestration.py`
+- `tests/test_flatbuffer_direct_late_input_repair_results.py`
+- `tests/test_flatbuffer_direct_very_late_dynamic_adapter_orchestration.py`
+- `tests/test_flatbuffer_direct_very_late_gather_constant_normalization_orchestration.py`
+- `tests/test_flatbuffer_direct_very_late_normalization_summary_orchestration.py`
+- `tests/test_flatbuffer_direct_unconditional_shape_phase_results.py`
+- `tests/test_flatbuffer_direct_phase_result_store.py`
+- `tests/test_flatbuffer_direct_architecture.py`
+- `docs/fb_refactor8_improvements.md`
+- `docs/fb_refactor8_pull_request_description.md`
+- `docs/flatbuffer_direct_handoff_fb_refactor8.md`
+
+The key design decision is dependency injection for static-shape
+reconciliation. Directly importing the public reconciler into the new owner was
+semantically correct but bypassed lowerer-level instrumentation. The final
+design defaults to the public reconciler for standalone reuse while the lowerer
+explicitly supplies its compatibility wrapper. This preserves instrumentation,
+monkeypatch behavior, child ordering, result identity, and the TensorFlow-free
+core boundary.
+
+### Validation performed
+
+All commands ran sequentially under `uv`:
+
+- strict characterization before implementation: `3 passed, 1 xfailed`;
+- fixed 11-file characterization suite: `306 passed, 1 xfailed`;
+- implemented focused owner/runtime suite: `5 passed`;
+- deliberately captured pre-update affected suite: `293 passed / 15 failed`;
+- final fixed 11-file affected suite: `308 passed`;
+- wrapper instrumentation probe plus focused suite: `6 passed`;
+- terminal-layout/efficiency gate: `92 passed`;
+- core gate: `55 passed`;
+- result-contract gate: `196 passed`;
+- phase-result-store gate: `2 passed`;
+- TensorFlow import-blocking/default-direct/`-cotof` gate: `11 passed`;
+- Ruff, bytecode compilation, and `git diff --check`: passed.
+
+The AST audit reports 25 raw and 23 managed unconsumed results, zero stores for
+`_final_input_dynamic_results`, one final input/dynamic shape owner expression,
+and exactly 128 phase calls, 128 unique phase IDs, and 128 owner expressions.
+
+### Failures and known issues
+
+There are no failing tests in the final executed gates. The 15 affected-suite
+failures were stale structural expectations and were updated only after being
+classified. The first standard core run produced one real compatibility
+failure because the direct public reconciler bypassed the lowerer wrapper; the
+explicit callback design fixes it, and the full core gate now passes. No new
+package, TensorFlow dependency, public API change, artifact change, or PR was
+introduced. Real-model and full tier results were not re-measured in this
+checkpoint.
+
+### First action on resume
+
+Verify that `fb-refactor8` is clean and synchronized with
+`origin/fb-refactor8`, rerun the read-only inventory expecting raw/managed
+25/23, and select the next smallest source-adjacent, semantically closed
+observation-only boundary. Add strict characterization before changing
+production. Keep all `uv` tests single-process and sequential, commit and push
+complete logical units, and do not create, update, reopen, or otherwise modify
+a pull request.
+
+After the checkpoint commit and push, `git status --short --branch` must show a
+clean worktree synchronized with `origin/fb-refactor8`. Do not start the next
+boundary before the goal is explicitly resumed.

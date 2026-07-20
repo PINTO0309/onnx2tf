@@ -78,6 +78,14 @@ FINAL_INPUT_DYNAMIC_PATH = (
 )
 FINAL_INPUT_DYNAMIC = "run_final_input_dynamic_cleanup"
 FINAL_INPUT_DYNAMIC_RESULT = "_final_input_dynamic_results"
+FINAL_INPUT_DYNAMIC_SHAPE_PHASE_ID = (
+    "shape_reconciliation.primary.very_late_final"
+)
+FINAL_INPUT_DYNAMIC_SHAPE_OWNER_EXPRESSION = (
+    "run_final_input_dynamic_shape_cleanup("
+    "shared_model_ir_pass_context, "
+    "shape_reconciler=_reconcile_static_tensor_shapes)[1]"
+)
 
 
 def _absolute_final_affine_instancenorm_call_count(
@@ -179,14 +187,17 @@ def _final_input_dynamic_calls(function_name: str) -> list[ast.Call]:
 
 def _very_late_dynamic_adapter_invocation(
     lowerer: ast.FunctionDef,
-) -> tuple[int, ast.Assign]:
+) -> tuple[int, ast.Expr]:
     return next(
         (index, statement)
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == FINAL_INPUT_DYNAMIC_RESULT
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Attribute)
+        and ast.unparse(statement.value.func) == "session.record_phase_result"
+        and len(statement.value.args) == 2
+        and ast.literal_eval(statement.value.args[0])
+        == FINAL_INPUT_DYNAMIC_SHAPE_PHASE_ID
     )
 
 
@@ -512,11 +523,9 @@ def test_very_late_lowerer_stages_complete_mutation_evidence() -> None:
     lowerer, _ = _lowerer_and_helper()
     adapter_index, composite = _very_late_dynamic_adapter_invocation(lowerer)
     assert isinstance(composite.value, ast.Call)
-    assert isinstance(composite.value.func, ast.Name)
-    assert composite.value.func.id == FINAL_INPUT_DYNAMIC
-    assert [ast.unparse(argument) for argument in composite.value.args] == [
-        "shared_model_ir_pass_context"
-    ]
+    assert ast.unparse(composite.value.args[1]) == (
+        FINAL_INPUT_DYNAMIC_SHAPE_OWNER_EXPRESSION
+    )
     assert ast.unparse(lowerer.body[adapter_index - 1]) == (
         "_advance_post_progress()"
     )
@@ -747,16 +756,17 @@ def test_very_late_static_reconciliation_captures_complete_mutation_evidence() -
 ):
     lowerer, _ = _lowerer_and_helper()
     adapter_index, _ = _very_late_dynamic_adapter_invocation(lowerer)
-    invocation = lowerer.body[adapter_index + 1]
+    invocation = lowerer.body[adapter_index]
     assert isinstance(invocation, ast.Expr)
     assert ast.unparse(invocation) == (
         "session.record_phase_result("
         "'shape_reconciliation.primary.very_late_final', "
-        "_reconcile_static_tensor_shapes(model_ir, "
-        "include_mutation_count=True))"
+        "run_final_input_dynamic_shape_cleanup("
+        "shared_model_ir_pass_context, "
+        "shape_reconciler=_reconcile_static_tensor_shapes)[1])"
     )
 
-    following = lowerer.body[adapter_index + 2]
+    following = lowerer.body[adapter_index + 1]
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)
     assert following.targets[0].id == "split_fallback_stats"
@@ -805,25 +815,25 @@ def test_very_late_preserves_sole_terminal_invocation_and_boundaries() -> None:
     assert [ast.unparse(argument) for argument in calls[0].args] == ["context"]
     assert calls[0].keywords == []
 
-    invocation_index = next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id
-        == FINAL_INPUT_DYNAMIC_RESULT
+    invocation_index, invocation = _very_late_dynamic_adapter_invocation(
+        lowerer
     )
     previous = lowerer.body[invocation_index - 1]
     following = lowerer.body[invocation_index + 1]
     assert isinstance(previous, ast.Expr)
     assert ast.unparse(previous) == "_advance_post_progress()"
-    assert isinstance(following, ast.Expr)
-    assert isinstance(following.value, ast.Call)
-    assert isinstance(following.value.func, ast.Attribute)
-    assert ast.unparse(following.value.func) == "session.record_phase_result"
-    assert ast.literal_eval(following.value.args[0]) == (
-        "shape_reconciliation.primary.very_late_final"
+    assert isinstance(invocation, ast.Expr)
+    assert isinstance(invocation.value, ast.Call)
+    assert ast.unparse(invocation.value.args[1]) == (
+        FINAL_INPUT_DYNAMIC_SHAPE_OWNER_EXPRESSION
+    )
+    assert isinstance(following, ast.Assign)
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "split_fallback_stats"
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id == FINAL_INPUT_DYNAMIC_RESULT
+        for node in ast.walk(lowerer)
     )
     assert len(_final_input_dynamic_calls(LATE_INPUT_AFFINE_NORMALIZATION)) == 1
     assert len(_final_input_dynamic_calls(VERY_LATE_DYNAMIC_ADAPTER)) == 1

@@ -7852,3 +7852,44 @@ Ruff, bytecode compilation, and whitespace checks pass. The raw/managed
 inventory remains 26/24, and the store remains exactly 128 calls, 128 unique
 IDs, and 128 owner expressions. No real-model conversion was repeated for
 this characterization.
+
+## Extract final input/dynamic and static-shape cleanup
+
+`run_final_input_dynamic_shape_cleanup()` now owns the characterized boundary.
+It receives the existing shared `ModelIRPassContext`, executes the complete
+nested final input/dynamic owner first, then performs static-shape
+reconciliation with `include_mutation_count=True`. The shape reconciler is an
+explicit keyword dependency whose default is the public implementation. The
+lowerer supplies its retained `_reconcile_static_tensor_shapes` compatibility
+wrapper, preserving existing runtime instrumentation and monkeypatch routes.
+Both complete raw results are returned by identity.
+
+The lowerer removes `_final_input_dynamic_results` and records returned
+element `[1]` directly under the unchanged
+`shape_reconciliation.primary.very_late_final` phase ID.
+`_advance_post_progress()` remains the direct predecessor and the
+unsupported-Split fallback assignment remains the direct successor. The
+conditional post-Split reconciliation continues to call the lowerer wrapper
+independently. The existing final-input owner and all ten nested children are
+unchanged.
+
+The first fixed 11-file affected run was intentionally captured before stale
+structural assertions were updated and reported `293 passed / 15 failed`, with
+failures across 9 files. Every failure was an obsolete composite assignment,
+direct shape owner, neighboring-boundary, or Call/Subscript-count expectation.
+After those updates, affected validation passed. The first standard core run
+then reported `54 passed / 1 failed`: direct public-reconciler binding bypassed
+the lowerer wrapper used by the existing reconciliation instrumentation test.
+Explicit wrapper injection fixed that compatibility issue without changing
+child behavior or order.
+
+Final sequential validation passes: focused `5`, the wrapper-instrumentation
+probe plus focused suite `6`, fixed affected `308`, and standard
+`92 / 55 / 196 / 2 / 11`. Ruff, bytecode compilation, and whitespace checks
+pass. The read-only AST audit reports 25 raw and 23 managed unconsumed lowerer
+results after excluding the two intentionally retained layout-pass-set-1
+recovery-prefix observations. The removed target has zero stores, the new
+owner expression occurs once, and the phase store remains exactly 128 calls,
+128 unique IDs, and 128 owner expressions. Public interfaces, artifacts,
+dependencies, and TensorFlow isolation remain unchanged. No real-model
+conversion was repeated for this ownership-only extraction.

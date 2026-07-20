@@ -2279,3 +2279,23 @@ characterization report `3 passed, 1 xfailed` and
 Standalone phase-store validation reports `2 passed`. Static checks pass, the
 raw/managed inventory remains 26/24, and the store remains exactly 128 calls,
 128 unique IDs, and 128 owner expressions.
+
+The latest extraction gives final input/dynamic cleanup and its adjacent
+very-late final static-shape reconciliation one explicit shared-context owner.
+It preserves the complete nested child order and shape mutation evidence. The
+shape reconciler remains injectable, defaults to the public implementation,
+and receives the retained lowerer compatibility wrapper on the production
+route so existing instrumentation hooks remain effective. Both complete raw
+results are returned by identity.
+
+The lowerer records element `[1]` directly at the unchanged very-late final
+shape phase and removes only the observation-only final input/dynamic local.
+Progress advancement, unsupported-Split fallback, and the independent
+conditional post-Split reconciliation remain in their original order. The
+initial affected run reported `293 passed / 15 failed`, all from stale
+structural expectations. A subsequent standard core run exposed one wrapper-
+instrumentation regression (`54 passed / 1 failed`), which explicit callback
+injection corrected. Final focused `5`, affected `308`, and standard
+`92 / 55 / 196 / 2 / 11` sequential tests pass. Static checks pass, the
+raw/managed inventory decreases from 26/24 to 25/23, and the phase store
+remains exactly 128 calls, 128 unique IDs, and 128 owner expressions.

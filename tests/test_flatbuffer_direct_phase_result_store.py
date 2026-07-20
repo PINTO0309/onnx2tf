@@ -228,7 +228,7 @@ EXPECTED_OWNERS = (
     "_reconcile_static_tensor_shapes",
     "_reconcile_static_tensor_shapes",
     "_reconcile_static_tensor_shapes",
-    "_reconcile_static_tensor_shapes",
+    "run_final_input_dynamic_shape_cleanup(shared_model_ir_pass_context, shape_reconciler=_reconcile_static_tensor_shapes)[1]",
     "_reconcile_static_tensor_shapes",
     "run_static_shape_topology_reconciliation",
     "run_topology_layout_refresh",
@@ -287,7 +287,9 @@ EXPECTED_MODEL_ARGUMENTS = (
     None,
     *("model_ir",) * 5,
     "shared_model_ir_pass_context",
-    *("model_ir",) * 8,
+    *("model_ir",) * 6,
+    None,
+    "model_ir",
     *("fallback_ir",) * 14,
     *("model_ir",) * 28,
 )
@@ -476,8 +478,8 @@ def test_one_hundred_twenty_eight_observations_use_the_bounded_session_store() -
         ast.literal_eval(_statement_call(node).args[0]) for node in records
     ) == EXPECTED_PHASE_IDS
     owners = tuple(_statement_call(node).args[1] for node in records)
-    assert sum(isinstance(owner, ast.Call) for owner in owners) == 122
-    assert sum(isinstance(owner, ast.Subscript) for owner in owners) == 6
+    assert sum(isinstance(owner, ast.Call) for owner in owners) == 121
+    assert sum(isinstance(owner, ast.Subscript) for owner in owners) == 7
     assert tuple(
         owner.func.id
         if isinstance(owner, ast.Call) and isinstance(owner.func, ast.Name)

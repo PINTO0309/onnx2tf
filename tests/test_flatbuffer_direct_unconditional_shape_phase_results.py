@@ -14,10 +14,7 @@ EXPECTED_PHASE_IDS = (
     "shape_reconciliation.primary.very_late_broadcast",
     "shape_reconciliation.primary.very_late_final",
 )
-EXPECTED_PREDECESSOR_TARGETS = (
-    "_late_dequant_swish_layout_tail_results",
-    "_final_input_dynamic_results",
-)
+EXPECTED_PREDECESSOR_TARGET = "_late_dequant_swish_layout_tail_results"
 EXPECTED_SUCCESSOR_TARGETS = (
     "_shared_late_requires_reconciliation",
     "split_fallback_stats",
@@ -67,11 +64,10 @@ def _phase_records(lowerer: ast.FunctionDef) -> list[ast.Expr]:
             node
             for node in lowerer.body
             if isinstance(node, ast.Expr)
-            and (owner := _phase_result_owner(node)) is not None
-            and isinstance(owner.func, ast.Name)
-            and owner.func.id == OWNER
-            and ast.literal_eval(_statement_call(node).args[0])
-            in EXPECTED_PHASE_IDS
+            and (call := _statement_call(node)) is not None
+            and isinstance(call.func, ast.Attribute)
+            and ast.unparse(call.func) == "session.record_phase_result"
+            and ast.literal_eval(call.args[0]) in EXPECTED_PHASE_IDS
         ),
         key=lambda node: node.lineno,
     )
@@ -85,20 +81,31 @@ def test_two_very_late_reconciliations_are_unconditional_and_bounded() -> None:
     assert tuple(
         ast.literal_eval(_statement_call(node).args[0]) for node in records
     ) == EXPECTED_PHASE_IDS
-    assert tuple(
-        _single_target(lowerer.body[index - 1]) for index in indices
-    ) == EXPECTED_PREDECESSOR_TARGETS
+    assert _single_target(lowerer.body[indices[0] - 1]) == (
+        EXPECTED_PREDECESSOR_TARGET
+    )
+    assert ast.unparse(lowerer.body[indices[1] - 1]) == (
+        "_advance_post_progress()"
+    )
     assert tuple(
         _single_target(lowerer.body[index + 1]) for index in indices
     ) == EXPECTED_SUCCESSOR_TARGETS
-    for record in records:
-        owner = _phase_result_owner(record)
-        assert owner is not None
-        assert [ast.unparse(argument) for argument in owner.args] == ["model_ir"]
-        assert {
-            keyword.arg: ast.unparse(keyword.value)
-            for keyword in owner.keywords
-        } == {"include_mutation_count": "True"}
+    broadcast_owner = _phase_result_owner(records[0])
+    assert broadcast_owner is not None
+    assert [ast.unparse(argument) for argument in broadcast_owner.args] == [
+        "model_ir"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in broadcast_owner.keywords
+    } == {"include_mutation_count": "True"}
+    final_call = _statement_call(records[1])
+    assert final_call is not None
+    assert ast.unparse(final_call.args[1]) == (
+        "run_final_input_dynamic_shape_cleanup("
+        "shared_model_ir_pass_context, "
+        "shape_reconciler=_reconcile_static_tensor_shapes)[1]"
+    )
 
 
 def test_two_very_late_reconciliation_locals_are_removed() -> None:

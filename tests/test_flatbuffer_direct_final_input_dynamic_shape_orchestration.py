@@ -8,6 +8,9 @@ import pytest
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import (
+    final_input_dynamic_shape_orchestration,
+)
 from onnx2tf.tflite_builder.passes.final_input_dynamic_orchestration import (
     run_final_input_dynamic_cleanup,
 )
@@ -37,8 +40,9 @@ OWNER_PATH = (
 OWNER = "run_final_input_dynamic_shape_cleanup"
 CHILD_OWNERS = (
     "run_final_input_dynamic_cleanup",
-    "reconcile_static_tensor_shapes",
+    "shape_reconciler",
 )
+DEFAULT_SHAPE_OWNER = "reconcile_static_tensor_shapes"
 CURRENT_TARGET = "_final_input_dynamic_results"
 CURRENT_SHAPE_WRAPPER = "_reconcile_static_tensor_shapes"
 PHASE_ID = "shape_reconciliation.primary.very_late_final"
@@ -47,7 +51,8 @@ PREDECESSOR_OWNER = "_advance_post_progress"
 SUCCESSOR_TARGET = "split_fallback_stats"
 FUTURE_OWNER_EXPRESSION = (
     "run_final_input_dynamic_shape_cleanup("
-    "shared_model_ir_pass_context)[1]"
+    "shared_model_ir_pass_context, "
+    "shape_reconciler=_reconcile_static_tensor_shapes)[1]"
 )
 FINAL_INPUT_SCHEMA = (
     (
@@ -152,27 +157,14 @@ def test_final_input_dynamic_shape_current_contract() -> None:
     lowerer = _lowerer()
     record = _phase_record(lowerer, PHASE_ID)
     index = lowerer.body.index(record)
-    current = lowerer.body[index - 1]
-
-    assert _single_target(current) == CURRENT_TARGET
-    assert _call_name(current) == CHILD_OWNERS[0]
-    current_call = _call(current)
-    assert current_call is not None
-    assert [ast.unparse(argument) for argument in current_call.args] == [
-        "shared_model_ir_pass_context"
-    ]
-    assert current_call.keywords == []
-    assert _call_name(lowerer.body[index - 2]) == PREDECESSOR_OWNER
+    assert _call_name(lowerer.body[index - 1]) == PREDECESSOR_OWNER
 
     record_call = _call(record)
     assert record_call is not None
-    assert ast.unparse(record_call.args[1]) == (
-        f"{CURRENT_SHAPE_WRAPPER}(model_ir, include_mutation_count=True)"
-    )
+    assert ast.unparse(record_call.args[1]) == FUTURE_OWNER_EXPRESSION
     assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
     assert not any(
         isinstance(node, ast.Name)
-        and isinstance(node.ctx, ast.Load)
         and node.id == CURRENT_TARGET
         for node in ast.walk(lowerer)
     )
@@ -249,10 +241,6 @@ def test_final_input_dynamic_shape_children_and_independent_route_are_retained()
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="final input/dynamic static-shape owner is not implemented",
-)
 def test_final_input_dynamic_shape_has_one_context_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -276,6 +264,12 @@ def test_final_input_dynamic_shape_has_one_context_owner() -> None:
         keyword.arg: ast.unparse(keyword.value)
         for keyword in calls[1].keywords
     } == {"include_mutation_count": "True"}
+    assert [argument.arg for argument in owner.args.kwonlyargs] == [
+        "shape_reconciler"
+    ]
+    assert [ast.unparse(default) for default in owner.args.kw_defaults] == [
+        DEFAULT_SHAPE_OWNER
+    ]
     owner_return = owner.body[-1]
     assert isinstance(owner_return, ast.Return)
     assert ast.unparse(owner_return.value) == (
@@ -299,3 +293,43 @@ def test_final_input_dynamic_shape_has_one_context_owner() -> None:
         and "lower_from_onnx2tf" in ast.unparse(node)
         for node in ast.parse(OWNER_PATH.read_text(encoding="utf-8")).body
     )
+
+
+def test_final_input_dynamic_shape_runtime_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context()
+    dynamic_results = (({"input": 1},), ({"dynamic": 2},))
+    shape_results = {"shape": 3}
+    observed: list[tuple[str, object, object | None]] = []
+
+    def dynamic(active_context: object) -> object:
+        observed.append((CHILD_OWNERS[0], active_context, None))
+        return dynamic_results
+
+    def shape(
+        active_model_ir: object,
+        *,
+        include_mutation_count: bool,
+    ) -> object:
+        observed.append(
+            (CHILD_OWNERS[1], active_model_ir, include_mutation_count)
+        )
+        return shape_results
+
+    monkeypatch.setattr(
+        final_input_dynamic_shape_orchestration,
+        CHILD_OWNERS[0],
+        dynamic,
+    )
+
+    actual = final_input_dynamic_shape_orchestration.run_final_input_dynamic_shape_cleanup(
+        context,
+        shape_reconciler=shape,
+    )
+    assert actual[0] is dynamic_results
+    assert actual[1] is shape_results
+    assert observed == [
+        (CHILD_OWNERS[0], context, None),
+        (CHILD_OWNERS[1], context.model_ir, True),
+    ]

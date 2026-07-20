@@ -6420,22 +6420,22 @@ def test_lowerer_very_late_gather_constant_normalization_cluster_reuses_scope() 
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id
-        == "_final_input_dynamic_results"
+        if isinstance(statement, ast.Expr)
         and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id
-        == "run_final_input_dynamic_cleanup"
+        and isinstance(statement.value.func, ast.Attribute)
+        and ast.unparse(statement.value.func) == "session.record_phase_result"
+        and len(statement.value.args) == 2
+        and ast.literal_eval(statement.value.args[0])
+        == "shape_reconciliation.primary.very_late_final"
     )
     invocation = lowerer.body[invocation_index]
-    assert isinstance(invocation, ast.Assign)
+    assert isinstance(invocation, ast.Expr)
     assert isinstance(invocation.value, ast.Call)
-    assert [ast.unparse(argument) for argument in invocation.value.args] == [
-        "shared_model_ir_pass_context"
-    ]
+    assert ast.unparse(invocation.value.args[1]) == (
+        "run_final_input_dynamic_shape_cleanup("
+        "shared_model_ir_pass_context, "
+        "shape_reconciler=_reconcile_static_tensor_shapes)[1]"
+    )
     assert len(
         _final_input_dynamic_calls(
             "run_late_input_affine_normalization_cleanup"
@@ -6454,12 +6454,9 @@ def test_lowerer_very_late_gather_constant_normalization_cluster_reuses_scope() 
     assert isinstance(previous_boundary, ast.Expr)
     assert ast.unparse(previous_boundary) == "_advance_post_progress()"
     next_boundary = lowerer.body[invocation_index + 1]
-    assert isinstance(next_boundary, ast.Expr)
-    assert isinstance(next_boundary.value, ast.Call)
-    assert isinstance(next_boundary.value.func, ast.Attribute)
-    assert ast.unparse(next_boundary.value.func) == (
-        "session.record_phase_result"
-    )
+    assert isinstance(next_boundary, ast.Assign)
+    assert isinstance(next_boundary.targets[0], ast.Name)
+    assert next_boundary.targets[0].id == "split_fallback_stats"
     owner_call_names = (
         "resolve_dynamic_reshape_shapes",
         "run_indexed_conv_input_adapter_repairs_summary",
@@ -6472,13 +6469,19 @@ def test_lowerer_very_late_gather_constant_normalization_cluster_reuses_scope() 
         len(_very_late_dynamic_adapter_calls(name)) == 1
         for name in owner_call_names
     )
-    static_shape_stats = lowerer.body[invocation_index + 1]
+    static_shape_stats = lowerer.body[invocation_index]
     assert isinstance(static_shape_stats, ast.Expr)
     assert ast.unparse(static_shape_stats) == (
         "session.record_phase_result("
         "'shape_reconciliation.primary.very_late_final', "
-        "_reconcile_static_tensor_shapes(model_ir, "
-        "include_mutation_count=True))"
+        "run_final_input_dynamic_shape_cleanup("
+        "shared_model_ir_pass_context, "
+        "shape_reconciler=_reconcile_static_tensor_shapes)[1])"
+    )
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id == "_final_input_dynamic_results"
+        for node in ast.walk(lowerer)
     )
 
 
