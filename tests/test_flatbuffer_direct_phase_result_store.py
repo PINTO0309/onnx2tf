@@ -191,7 +191,7 @@ EXPECTED_OWNERS = (
     "_optimize_boundary_input_transpose_channel_slice_blocks",
     "_optimize_internal_transpose_channel_slice_nhwc_propagation_chains",
     "_optimize_transpose_channel_slice_muladd_nhwc_bridge_chains",
-    "_optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks",
+    "run_terminal_slice_concat_boundary_stridedslice_cleanup(terminal_slice_concat_recovery_context)[1]",
     "_optimize_transpose_swish_residual_concat_closure_nhwc_chains",
     "_optimize_transpose_dequant_logistic_mul_quantize_bridges",
     "_optimize_transpose_swish_qdq_nhwc_islands",
@@ -274,7 +274,9 @@ EXPECTED_OWNERS = (
     "run_topology_layout_validation",
 )
 EXPECTED_MODEL_ARGUMENTS = (
-    *("model_ir",) * 60,
+    *("model_ir",) * 47,
+    None,
+    *("model_ir",) * 12,
     None,
     "model_ir",
     None,
@@ -474,8 +476,8 @@ def test_one_hundred_twenty_eight_observations_use_the_bounded_session_store() -
         ast.literal_eval(_statement_call(node).args[0]) for node in records
     ) == EXPECTED_PHASE_IDS
     owners = tuple(_statement_call(node).args[1] for node in records)
-    assert sum(isinstance(owner, ast.Call) for owner in owners) == 123
-    assert sum(isinstance(owner, ast.Subscript) for owner in owners) == 5
+    assert sum(isinstance(owner, ast.Call) for owner in owners) == 122
+    assert sum(isinstance(owner, ast.Subscript) for owner in owners) == 6
     assert tuple(
         owner.func.id
         if isinstance(owner, ast.Call) and isinstance(owner.func, ast.Name)

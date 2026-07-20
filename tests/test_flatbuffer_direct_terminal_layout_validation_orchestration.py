@@ -2558,25 +2558,29 @@ def test_primary_path_retains_terminal_channel_slice_muladd_bridge_result() -> N
             "model_ir, layout_state=session.layout_state)"
         ),
     )
-    successor_call = _statement_call(body[terminal_index + 1])
-    assert _call_name(successor_call) == (
-        "_run_terminal_slice_concat_layout_recovery_sequence"
+    _assert_phase_result_record(
+        body[terminal_index + 1],
+        phase_id="cleanup.terminal.boundary_stridedslice_qdq_concat",
+        owner_expression=(
+            "run_terminal_slice_concat_boundary_stridedslice_cleanup("
+            "terminal_slice_concat_recovery_context)[1]"
+        ),
     )
-    assert successor_call is not None
-    assert successor_call.args == []
-    assert successor_call.keywords == []
 
 
 
 def test_primary_path_retains_terminal_boundary_stridedslice_result() -> None:
     body = _lowerer_body()
-    callback_name = (
-        "_optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks"
-    )
     indices = [
         index
         for index, statement in enumerate(body)
-        if _call_name(_statement_call(statement)) == callback_name
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Attribute)
+        and ast.unparse(statement.value.func) == "session.record_phase_result"
+        and len(statement.value.args) == 2
+        and ast.literal_eval(statement.value.args[0])
+        == "cleanup.terminal.boundary_stridedslice_qdq_concat"
     ]
     assert len(indices) == 1
     index = indices[0]
@@ -2586,18 +2590,19 @@ def test_primary_path_retains_terminal_boundary_stridedslice_result() -> None:
         statement,
         phase_id="cleanup.terminal.boundary_stridedslice_qdq_concat",
         owner_expression=(
-            "_optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks("
-            "model_ir, layout_state=session.layout_state)"
+            "run_terminal_slice_concat_boundary_stridedslice_cleanup("
+            "terminal_slice_concat_recovery_context)[1]"
         ),
     )
 
-    predecessor_call = _statement_call(body[index - 1])
-    assert _call_name(predecessor_call) == (
-        "_run_terminal_slice_concat_layout_recovery_sequence"
+    _assert_phase_result_record(
+        body[index - 1],
+        phase_id="cleanup.terminal.channel_slice_muladd_bridge",
+        owner_expression=(
+            "_optimize_transpose_channel_slice_muladd_nhwc_bridge_chains("
+            "model_ir, layout_state=session.layout_state)"
+        ),
     )
-    assert predecessor_call is not None
-    assert predecessor_call.args == []
-    assert predecessor_call.keywords == []
 
     successor_call = _owner_call(body[index + 1])
     assert _call_name(successor_call) == (
@@ -2638,8 +2643,8 @@ def test_primary_path_retains_terminal_swish_residual_closure_result() -> None:
         predecessor,
         phase_id="cleanup.terminal.boundary_stridedslice_qdq_concat",
         owner_expression=(
-            "_optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks("
-            "model_ir, layout_state=session.layout_state)"
+            "run_terminal_slice_concat_boundary_stridedslice_cleanup("
+            "terminal_slice_concat_recovery_context)[1]"
         ),
     )
 

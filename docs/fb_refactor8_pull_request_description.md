@@ -2244,3 +2244,21 @@ characterization report `3 passed, 1 xfailed` and
 Standalone phase-store validation reports `2 passed`. Static checks pass, the
 raw/managed inventory remains 27/25, and the store remains exactly 128 calls,
 128 unique IDs, and 128 owner expressions.
+
+The latest extraction gives terminal Slice/Concat recovery and its adjacent
+boundary-input Transpose/StridedSlice/QDQ/Concat pass one explicit context
+owner. It preserves the complete fourteen-child recovery order, forwards the
+exact existing context, model, and `LayoutState`, and returns both raw child
+results by identity. The lowerer records element `[1]` directly at the
+unchanged boundary phase, between the same terminal channel-slice Mul/Add and
+Swish residual-Concat recorded phases.
+
+The implementation preserves both child implementations, both lowerer
+compatibility wrappers, the independent final-boundary recovery route, public
+interfaces, artifacts, dependencies, and TensorFlow isolation. The deliberately
+captured initial affected run reported `336 passed / 11 failed`; all failures
+were stale structural expectations caused by the ownership move. After
+owner-aware updates, focused `5`, affected `347`, and standard
+`92 / 55 / 196 / 2 / 11` sequential tests pass. Static checks pass, the
+raw/managed inventory decreases from 27/25 to 26/24, and the phase store
+remains exactly 128 calls, 128 unique IDs, and 128 owner expressions.

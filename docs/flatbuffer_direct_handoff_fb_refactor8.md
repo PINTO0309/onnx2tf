@@ -7912,3 +7912,52 @@ assertions, then run affected and standard gates sequentially under `uv`,
 confirm the expected 26/24 inventory, and commit and push the complete
 implementation. Do not create, update, reopen, or otherwise modify a pull
 request.
+
+## Terminal Slice/Concat boundary StridedSlice implementation checkpoint
+
+`passes/terminal_slice_concat_boundary_stridedslice_orchestration.py` now
+provides `run_terminal_slice_concat_boundary_stridedslice_cleanup()`. It
+receives the exact existing `TerminalSliceConcatRecoveryContext`, calls
+`run_terminal_slice_concat_recovery()` first, then calls
+`_optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks()` with the
+same context's exact model and `LayoutState`. It returns both complete raw
+results by identity. Runtime injection proves fixed order,
+context/model/layout identity, and result identity without result-driven
+control flow.
+
+The lowerer removes `_terminal_slice_concat_recovery_results` and supplies the
+new owner's element `[1]` directly to the unchanged
+`cleanup.terminal.boundary_stridedslice_qdq_concat` record. The recorded
+terminal channel-slice Mul/Add bridge remains its direct predecessor and the
+recorded Swish residual-Concat closure remains its direct successor. The
+fourteen-child recovery owner, boundary implementation, both retained lowerer
+compatibility wrappers, and the independent final-boundary terminal
+Slice/Concat route remain unchanged.
+
+The first fixed 9-file affected run was deliberately executed before stale
+expectations were changed and recorded `336 passed / 11 failed`, with failures
+across 7 files. All failures were stale direct-assignment, wrapper-call-count,
+phase-owner, neighboring-boundary, or Call/Subscript-count assertions caused
+by the ownership move. No runtime identity, schema, phase-count, or TensorFlow
+failure was found. Sequential validation now passes: focused `5`, fixed
+affected `347`, terminal-layout/efficiency `92`, core `55`, result contracts
+`196`, phase store `2`, and TensorFlow import-blocking, default-direct, and
+`-cotof` `11`. Ruff, bytecode compilation, and whitespace checks pass.
+
+The read-only AST audit reports 26 raw unconsumed results and 24 managed
+results after excluding exactly
+`_layout_pass_set_1_initial_attention_recovery_results` and
+`_layout_pass_set_1_post_binary_attention_recovery_results`. The removed
+terminal Slice/Concat target has zero stores, the new boundary owner expression
+occurs once, and the phase store remains exactly 128 calls, 128 unique IDs,
+and 128 owner expressions. Public APIs, artifacts, dependencies, and
+TensorFlow isolation remain unchanged. No real-model conversion was repeated
+for this ownership-only extraction.
+
+At resume, refresh the managed 24-result inventory and choose the next smallest
+source-adjacent, semantically closed observation-only boundary. Characterize
+its guards, recorded phase neighbors, option policy, exact context and
+callback identities, complete child schemas, and independent routes before
+changing production. Continue to run all `uv` validation sequentially, then
+commit and push each complete unit. Do not create, update, reopen, or otherwise
+modify a pull request.

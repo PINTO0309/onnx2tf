@@ -228,6 +228,9 @@ from onnx2tf.tflite_builder.passes.terminal_slice_concat_recovery_orchestration 
     TerminalSliceConcatRecoveryContext,
     run_terminal_slice_concat_recovery,
 )
+from onnx2tf.tflite_builder.passes.terminal_slice_concat_boundary_stridedslice_orchestration import (
+    run_terminal_slice_concat_boundary_stridedslice_cleanup,
+)
 from onnx2tf.tflite_builder.passes.terminal_boundary_mean_attention_orchestration import (
     run_terminal_boundary_mean_attention_cleanup,
 )
@@ -4763,15 +4766,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         ),
     )
-    _terminal_slice_concat_recovery_results = (
-        _run_terminal_slice_concat_layout_recovery_sequence()
-    )
     session.record_phase_result(
         "cleanup.terminal.boundary_stridedslice_qdq_concat",
-        _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
-            model_ir,
-            layout_state=session.layout_state,
-        ),
+        run_terminal_slice_concat_boundary_stridedslice_cleanup(
+            terminal_slice_concat_recovery_context
+        )[1],
     )
     session.record_phase_result(
         "cleanup.terminal.swish_residual_concat_closure",

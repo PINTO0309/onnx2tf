@@ -163,7 +163,7 @@ def test_terminal_slice_concat_wrapper_independent_route_is_fixed() -> None:
         ),
         key=lambda node: (node.lineno, node.col_offset),
     )
-    assert len(calls) == 1
+    assert calls == []
     assert all(call.args == [] and call.keywords == [] for call in calls)
     wrapper = next(
         node

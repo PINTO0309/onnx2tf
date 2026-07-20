@@ -8,6 +8,9 @@ import pytest
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import (
+    terminal_slice_concat_boundary_stridedslice_orchestration,
+)
 from onnx2tf.tflite_builder.passes.channel_slice_layout import (
     _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks,
 )
@@ -104,20 +107,6 @@ def _call(statement: ast.stmt) -> ast.Call | None:
     return statement.value if isinstance(statement.value, ast.Call) else None
 
 
-def _call_name(statement: ast.stmt) -> str | None:
-    call = _call(statement)
-    if call is None or not isinstance(call.func, ast.Name):
-        return None
-    return call.func.id
-
-
-def _single_target(statement: ast.stmt) -> str | None:
-    if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
-        return None
-    target = statement.targets[0]
-    return target.id if isinstance(target, ast.Name) else None
-
-
 def _phase_id(statement: ast.stmt) -> str | None:
     call = _call(statement)
     if (
@@ -156,25 +145,14 @@ def test_terminal_slice_concat_boundary_stridedslice_current_contract() -> None:
     lowerer = _lowerer()
     record = _phase_record(lowerer)
     index = lowerer.body.index(record)
-    recovery = lowerer.body[index - 1]
-
-    assert _single_target(recovery) == CURRENT_TARGET
-    assert _call_name(recovery) == RECOVERY_WRAPPER
-    recovery_call = _call(recovery)
-    assert recovery_call is not None
-    assert recovery_call.args == []
-    assert recovery_call.keywords == []
-    assert _phase_id(lowerer.body[index - 2]) == PREDECESSOR_PHASE_ID
+    assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
 
     record_call = _call(record)
     assert record_call is not None
-    assert ast.unparse(record_call.args[1]) == (
-        f"{BOUNDARY_WRAPPER}(model_ir, layout_state=session.layout_state)"
-    )
+    assert ast.unparse(record_call.args[1]) == FUTURE_OWNER_EXPRESSION
     assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
     assert not any(
         isinstance(node, ast.Name)
-        and isinstance(node.ctx, ast.Load)
         and node.id == CURRENT_TARGET
         for node in ast.walk(lowerer)
     )
@@ -256,10 +234,6 @@ def test_terminal_slice_concat_boundary_wrappers_and_route_are_retained() -> Non
     assert independent_calls[0].keywords == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="terminal Slice/Concat boundary StridedSlice owner is not implemented",
-)
 def test_terminal_slice_concat_boundary_has_one_context_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -306,3 +280,45 @@ def test_terminal_slice_concat_boundary_has_one_context_owner() -> None:
         and "lower_from_onnx2tf" in ast.unparse(node)
         for node in ast.parse(OWNER_PATH.read_text(encoding="utf-8")).body
     )
+
+
+def test_terminal_slice_concat_boundary_runtime_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context()
+    recovery_results = ({"recovery": 1},)
+    boundary_results = {"boundary": 2}
+    observed: list[tuple[str, object, object | None]] = []
+
+    def recovery(active_context: object) -> object:
+        observed.append((CHILD_OWNERS[0], active_context, None))
+        return recovery_results
+
+    def boundary(active_model_ir: object, *, layout_state: object) -> object:
+        observed.append((CHILD_OWNERS[1], active_model_ir, layout_state))
+        return boundary_results
+
+    monkeypatch.setattr(
+        terminal_slice_concat_boundary_stridedslice_orchestration,
+        CHILD_OWNERS[0],
+        recovery,
+    )
+    monkeypatch.setattr(
+        terminal_slice_concat_boundary_stridedslice_orchestration,
+        CHILD_OWNERS[1],
+        boundary,
+    )
+
+    actual = terminal_slice_concat_boundary_stridedslice_orchestration.run_terminal_slice_concat_boundary_stridedslice_cleanup(
+        context
+    )
+    assert actual[0] is recovery_results
+    assert actual[1] is boundary_results
+    assert observed == [
+        (CHILD_OWNERS[0], context, None),
+        (
+            CHILD_OWNERS[1],
+            context.pass_context.model_ir,
+            context.pass_context.layout_state,
+        ),
+    ]

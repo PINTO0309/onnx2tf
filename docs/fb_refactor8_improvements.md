@@ -7788,3 +7788,40 @@ Ruff, bytecode compilation, and whitespace checks pass. The raw/managed
 inventory remains 27/25, and the store remains exactly 128 calls, 128 unique
 IDs, and 128 owner expressions. No real-model conversion was repeated for
 this characterization.
+
+## Extract terminal Slice/Concat boundary StridedSlice cleanup
+
+`run_terminal_slice_concat_boundary_stridedslice_cleanup()` now owns the
+characterized boundary. It receives the existing
+`TerminalSliceConcatRecoveryContext`, runs the complete fourteen-child
+terminal Slice/Concat recovery first, then calls the existing boundary-input
+Transpose/StridedSlice/QDQ/Concat implementation with the exact model and
+`LayoutState` embedded in the context. It returns both complete raw results by
+identity. Runtime injection coverage fixes child order, context/model/layout
+identity, and result identity.
+
+The lowerer removes `_terminal_slice_concat_recovery_results` and records
+returned element `[1]` directly under the unchanged
+`cleanup.terminal.boundary_stridedslice_qdq_concat` phase ID. The terminal
+channel-slice Mul/Add bridge remains the immediate recorded predecessor and
+the Swish residual-Concat closure remains the immediate recorded successor.
+Both lowerer compatibility wrappers, the fourteen-child recovery owner, the
+boundary implementation, and the independent final-boundary terminal
+Slice/Concat route remain intact.
+
+The first fixed 9-file affected run was intentionally captured before stale
+structural assertions were updated and reported `336 passed / 11 failed`, with
+failures across 7 files. Every failure was an obsolete assignment, direct
+wrapper-call count, phase owner, neighboring-boundary, or Call/Subscript-count
+expectation caused by the ownership move; runtime identity, child schemas, and
+phase cardinality remained green. After owner-aware updates, focused `5`,
+fixed affected `347`, and standard `92 / 55 / 196 / 2 / 11` sequential tests
+pass. Ruff, bytecode compilation, and whitespace checks pass.
+
+The read-only AST audit reports 26 raw and 24 managed unconsumed lowerer
+results after excluding the two intentionally retained layout-pass-set-1
+recovery-prefix observations. The removed target has zero stores, the new
+owner expression occurs once, and the phase store remains exactly 128 calls,
+128 unique IDs, and 128 owner expressions. Public interfaces, artifacts,
+dependencies, and TensorFlow isolation are unchanged. No real-model
+conversion was repeated for this ownership-only extraction.

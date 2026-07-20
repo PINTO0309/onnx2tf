@@ -54,7 +54,7 @@ EXPECTED_OWNER_EXPRESSIONS = (
     ),
 )
 PREDECESSOR_PHASE_ID = "cleanup.terminal.conv_activation"
-SUCCESSOR_TARGET = "_terminal_slice_concat_recovery_results"
+SUCCESSOR_PHASE_ID = "cleanup.terminal.boundary_stridedslice_qdq_concat"
 
 
 def _lowerer() -> ast.FunctionDef:
@@ -64,13 +64,6 @@ def _lowerer() -> ast.FunctionDef:
         for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
-
-
-def _single_target(statement: ast.stmt) -> str | None:
-    if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
-        return None
-    target = statement.targets[0]
-    return target.id if isinstance(target, ast.Name) else None
 
 
 def _statement_call(statement: ast.stmt) -> ast.Call | None:
@@ -108,7 +101,7 @@ def test_terminal_boundary_results_use_consecutive_phase_records() -> None:
     ) == EXPECTED_OWNER_EXPRESSIONS
     assert indices == list(range(indices[0], indices[0] + 7))
     assert _phase_id(lowerer.body[indices[0] - 1]) == PREDECESSOR_PHASE_ID
-    assert _single_target(lowerer.body[indices[-1] + 1]) == SUCCESSOR_TARGET
+    assert _phase_id(lowerer.body[indices[-1] + 1]) == SUCCESSOR_PHASE_ID
     assert not any(
         isinstance(node, ast.Name) and node.id in EXPECTED_RESULT_TARGETS
         for node in ast.walk(lowerer)

@@ -19,14 +19,14 @@ EXPECTED_PHASE_IDS = (
 )
 EXPECTED_OWNER_EXPRESSIONS = (
     (
-        "_optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks("
-        "model_ir, layout_state=session.layout_state)"
+        "run_terminal_slice_concat_boundary_stridedslice_cleanup("
+        "terminal_slice_concat_recovery_context)[1]"
     ),
     "_optimize_transpose_swish_residual_concat_closure_nhwc_chains(model_ir)",
     "_optimize_transpose_dequant_logistic_mul_quantize_bridges(model_ir)",
     "_optimize_transpose_swish_qdq_nhwc_islands(model_ir)",
 )
-PREDECESSOR_TARGET = "_terminal_slice_concat_recovery_results"
+PREDECESSOR_PHASE_ID = "cleanup.terminal.channel_slice_muladd_bridge"
 SUCCESSOR_PHASE_ID = "cleanup.terminal.instancenorm_post_bias"
 
 
@@ -37,13 +37,6 @@ def _lowerer() -> ast.FunctionDef:
         for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
-
-
-def _single_target(statement: ast.stmt) -> str | None:
-    if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
-        return None
-    target = statement.targets[0]
-    return target.id if isinstance(target, ast.Name) else None
 
 
 def _statement_call(statement: ast.stmt) -> ast.Call | None:
@@ -80,7 +73,7 @@ def test_terminal_activation_results_use_phase_result_store() -> None:
         ast.unparse(_statement_call(statement).args[1]) for statement in records
     ) == EXPECTED_OWNER_EXPRESSIONS
     assert indices == list(range(indices[0], indices[0] + 4))
-    assert _single_target(lowerer.body[indices[0] - 1]) == PREDECESSOR_TARGET
+    assert _phase_id(lowerer.body[indices[0] - 1]) == PREDECESSOR_PHASE_ID
     assert _phase_id(lowerer.body[indices[-1] + 1]) == SUCCESSOR_PHASE_ID
     assert not any(
         isinstance(node, ast.Name) and node.id in EXPECTED_RESULT_TARGETS

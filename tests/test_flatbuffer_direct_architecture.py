@@ -2647,95 +2647,45 @@ def test_lowerer_terminal_slice_concat_recovery_has_one_ordered_owner() -> None:
     )
     assert helper_calls[0].keywords == []
 
-    invocation_indexes = [
+    phase_indexes = [
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id
-        in {
-            "_terminal_slice_concat_recovery_results",
-            "_final_slice_concat_recovery_results",
-        }
+        if isinstance(statement, ast.Expr)
         and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == helper_name
+        and isinstance(statement.value.func, ast.Attribute)
+        and ast.unparse(statement.value.func) == "session.record_phase_result"
+        and len(statement.value.args) == 2
+        and ast.literal_eval(statement.value.args[0])
+        == "cleanup.terminal.boundary_stridedslice_qdq_concat"
     ]
-    assert len(invocation_indexes) == 1
-    previous_targets = []
-    previous_call_names = []
-    previous_keyword_names = []
-    next_targets = []
-    next_call_names = []
-    for index in invocation_indexes:
-        invocation = lowerer.body[index].value
-        assert invocation.args == []
-        assert invocation.keywords == []
-        previous = lowerer.body[index - 1]
-        assert isinstance(previous, (ast.Assign, ast.Expr))
-        previous_target = None
-        if isinstance(previous, ast.Assign):
-            assert len(previous.targets) == 1
-            assert isinstance(previous.targets[0], ast.Name)
-            previous_target = previous.targets[0].id
-        previous_call = previous.value
-        assert isinstance(previous_call, ast.Call)
-        if (
-            isinstance(previous_call.func, ast.Attribute)
-            and isinstance(previous_call.func.value, ast.Name)
-            and previous_call.func.value.id == "session"
-            and previous_call.func.attr == "record_phase_result"
-            and len(previous_call.args) == 2
-            and isinstance(previous_call.args[1], ast.Call)
-        ):
-            assert ast.literal_eval(previous_call.args[0]) == (
-                "cleanup.terminal.channel_slice_muladd_bridge"
-            )
-            previous_call = previous_call.args[1]
-        assert isinstance(previous_call.func, ast.Name)
-        previous_targets.append(previous_target)
-        previous_call_names.append(previous_call.func.id)
-        previous_keyword_names.append(
-            [keyword.arg for keyword in previous_call.keywords]
-        )
-        following = lowerer.body[index + 1]
-        assert isinstance(following, (ast.Assign, ast.Expr))
-        next_target = None
-        if isinstance(following, ast.Assign):
-            assert len(following.targets) == 1
-            assert isinstance(following.targets[0], ast.Name)
-            next_target = following.targets[0].id
-        following_call = following.value
-        assert isinstance(following_call, ast.Call)
-        if (
-            isinstance(following_call.func, ast.Attribute)
-            and isinstance(following_call.func.value, ast.Name)
-            and following_call.func.value.id == "session"
-            and following_call.func.attr == "record_phase_result"
-            and len(following_call.args) == 2
-            and isinstance(following_call.args[1], ast.Call)
-        ):
-            assert ast.literal_eval(following_call.args[0]) == (
-                "cleanup.terminal.boundary_stridedslice_qdq_concat"
-            )
-            following_call = following_call.args[1]
-        assert isinstance(following_call.func, ast.Name)
-        next_targets.append(next_target)
-        next_call_names.append(following_call.func.id)
-    assert previous_targets == [
-        None,
-    ]
-    assert previous_call_names == [
-        "_optimize_transpose_channel_slice_muladd_nhwc_bridge_chains",
-    ]
-    assert previous_keyword_names == [["layout_state"]]
-    assert next_targets == [
-        None,
-    ]
-    assert next_call_names == [
-        "_optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks",
-    ]
+    assert len(phase_indexes) == 1
+    index = phase_indexes[0]
+    phase_call = lowerer.body[index].value
+    assert isinstance(phase_call, ast.Call)
+    assert ast.unparse(phase_call.args[1]) == (
+        "run_terminal_slice_concat_boundary_stridedslice_cleanup("
+        "terminal_slice_concat_recovery_context)[1]"
+    )
+    assert ast.unparse(lowerer.body[index - 1]) == (
+        "session.record_phase_result('cleanup.terminal.channel_slice_muladd_bridge', "
+        "_optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(model_ir, "
+        "layout_state=session.layout_state))"
+    )
+    assert ast.unparse(lowerer.body[index + 1]) == (
+        "session.record_phase_result('cleanup.terminal.swish_residual_concat_closure', "
+        "_optimize_transpose_swish_residual_concat_closure_nhwc_chains(model_ir))"
+    )
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id == "_terminal_slice_concat_recovery_results"
+        for node in ast.walk(lowerer)
+    )
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == helper_name
+        for node in ast.walk(lowerer)
+    )
     assert (
         _final_boundary_slice_concat_call_count(
             "run_terminal_slice_concat_recovery"
