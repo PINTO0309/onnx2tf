@@ -7172,3 +7172,49 @@ tests, then run all affected and standard gates sequentially under `uv`,
 confirm the expected managed inventory reduction from 33 to 32, and commit and
 push the complete unit. Do not create, update, reopen, or otherwise modify a
 pull request.
+
+## Late final-shape/terminal fan-out implementation checkpoint
+
+`passes/late_final_shape_terminal_fanout_orchestration.py` now provides
+`run_late_final_shape_terminal_fanout_cleanup()`. It calls
+`run_late_final_shape_boundary_cleanup(context)` followed by
+`run_terminal_fanout_singleton_cleanup(context.pass_context,
+include_elementwise_fanout=include_elementwise_fanout)`. It returns both
+complete child results without copying, flattening, schema inspection, or
+result-driven control flow. Runtime injection for both Boolean option paths
+proves exact order, context identity, option forwarding, and result identity.
+
+The lowerer replaces `_late_final_shape_boundary_results` and
+`_terminal_fanout_singleton_results` with
+`_late_final_shape_terminal_fanout_results`. It passes the existing
+`late_final_shape_boundary_context` and unchanged layout option. The preceding
+`_late_affine_optional_fanout_results` assignment and following terminal
+Conv/Pool/no-layout branch remain direct neighbors. The branch and its recorded
+no-layout phase stay outside the owner. Both child owners, nested lowerer
+wrappers, callbacks, and independent routes remain available. Only the two
+now-unused direct child-runner imports were removed from the lowerer.
+
+The first fixed 25-file affected run was intentionally executed before test
+updates and recorded 47 failures across 24 files. Every failure was a stale
+direct-call, target, route, or neighbor assertion caused by the ownership move;
+no runtime schema, option path, context identity, pass behavior, phase store,
+or TensorFlow boundary failed. Those structural expectations now follow both
+children through the new outer owner.
+
+Sequential validation passes: focused `6`, fixed 25-file affected `422`,
+terminal-layout/efficiency `92`, core `55`, result contracts `196`, phase
+store `2`, and TensorFlow import-blocking, default-direct, and `-cotof` `11`.
+Ruff, bytecode compilation, and whitespace checks pass. The read-only AST
+audit reports 34 raw unconsumed results, 32 managed results after the two
+intentionally retained layout-pass-set-1 recovery-prefix observations, zero
+old selected targets, one new composite target, and exactly 128 phase IDs with
+128 owners. No real-model conversion was repeated for this ownership-only
+extraction.
+
+At resume, refresh the managed 32-result inventory and select the next
+smallest source-adjacent, semantically closed observation-only boundary.
+Characterize all guards, recorded phase boundaries, option policies, exact
+context and callback identities, child schemas, and independent routes before
+changing production. Continue with sequential `uv` validation and complete
+checkpoint commits/pushes only. Do not create, update, reopen, or otherwise
+modify a pull request.

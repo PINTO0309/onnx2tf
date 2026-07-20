@@ -46,8 +46,8 @@ RESULT_TARGETS = (
 )
 COMPOSITE_TARGET = "_late_affine_optional_fanout_results"
 PREDECESSOR_PHASE_ID = "cleanup.late.ndhwc_cost_volume"
-SUCCESSOR_TARGET = "_late_final_shape_boundary_results"
-SUCCESSOR_OWNER = "run_late_final_shape_boundary_cleanup"
+SUCCESSOR_TARGET = "_late_final_shape_terminal_fanout_results"
+SUCCESSOR_OWNER = "run_late_final_shape_terminal_fanout_cleanup"
 GUARD = "optimize_layout_transpose_chains"
 
 AFFINE_SCHEMA = (

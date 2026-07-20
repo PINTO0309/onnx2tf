@@ -38,6 +38,7 @@ CONVERGENCE_OWNER_PATH = (
     / "indexed_final_shape_activation_convergence.py"
 )
 OWNER = "run_late_final_shape_boundary_cleanup"
+LOWERER_OWNER = "run_late_final_shape_terminal_fanout_cleanup"
 CONVERGENCE_OWNER = "run_indexed_final_shape_activation_convergence"
 CHILD_OWNERS = (
     "run_late_reshape_shuffle_attention_window_cleanup",
@@ -49,9 +50,9 @@ RESULT_TARGETS = (
     "_late_final_shape_activation_convergence_stats",
     "_final_boundary_slice_concat_results",
 )
-COMPOSITE_TARGET = "_late_final_shape_boundary_results"
+COMPOSITE_TARGET = "_late_final_shape_terminal_fanout_results"
 PREDECESSOR_TARGET = "_late_affine_optional_fanout_results"
-SUCCESSOR_TARGET = "_terminal_fanout_singleton_results"
+SUCCESSOR_TARGET = "_terminal_convpool_output_passthrough_stats"
 CONVERGENCE_KEYS = (
     "removed_dead_operators",
     "resolved_dynamic_reshape_shapes",
@@ -107,20 +108,25 @@ def test_late_final_shape_boundary_current_order_context_and_schema() -> None:
         if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == OWNER
+    assert _call_name(assignment) == LOWERER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
         "late_final_shape_boundary_context"
     ]
-    assert call.keywords == []
+    assert {
+        keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
+    } == {
+        "include_elementwise_fanout": "optimize_layout_transpose_chains"
+    }
 
     predecessor = lowerer.body[index - 1]
     successor = lowerer.body[index + 1]
     assert isinstance(predecessor, ast.Assign)
     assert _single_target(predecessor) == PREDECESSOR_TARGET
-    assert isinstance(successor, ast.Assign)
-    assert _single_target(successor) == SUCCESSOR_TARGET
+    assert isinstance(successor, ast.If)
+    assert ast.unparse(successor.test) == "optimize_layout_transpose_chains"
+    assert _single_target(successor.body[0]) == SUCCESSOR_TARGET
     assert not any(
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
@@ -220,15 +226,21 @@ def test_late_final_shape_boundary_has_one_context_owner() -> None:
         if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == OWNER
+    assert _call_name(assignment) == LOWERER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
         "late_final_shape_boundary_context"
     ]
-    assert call.keywords == []
+    assert {
+        keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
+    } == {
+        "include_elementwise_fanout": "optimize_layout_transpose_chains"
+    }
     assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
-    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    successor = lowerer.body[index + 1]
+    assert isinstance(successor, ast.If)
+    assert _single_target(successor.body[0]) == SUCCESSOR_TARGET
     assert not any(
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)

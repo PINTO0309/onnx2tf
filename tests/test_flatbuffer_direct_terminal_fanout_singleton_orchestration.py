@@ -32,6 +32,7 @@ OWNER_PATH = (
     / "terminal_fanout_singleton_orchestration.py"
 )
 OWNER = "run_terminal_fanout_singleton_cleanup"
+LOWERER_OWNER = "run_late_final_shape_terminal_fanout_cleanup"
 CHILD_OWNERS = (
     "optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains",
     "run_terminal_singleton_maxpool_reshape",
@@ -44,9 +45,9 @@ RESULT_TARGETS = (
     "_terminal_elementwise_fanout_stats",
     "_terminal_singleton_maxpool_reshape_results",
 )
-COMPOSITE_TARGET = "_terminal_fanout_singleton_results"
-PREDECESSOR_TARGET = "_late_final_shape_boundary_results"
-PREDECESSOR_OWNER = "run_late_final_shape_boundary_cleanup"
+COMPOSITE_TARGET = "_late_final_shape_terminal_fanout_results"
+PREDECESSOR_TARGET = "_late_affine_optional_fanout_results"
+PREDECESSOR_OWNER = "run_late_affine_optional_fanout_cleanup"
 SUCCESSOR_TARGET = "_terminal_convpool_output_passthrough_stats"
 SUCCESSOR_OWNER = (
     "_optimize_convpool_output_transpose_nhwc_passthrough_chains"
@@ -123,11 +124,11 @@ def test_terminal_fanout_singleton_current_contract() -> None:
         if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == OWNER
+    assert _call_name(assignment) == LOWERER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
-        "shared_model_ir_pass_context"
+        "late_final_shape_boundary_context"
     ]
     assert {
         keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
@@ -236,11 +237,11 @@ def test_terminal_fanout_singleton_has_one_optional_context_owner() -> None:
         if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == OWNER
+    assert _call_name(assignment) == LOWERER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
-        "shared_model_ir_pass_context"
+        "late_final_shape_boundary_context"
     ]
     assert {
         keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords

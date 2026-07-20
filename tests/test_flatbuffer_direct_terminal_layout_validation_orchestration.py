@@ -155,7 +155,12 @@ LATE_FINAL_SHAPE_BOUNDARY_OWNER_PATH = (
     / "late_final_shape_boundary_orchestration.py"
 )
 LATE_FINAL_SHAPE_BOUNDARY_OWNER = "run_late_final_shape_boundary_cleanup"
-LATE_FINAL_SHAPE_BOUNDARY_RESULT = "_late_final_shape_boundary_results"
+LATE_FINAL_SHAPE_TERMINAL_OWNER = (
+    "run_late_final_shape_terminal_fanout_cleanup"
+)
+LATE_FINAL_SHAPE_BOUNDARY_RESULT = (
+    "_late_final_shape_terminal_fanout_results"
+)
 LATE_AFFINE_CONCAT_OWNER_PATH = (
     REPO_ROOT
     / "onnx2tf"
@@ -183,7 +188,12 @@ TERMINAL_FANOUT_SINGLETON_OWNER_PATH = (
     / "terminal_fanout_singleton_orchestration.py"
 )
 TERMINAL_FANOUT_SINGLETON_OWNER = "run_terminal_fanout_singleton_cleanup"
-TERMINAL_FANOUT_SINGLETON_RESULT = "_terminal_fanout_singleton_results"
+TERMINAL_FANOUT_SINGLETON_RESULT = (
+    "_late_final_shape_terminal_fanout_results"
+)
+TERMINAL_CONVPOOL_OUTPUT_RESULT = (
+    "_terminal_convpool_output_passthrough_stats"
+)
 
 
 def _lowerer_body() -> list[ast.stmt]:
@@ -226,11 +236,16 @@ def _late_layout_composite_assignment(body: list[ast.stmt]) -> ast.Assign:
     )
     assert isinstance(assignment.value, ast.Call)
     assert isinstance(assignment.value.func, ast.Name)
-    assert assignment.value.func.id == LATE_FINAL_SHAPE_BOUNDARY_OWNER
+    assert assignment.value.func.id == LATE_FINAL_SHAPE_TERMINAL_OWNER
     assert [ast.unparse(argument) for argument in assignment.value.args] == [
         "late_final_shape_boundary_context"
     ]
-    assert assignment.value.keywords == []
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in assignment.value.keywords
+    } == {
+        "include_elementwise_fanout": "optimize_layout_transpose_chains"
+    }
     return assignment
 
 
@@ -266,11 +281,16 @@ def _final_boundary_composite_assignment(body: list[ast.stmt]) -> ast.Assign:
     )
     assert isinstance(assignment.value, ast.Call)
     assert isinstance(assignment.value.func, ast.Name)
-    assert assignment.value.func.id == LATE_FINAL_SHAPE_BOUNDARY_OWNER
+    assert assignment.value.func.id == LATE_FINAL_SHAPE_TERMINAL_OWNER
     assert [ast.unparse(argument) for argument in assignment.value.args] == [
         "late_final_shape_boundary_context"
     ]
-    assert assignment.value.keywords == []
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in assignment.value.keywords
+    } == {
+        "include_elementwise_fanout": "optimize_layout_transpose_chains"
+    }
     return assignment
 
 
@@ -1853,7 +1873,7 @@ def test_primary_path_retains_late_concat_composite_results() -> None:
     assert isinstance(following.targets[0], ast.Name)
     assert following.targets[0].id == LATE_FINAL_SHAPE_BOUNDARY_RESULT
     assert _call_name(_statement_call(following)) == (
-        LATE_FINAL_SHAPE_BOUNDARY_OWNER
+        LATE_FINAL_SHAPE_TERMINAL_OWNER
     )
 
     layout_cleanup_statements = [
@@ -2125,9 +2145,9 @@ def test_primary_path_retains_guarded_elementwise_fanout_results() -> None:
     call = assignment.value
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)
-    assert call.func.id == TERMINAL_FANOUT_SINGLETON_OWNER
+    assert call.func.id == LATE_FINAL_SHAPE_TERMINAL_OWNER
     assert [ast.unparse(argument) for argument in call.args] == [
-        "shared_model_ir_pass_context"
+        "late_final_shape_boundary_context"
     ]
     assert {
         keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
@@ -2199,9 +2219,10 @@ def test_primary_path_retains_late_reshape_layout_composite() -> None:
     assert isinstance(preceding_assignment.targets[0], ast.Name)
     assert preceding_assignment.targets[0].id == LATE_AFFINE_CONCAT_RESULT
     successor = body[index + 1]
-    assert isinstance(successor, ast.Assign)
-    assert isinstance(successor.targets[0], ast.Name)
-    assert successor.targets[0].id == TERMINAL_FANOUT_SINGLETON_RESULT
+    assert isinstance(successor, ast.If)
+    assert isinstance(successor.body[0], ast.Assign)
+    assert isinstance(successor.body[0].targets[0], ast.Name)
+    assert successor.body[0].targets[0].id == TERMINAL_CONVPOOL_OUTPUT_RESULT
 
 
 def test_primary_path_removes_late_reshape_layout_result_locals() -> None:
@@ -2265,9 +2286,10 @@ def test_primary_path_retains_late_window_layout_composite() -> None:
     assert calls[0].keywords == []
 
     successor = body[index + 1]
-    assert isinstance(successor, ast.Assign)
-    assert isinstance(successor.targets[0], ast.Name)
-    assert successor.targets[0].id == TERMINAL_FANOUT_SINGLETON_RESULT
+    assert isinstance(successor, ast.If)
+    assert isinstance(successor.body[0], ast.Assign)
+    assert isinstance(successor.body[0].targets[0], ast.Name)
+    assert successor.body[0].targets[0].id == TERMINAL_CONVPOOL_OUTPUT_RESULT
 
 
 def test_primary_path_removes_late_window_layout_result_locals() -> None:
@@ -2327,9 +2349,10 @@ def test_primary_path_retains_final_boundary_channel_layout_composite() -> None:
     assert isinstance(predecessor_assignment.targets[0], ast.Name)
     assert predecessor_assignment.targets[0].id == LATE_AFFINE_CONCAT_RESULT
     successor = body[index + 1]
-    assert isinstance(successor, ast.Assign)
-    assert isinstance(successor.targets[0], ast.Name)
-    assert successor.targets[0].id == TERMINAL_FANOUT_SINGLETON_RESULT
+    assert isinstance(successor, ast.If)
+    assert isinstance(successor.body[0], ast.Assign)
+    assert isinstance(successor.body[0].targets[0], ast.Name)
+    assert successor.body[0].targets[0].id == TERMINAL_CONVPOOL_OUTPUT_RESULT
 
 
 def test_primary_path_retains_terminal_boundary_input_normalization_result() -> None:

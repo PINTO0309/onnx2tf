@@ -9,6 +9,9 @@ import pytest
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import (
+    late_final_shape_terminal_fanout_orchestration,
+)
 from onnx2tf.tflite_builder.passes.late_final_shape_boundary_orchestration import (
     LateFinalShapeBoundaryContext,
     run_late_final_shape_boundary_cleanup,
@@ -108,35 +111,24 @@ def _dict_schema(values: tuple[Any, ...]) -> tuple[tuple[str, ...], ...]:
 
 def test_late_final_shape_terminal_fanout_current_contract() -> None:
     lowerer = _lowerer()
-    late_assignment = next(
+    assignment = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == RESULT_TARGETS[0]
+        if _single_target(statement) == COMPOSITE_TARGET
     )
-    index = lowerer.body.index(late_assignment)
-    assert _call_name(late_assignment) == CHILD_OWNERS[0]
-    late_call = _call(late_assignment)
-    assert late_call is not None
-    assert [ast.unparse(argument) for argument in late_call.args] == [
+    index = lowerer.body.index(assignment)
+    assert _call_name(assignment) == OWNER
+    call = _call(assignment)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == [
         LATE_CONTEXT_TARGET
     ]
-    assert late_call.keywords == []
-
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
-    terminal_assignment = lowerer.body[index + 1]
-    assert _single_target(terminal_assignment) == RESULT_TARGETS[1]
-    assert _call_name(terminal_assignment) == CHILD_OWNERS[1]
-    terminal_call = _call(terminal_assignment)
-    assert terminal_call is not None
-    assert [ast.unparse(argument) for argument in terminal_call.args] == [
-        PASS_CONTEXT_TARGET
-    ]
     assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in terminal_call.keywords
+        keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
     } == {"include_elementwise_fanout": GUARD}
 
-    successor_guard = lowerer.body[index + 2]
+    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    successor_guard = lowerer.body[index + 1]
     assert isinstance(successor_guard, ast.If)
     assert ast.unparse(successor_guard.test) == GUARD
     assert _single_target(successor_guard.body[0]) == SUCCESSOR_TARGET
@@ -219,10 +211,6 @@ def test_late_final_shape_terminal_fanout_child_schemas_and_contexts(
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="late final-shape/terminal fan-out owner is not implemented",
-)
 def test_late_final_shape_terminal_fanout_has_one_context_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -280,3 +268,55 @@ def test_late_final_shape_terminal_fanout_has_one_context_owner() -> None:
         and "lower_from_onnx2tf" in ast.unparse(node)
         for node in ast.parse(OWNER_PATH.read_text(encoding="utf-8")).body
     )
+
+
+@pytest.mark.parametrize("include_elementwise_fanout", [False, True])
+def test_late_final_shape_terminal_fanout_runtime_order_and_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    include_elementwise_fanout: bool,
+) -> None:
+    context = _context(
+        f"late_final_shape_terminal_fanout_runtime_{include_elementwise_fanout}"
+    )
+    late_results = ({"late": 1},)
+    terminal_results = ({"fanout": 2}, ({"singleton": 3},))
+    expected_results = (late_results, terminal_results)
+    observed: list[tuple[str, object, dict[str, object]]] = []
+
+    def late(active_context: object) -> object:
+        observed.append((CHILD_OWNERS[0], active_context, {}))
+        return late_results
+
+    def terminal(
+        active_context: object,
+        **options: object,
+    ) -> object:
+        observed.append((CHILD_OWNERS[1], active_context, options))
+        return terminal_results
+
+    monkeypatch.setattr(
+        late_final_shape_terminal_fanout_orchestration,
+        CHILD_OWNERS[0],
+        late,
+    )
+    monkeypatch.setattr(
+        late_final_shape_terminal_fanout_orchestration,
+        CHILD_OWNERS[1],
+        terminal,
+    )
+
+    actual = late_final_shape_terminal_fanout_orchestration.run_late_final_shape_terminal_fanout_cleanup(
+        context,
+        include_elementwise_fanout=include_elementwise_fanout,
+    )
+    assert actual == expected_results
+    assert actual[0] is late_results
+    assert actual[1] is terminal_results
+    assert observed == [
+        (CHILD_OWNERS[0], context, {}),
+        (
+            CHILD_OWNERS[1],
+            context.pass_context,
+            {"include_elementwise_fanout": include_elementwise_fanout},
+        ),
+    ]

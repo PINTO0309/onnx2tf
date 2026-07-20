@@ -29,8 +29,8 @@ ORCHESTRATION_PATH = (
     / "terminal_singleton_maxpool_reshape_orchestration.py"
 )
 LOWERER_HELPER = "_run_terminal_singleton_maxpool_reshape_pass_pair"
-OUTER_OWNER = "run_terminal_fanout_singleton_cleanup"
-RESULT_TARGET = "_terminal_fanout_singleton_results"
+OUTER_OWNER = "run_late_final_shape_terminal_fanout_cleanup"
+RESULT_TARGET = "_late_final_shape_terminal_fanout_results"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -134,7 +134,7 @@ def test_terminal_singleton_maxpool_reshape_result_contract_is_explicit() -> Non
     assert _statement_call(invocation) is not None
     assert observed_lowerer.body[index - 1].__class__ is ast.Assign
     assert _single_target(observed_lowerer.body[index - 1]) == (
-        "_late_final_shape_boundary_results"
+        "_late_affine_optional_fanout_results"
     )
     assert observed_lowerer.body[index + 1].__class__ is ast.If
     assert ast.unparse(observed_lowerer.body[index + 1].test) == (

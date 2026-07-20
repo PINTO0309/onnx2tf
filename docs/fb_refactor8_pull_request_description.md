@@ -1986,3 +1986,18 @@ Focused and reference-based affected sequential validation report
 the deliberately absent future owner. Production behavior, dependencies,
 TensorFlow isolation, the managed 33-result inventory, and the exactly
 128-ID/128-owner phase store remain unchanged.
+
+The latest implementation adds one late final-shape/terminal fan-out owner.
+It preserves the exact existing late-boundary context, its embedded shared pass
+context, fixed child order, layout-option policy, and both complete raw result
+identities without reconstructing graph, layout, or diagnostic state.
+
+Only the two observation-only lowerer targets are replaced. The late-affine
+predecessor, terminal Conv/Pool/no-layout successor, existing child owners and
+wrappers, graph behavior, APIs, artifacts, dependencies, and TensorFlow
+isolation remain unchanged. The initially recorded 47 affected failures across
+24 files were all stale structural ownership expectations; after owner-aware
+updates, focused `6`, affected `422`, and standard
+`92 / 55 / 196 / 2 / 11` sequential tests pass. The phase store remains
+exactly 128 IDs and 128 owners, and the managed unconsumed-result inventory
+decreases from 33 to 32.

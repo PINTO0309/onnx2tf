@@ -111,7 +111,9 @@ def test_late_concat_layout_cluster_uses_one_composite_result_outside_store() ->
     )
     assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
     successor = lowerer.body[index + 1]
-    assert _single_target(successor) == "_late_final_shape_boundary_results"
+    assert _single_target(successor) == (
+        "_late_final_shape_terminal_fanout_results"
+    )
     assert len(_outer_calls()) == 1
     assert [ast.unparse(argument) for argument in _outer_calls()[0].args] == [
         "context"
@@ -160,7 +162,7 @@ def test_late_concat_layout_cluster_uses_one_composite_owner() -> None:
     )
     assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
     assert _single_target(lowerer.body[index + 1]) == (
-        "_late_final_shape_boundary_results"
+        "_late_final_shape_terminal_fanout_results"
     )
     assert len(_outer_calls()) == 1
     assert not any(

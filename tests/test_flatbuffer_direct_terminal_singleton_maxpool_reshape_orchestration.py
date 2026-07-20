@@ -24,7 +24,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 TERMINAL_SINGLETON_MAXPOOL_RESHAPE = "_run_terminal_singleton_maxpool_reshape_pass_pair"
 OUTER_OWNER = "run_terminal_fanout_singleton_cleanup"
-OUTER_TARGET = "_terminal_fanout_singleton_results"
+LOWERER_OWNER = "run_late_final_shape_terminal_fanout_cleanup"
+OUTER_TARGET = "_late_final_shape_terminal_fanout_results"
 OUTER_OWNER_PATH = (
     REPO_ROOT
     / "onnx2tf"
@@ -208,7 +209,7 @@ def test_terminal_singleton_maxpool_reshape_preserves_outer_boundaries() -> None
         if isinstance(statement, ast.Assign)
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == OUTER_OWNER
+        and statement.value.func.id == LOWERER_OWNER
     )
     invocation = lowerer.body[invocation_index]
     assert isinstance(invocation, ast.Assign)
@@ -221,7 +222,7 @@ def test_terminal_singleton_maxpool_reshape_preserves_outer_boundaries() -> None
     previous = lowerer.body[invocation_index - 1]
     assert isinstance(previous, ast.Assign)
     assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_late_final_shape_boundary_results"
+    assert previous.targets[0].id == "_late_affine_optional_fanout_results"
 
     following = lowerer.body[invocation_index + 1]
     assert isinstance(following, ast.If)
