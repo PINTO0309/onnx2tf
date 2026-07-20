@@ -7729,3 +7729,51 @@ suite before updating stale structure assertions, then run affected and
 standard gates sequentially under `uv`, confirm the expected 28/26 inventory,
 and commit and push the complete implementation. Do not create, update,
 reopen, or otherwise modify a pull request.
+
+## Post-cleanup SiNet/CSP-attention implementation checkpoint
+
+`passes/post_cleanup_sinet_csp_attention_orchestration.py` now provides
+`run_post_cleanup_sinet_csp_attention_cleanup()`. It receives the exact shared
+`ModelIRPassContext`, calls `run_sinet_preadd_resize_recovery()` with that
+context, then calls `_optimize_transpose_csp_attention_nhwc_chains()` with the
+same context's exact model and `LayoutState`. It returns both complete raw
+results by identity. Runtime injection proves fixed order, context/model/layout
+identity, and result identity without result-driven control flow.
+
+The lowerer removes `_post_cleanup_sinet_preadd_resize_results` and supplies
+the new owner's element `[1]` directly to the unchanged
+`cleanup.post_cleanup.csp_attention` record. The recorded very-late
+prune/reconcile phase remains its direct predecessor and the recorded SA/PA
+MirrorPad phase remains its direct successor. Both child owners, the retained
+lowerer compatibility wrappers, the nested terminal-SiNet callback route,
+public APIs, artifacts, dependencies, and TensorFlow isolation remain
+unchanged.
+
+The first fixed 9-file affected run was deliberately executed before stale
+expectations were changed and recorded `285 passed / 10 failed`, with failures
+across 6 files. All failures were stale direct-target, wrapper-call, owner,
+phase-expression, neighboring-boundary, or Call/Subscript-count assertions
+caused by the ownership move. No runtime identity, schema, phase-count, or
+TensorFlow failure was found. Sequential validation now passes: focused `5`,
+fixed affected `295`, terminal-layout/efficiency `92`, core `55`, result
+contracts `196`, phase store `2`, and TensorFlow import-blocking,
+default-direct, and `-cotof` `11`. Ruff, bytecode compilation, and whitespace
+checks pass.
+
+The read-only AST audit reports 28 raw unconsumed results and 26 managed
+results after excluding exactly
+`_layout_pass_set_1_initial_attention_recovery_results` and
+`_layout_pass_set_1_post_binary_attention_recovery_results`. The removed
+post-cleanup SiNet target has zero stores, the new CSP owner expression occurs
+once, and the phase store remains exactly 128 calls, 128 unique IDs, and 128
+owner expressions. No real-model conversion was repeated for this
+ownership-only extraction. The temporary initial affected-run report was
+removed from `/tmp` after its failure classification was preserved here.
+
+At resume, refresh the managed 26-result inventory and choose the next smallest
+source-adjacent, semantically closed observation-only boundary. Characterize
+its guards, recorded phase neighbors, option policy, exact context and
+callback identities, complete child schemas, and independent routes before
+changing production. Continue to run all `uv` validation sequentially, then
+commit and push each complete unit. Do not create, update, reopen, or otherwise
+modify a pull request.

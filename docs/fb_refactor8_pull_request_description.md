@@ -2178,3 +2178,21 @@ characterization report `3 passed, 1 xfailed` and
 `293 passed, 1 xfailed`; only the deliberately absent future owner is xfailed.
 Static checks pass, the raw/managed inventory remains 29/27, and the phase
 store remains exactly 128 calls, 128 unique IDs, and 128 owner expressions.
+
+The latest extraction gives post-cleanup SiNet pre-add/resize recovery and its
+adjacent CSP-attention pass one explicit shared-context owner. It preserves the
+existing order, forwards the exact `ModelIRPassContext` to the six-step SiNet
+owner, forwards the same model and `LayoutState` to CSP attention, and returns
+both complete raw results by identity. The lowerer records element `[1]`
+directly at the unchanged CSP phase, between the same very-late prune/reconcile
+and SA/PA MirrorPad phases.
+
+The implementation preserves both children, lowerer compatibility wrappers,
+the nested terminal-SiNet callback route, public interfaces, artifacts,
+dependencies, and TensorFlow isolation. The deliberately captured initial
+affected run reported `285 passed / 10 failed`; all failures were stale
+structure assertions caused by the ownership move. After owner-aware updates,
+focused `5`, affected `295`, and standard `92 / 55 / 196 / 2 / 11` sequential
+tests pass. Static checks pass, the raw/managed inventory decreases from 29/27
+to 28/26, and the phase store remains exactly 128 calls, 128 unique IDs, and
+128 owner expressions.

@@ -7664,3 +7664,37 @@ intentionally absent future owner. The raw/managed inventory remains 29/27 and
 the phase store remains exactly 128 calls, 128 unique IDs, and 128 owner
 expressions. Ruff, bytecode compilation, and whitespace checks pass. No
 real-model conversion was repeated for this characterization.
+
+## Extract post-cleanup SiNet/CSP-attention cleanup
+
+`run_post_cleanup_sinet_csp_attention_cleanup()` now owns the characterized
+boundary. It receives the existing shared `ModelIRPassContext`, runs
+`run_sinet_preadd_resize_recovery(context)` first, then calls the existing CSP
+attention implementation with the exact `context.model_ir` and
+`context.layout_state`. It returns both complete child results by identity.
+Runtime injection coverage fixes the child order, context/model/layout
+identity, and result identity.
+
+The lowerer removes `_post_cleanup_sinet_preadd_resize_results` and records
+returned element `[1]` directly under the unchanged
+`cleanup.post_cleanup.csp_attention` phase ID. The very-late prune/reconcile
+record remains the immediate predecessor and the SA/PA MirrorPad record remains
+the immediate successor. The six-step SiNet child owner, CSP implementation,
+lowerer compatibility wrappers, nested terminal-SiNet callback route, public
+interfaces, artifacts, dependencies, and TensorFlow isolation remain intact.
+
+The first fixed 9-file affected run was intentionally captured before stale
+structural assertions were updated and reported `285 passed / 10 failed`, with
+failures across 6 files. Every failure was an obsolete direct assignment,
+wrapper call, phase owner, neighboring boundary, or Call/Subscript-count
+expectation caused by the ownership move; runtime identity and child schemas
+remained green. After owner-aware updates, focused `5`, fixed affected `295`,
+and standard `92 / 55 / 196 / 2 / 11` sequential tests pass. Ruff, bytecode
+compilation, and whitespace checks pass.
+
+The read-only AST audit reports 28 raw and 26 managed unconsumed lowerer
+results after excluding the two intentionally retained layout-pass-set-1
+recovery-prefix observations. The removed target has zero stores, the new
+owner expression occurs once, and the phase store remains exactly 128 calls,
+128 unique IDs, and 128 owner expressions. No real-model conversion was
+repeated for this ownership-only extraction.

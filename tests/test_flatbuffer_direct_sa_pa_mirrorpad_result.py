@@ -207,7 +207,10 @@ def test_lowerer_records_both_direct_sa_pa_mirrorpad_results() -> None:
     previous = lowerer.body[second_index - 1]
     following = lowerer.body[second_index + 1]
     assert _phase_id(previous) == "cleanup.post_cleanup.csp_attention"
-    assert _call_name(previous) == "_optimize_transpose_csp_attention_nhwc_chains"
+    assert ast.unparse(previous.value.args[1]) == (
+        "run_post_cleanup_sinet_csp_attention_cleanup("
+        "shared_model_ir_pass_context)[1]"
+    )
     assert _phase_id(following) == (
         "cleanup.post_sinet.batchmatmul_affine_input"
     )

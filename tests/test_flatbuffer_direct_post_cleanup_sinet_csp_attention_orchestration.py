@@ -8,6 +8,9 @@ import pytest
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import (
+    post_cleanup_sinet_csp_attention_orchestration,
+)
 from onnx2tf.tflite_builder.passes.attention_layout import (
     _optimize_transpose_csp_attention_nhwc_chains,
 )
@@ -120,26 +123,15 @@ def test_post_cleanup_sinet_csp_attention_current_contract() -> None:
     lowerer = _lowerer()
     record = _phase_record(lowerer)
     index = lowerer.body.index(record)
-    current = lowerer.body[index - 1]
 
-    assert _single_target(current) == CURRENT_TARGET
-    assert _call_name(current) == CURRENT_SINET_OWNER
-    current_call = _call(current)
-    assert current_call is not None
-    assert current_call.args == []
-    assert current_call.keywords == []
-    assert _phase_id(lowerer.body[index - 2]) == PREDECESSOR_PHASE_ID
+    assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
 
     record_call = _call(record)
     assert record_call is not None
-    assert ast.unparse(record_call.args[1]) == (
-        f"{CURRENT_CSP_WRAPPER}(model_ir, "
-        "layout_state=session.layout_state)"
-    )
+    assert ast.unparse(record_call.args[1]) == FUTURE_OWNER_EXPRESSION
     assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
     assert not any(
         isinstance(node, ast.Name)
-        and isinstance(node.ctx, ast.Load)
         and node.id == CURRENT_TARGET
         for node in ast.walk(lowerer)
     )
@@ -205,10 +197,6 @@ def test_post_cleanup_sinet_csp_attention_wrappers_are_retained() -> None:
     }
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="post-cleanup SiNet/CSP-attention owner is not implemented",
-)
 def test_post_cleanup_sinet_csp_attention_has_one_context_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -253,3 +241,41 @@ def test_post_cleanup_sinet_csp_attention_has_one_context_owner() -> None:
         and "lower_from_onnx2tf" in ast.unparse(node)
         for node in ast.parse(OWNER_PATH.read_text(encoding="utf-8")).body
     )
+
+
+def test_post_cleanup_sinet_csp_attention_runtime_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context()
+    sinet_results = ({"sinet_0": 1}, {"sinet_1": 2})
+    csp_results = {"csp": 3}
+    observed: list[tuple[str, object, object | None]] = []
+
+    def sinet(active_context: object) -> object:
+        observed.append((CHILD_OWNERS[0], active_context, None))
+        return sinet_results
+
+    def csp(active_model_ir: object, *, layout_state: object) -> object:
+        observed.append((CHILD_OWNERS[1], active_model_ir, layout_state))
+        return csp_results
+
+    monkeypatch.setattr(
+        post_cleanup_sinet_csp_attention_orchestration,
+        CHILD_OWNERS[0],
+        sinet,
+    )
+    monkeypatch.setattr(
+        post_cleanup_sinet_csp_attention_orchestration,
+        CHILD_OWNERS[1],
+        csp,
+    )
+
+    actual = post_cleanup_sinet_csp_attention_orchestration.run_post_cleanup_sinet_csp_attention_cleanup(
+        context
+    )
+    assert actual[0] is sinet_results
+    assert actual[1] is csp_results
+    assert observed == [
+        (CHILD_OWNERS[0], context, None),
+        (CHILD_OWNERS[1], context.model_ir, context.layout_state),
+    ]

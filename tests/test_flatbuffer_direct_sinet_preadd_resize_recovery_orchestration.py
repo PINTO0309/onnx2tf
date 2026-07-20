@@ -31,8 +31,20 @@ PHASE_PATH = (
     / "passes"
     / "sinet_preadd_resize_recovery_orchestration.py"
 )
+POST_CLEANUP_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "post_cleanup_sinet_csp_attention_orchestration.py"
+)
 SINET_PREADD_RESIZE = "_run_sinet_preadd_resize_recovery_sequence"
 SINET_TERMINAL = "_run_sinet_terminal_layout_recovery_sequence"
+POST_CLEANUP_PHASE_ID = "cleanup.post_cleanup.csp_attention"
+POST_CLEANUP_OWNER_EXPRESSION = (
+    "run_post_cleanup_sinet_csp_attention_cleanup("
+    "shared_model_ir_pass_context)[1]"
+)
 VERY_LATE_PHASE_ID = "cleanup.very_late.residual_affine_prelu"
 VERY_LATE_OWNER_EXPRESSION = (
     "run_very_late_sinet_residual_affine_prelu_cleanup("
@@ -225,9 +237,7 @@ def test_sinet_preadd_resize_recovery_invocations_remain_zero_argument() -> None
         and node.func.id == SINET_PREADD_RESIZE
     ]
 
-    assert len(invocations) == 1
-    assert all(call.args == [] for call in invocations)
-    assert all(call.keywords == [] for call in invocations)
+    assert invocations == []
 
     terminal_context_assignment = next(
         statement
@@ -260,58 +270,27 @@ def test_sinet_preadd_resize_recovery_preserves_all_outer_boundaries() -> None:
         "_optimize_transpose_mul_add_const_prelu_prepost_nhwc_terminal_chains",
     ]
 
-    invocation_indexes = [
-        index
-        for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id
-        in {
-            "_post_cleanup_sinet_preadd_resize_results",
-        }
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == SINET_PREADD_RESIZE
-    ]
-    assert len(invocation_indexes) == 1
-    assert [
-        lowerer.body[index].targets[0].id
-        for index in invocation_indexes
-        if isinstance(lowerer.body[index], ast.Assign)
-        and isinstance(lowerer.body[index].targets[0], ast.Name)
-    ] == [
-        "_post_cleanup_sinet_preadd_resize_results",
-    ]
-    observed: list[tuple[str, str]] = []
-    assigned_boundary_targets: list[str] = []
-    for index in invocation_indexes:
-        previous = lowerer.body[index - 1]
-        following = lowerer.body[index + 1]
-        for boundary in (previous, following):
-            assert isinstance(boundary, (ast.Assign, ast.Expr))
-            assert isinstance(boundary.value, ast.Call)
-            _direct_call_name(boundary)
-            if isinstance(boundary, ast.Assign):
-                assert len(boundary.targets) == 1
-                assert isinstance(boundary.targets[0], ast.Name)
-                assigned_boundary_targets.append(boundary.targets[0].id)
-        observed.append((_direct_call_name(previous), _direct_call_name(following)))
-
-    assert _phase_id(lowerer.body[invocation_indexes[0] - 1]) == (
+    post_cleanup_record = next(
+        statement
+        for statement in lowerer.body
+        if _phase_id(statement) == POST_CLEANUP_PHASE_ID
+    )
+    post_cleanup_index = lowerer.body.index(post_cleanup_record)
+    assert isinstance(post_cleanup_record, ast.Expr)
+    assert ast.unparse(post_cleanup_record.value.args[1]) == (
+        POST_CLEANUP_OWNER_EXPRESSION
+    )
+    assert _phase_id(lowerer.body[post_cleanup_index - 1]) == (
         "cleanup.very_late.prune_reconcile"
     )
-    assert _phase_id(lowerer.body[invocation_indexes[0] + 1]) == (
-        "cleanup.post_cleanup.csp_attention"
+    assert _phase_id(lowerer.body[post_cleanup_index + 1]) == (
+        "cleanup.post_cleanup.sa_pa_mirrorpad"
     )
-
-    assert observed == [
-        (
-            "run_indexed_prune_reconcile_cleanup",
-            "_optimize_transpose_csp_attention_nhwc_chains",
-        ),
-    ]
-    assert assigned_boundary_targets == []
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id == "_post_cleanup_sinet_preadd_resize_results"
+        for node in ast.walk(lowerer)
+    )
     terminal_record = next(
         statement
         for statement in lowerer.body
@@ -461,27 +440,46 @@ def test_sinet_preadd_resize_propagates_and_retains_ordered_results(
         ),
         key=lambda statement: statement.lineno,
     )
-    assert len(direct_results) == 1
-    assert all(isinstance(statement, ast.Assign) for statement in direct_results)
-    assert [
-        statement.targets[0].id
-        for statement in direct_results
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-    ] == [
-        "_post_cleanup_sinet_preadd_resize_results",
-    ]
-    assert all(statement.value.args == [] for statement in direct_results)
-    assert all(statement.value.keywords == [] for statement in direct_results)
+    assert direct_results == []
 
-    direct_index = lowerer.body.index(direct_results[0])
-    assert _direct_call_name(lowerer.body[direct_index - 1]) == (
-        "run_indexed_prune_reconcile_cleanup"
+    post_cleanup_record = next(
+        statement
+        for statement in lowerer.body
+        if _phase_id(statement) == POST_CLEANUP_PHASE_ID
     )
-    assert _direct_call_name(lowerer.body[direct_index + 1]) == (
-        "_optimize_transpose_csp_attention_nhwc_chains"
+    post_cleanup_index = lowerer.body.index(post_cleanup_record)
+    assert isinstance(post_cleanup_record, ast.Expr)
+    assert ast.unparse(post_cleanup_record.value.args[1]) == (
+        POST_CLEANUP_OWNER_EXPRESSION
     )
+    assert _phase_id(lowerer.body[post_cleanup_index - 1]) == (
+        "cleanup.very_late.prune_reconcile"
+    )
+    assert _phase_id(lowerer.body[post_cleanup_index + 1]) == (
+        "cleanup.post_cleanup.sa_pa_mirrorpad"
+    )
+
+    post_cleanup_tree = ast.parse(
+        POST_CLEANUP_OWNER_PATH.read_text(encoding="utf-8")
+    )
+    post_cleanup_owner = next(
+        node
+        for node in post_cleanup_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_post_cleanup_sinet_csp_attention_cleanup"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(post_cleanup_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_sinet_preadd_resize_recovery"
+    ]
+    assert len(production_calls) == 1
+    assert [
+        ast.unparse(argument) for argument in production_calls[0].args
+    ] == ["context"]
+    assert production_calls[0].keywords == []
     terminal_record = next(
         statement
         for statement in lowerer.body

@@ -2928,59 +2928,61 @@ def test_lowerer_sinet_preadd_resize_recovery_has_one_ordered_owner() -> None:
     assert isinstance(callback_keyword.value, ast.Name)
     assert callback_keyword.value.id == helper_name
 
-    invocation_indexes = [
-        index
-        for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id
-        in {
-            "_post_cleanup_sinet_preadd_resize_results",
-        }
+    post_cleanup_record = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.Expr)
         and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == helper_name
-    ]
-    assert len(invocation_indexes) == 1
-    assert [
-        lowerer.body[index].targets[0].id
-        for index in invocation_indexes
-        if isinstance(lowerer.body[index], ast.Assign)
-        and isinstance(lowerer.body[index].targets[0], ast.Name)
-    ] == [
-        "_post_cleanup_sinet_preadd_resize_results",
-    ]
-    previous_call_names = []
-    next_call_names = []
-    assigned_boundary_targets = []
-    for index in invocation_indexes:
-        invocation = lowerer.body[index].value
-        assert invocation.args == []
-        assert invocation.keywords == []
-        previous = lowerer.body[index - 1]
-        following = lowerer.body[index + 1]
-        for boundary in (previous, following):
-            _phase_aware_call(boundary)
-            if isinstance(boundary, ast.Assign):
-                assert len(boundary.targets) == 1
-                assert isinstance(boundary.targets[0], ast.Name)
-                assigned_boundary_targets.append(boundary.targets[0].id)
-        previous_call_names.append(_phase_aware_call(previous)[0].func.id)
-        next_call_names.append(_phase_aware_call(following)[0].func.id)
-    assert _phase_aware_call(lowerer.body[invocation_indexes[0] - 1])[1] == (
+        and isinstance(statement.value.func, ast.Attribute)
+        and ast.unparse(statement.value.func) == "session.record_phase_result"
+        and ast.literal_eval(statement.value.args[0])
+        == "cleanup.post_cleanup.csp_attention"
+    )
+    post_cleanup_index = lowerer.body.index(post_cleanup_record)
+    assert ast.unparse(post_cleanup_record.value.args[1]) == (
+        "run_post_cleanup_sinet_csp_attention_cleanup("
+        "shared_model_ir_pass_context)[1]"
+    )
+    assert _phase_aware_call(lowerer.body[post_cleanup_index - 1])[1] == (
         "cleanup.very_late.prune_reconcile"
     )
-    assert _phase_aware_call(lowerer.body[invocation_indexes[0] + 1])[1] == (
-        "cleanup.post_cleanup.csp_attention"
+    assert _phase_aware_call(lowerer.body[post_cleanup_index + 1])[1] == (
+        "cleanup.post_cleanup.sa_pa_mirrorpad"
     )
-    assert previous_call_names == [
-        "run_indexed_prune_reconcile_cleanup",
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id == "_post_cleanup_sinet_preadd_resize_results"
+        for node in ast.walk(lowerer)
+    )
+
+    post_cleanup_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "post_cleanup_sinet_csp_attention_orchestration.py"
+    )
+    post_cleanup_tree = ast.parse(
+        post_cleanup_path.read_text(encoding="utf-8")
+    )
+    post_cleanup_owner = next(
+        node
+        for node in post_cleanup_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_post_cleanup_sinet_csp_attention_cleanup"
+    )
+    owner_calls = [
+        node
+        for node in ast.walk(post_cleanup_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_sinet_preadd_resize_recovery"
     ]
-    assert next_call_names == [
-        "_optimize_transpose_csp_attention_nhwc_chains",
+    assert len(owner_calls) == 1
+    assert [ast.unparse(argument) for argument in owner_calls[0].args] == [
+        "context"
     ]
-    assert assigned_boundary_targets == []
+    assert owner_calls[0].keywords == []
 
     terminal_record = next(
         statement
@@ -3038,7 +3040,7 @@ def test_lowerer_sinet_preadd_resize_recovery_has_one_ordered_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == helper_name
     ]
-    assert len(all_invocations) + _orchestrated_pass_count(helper_name) == 2
+    assert len(all_invocations) + _orchestrated_pass_count(helper_name) == 1
 
 
 def test_lowerer_sinet_terminal_layout_recovery_has_one_ordered_owner() -> None:

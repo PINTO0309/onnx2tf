@@ -741,6 +741,9 @@ from onnx2tf.tflite_builder.passes.graph_cleanup import (
 from onnx2tf.tflite_builder.passes.prune_reconcile import (
     run_indexed_prune_reconcile_cleanup,
 )
+from onnx2tf.tflite_builder.passes.post_cleanup_sinet_csp_attention_orchestration import (
+    run_post_cleanup_sinet_csp_attention_cleanup,
+)
 from onnx2tf.tflite_builder.passes.topology_layout_refresh import (
     run_topology_layout_refresh,
 )
@@ -4894,16 +4897,12 @@ def lower_onnx_to_ir(
     )
     # Dead-op pruning can unblock strict locality guards in this recovery.
     # Its pre-Add/PRELU rewrites can recreate SiNet dual-resize adapters.
-    _post_cleanup_sinet_preadd_resize_results = (
-        _run_sinet_preadd_resize_recovery_sequence()
-    )
     # Late SiNet rewrites can recreate SA/PA MIRROR_PAD NCHW<->NHWC bridges.
     session.record_phase_result(
         "cleanup.post_cleanup.csp_attention",
-        _optimize_transpose_csp_attention_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        ),
+        run_post_cleanup_sinet_csp_attention_cleanup(
+            shared_model_ir_pass_context,
+        )[1],
     )
     session.record_phase_result(
         "cleanup.post_cleanup.sa_pa_mirrorpad",

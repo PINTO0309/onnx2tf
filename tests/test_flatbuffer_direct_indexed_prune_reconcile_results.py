@@ -34,7 +34,11 @@ PREDECESSOR_TARGETS = (
 SUCCESSORS = (
     "_advance_post_progress",
     "_advance_post_progress",
-    "_post_cleanup_sinet_preadd_resize_results",
+    "cleanup.post_cleanup.csp_attention",
+)
+POST_CLEANUP_OWNER_EXPRESSION = (
+    "run_post_cleanup_sinet_csp_attention_cleanup("
+    "shared_model_ir_pass_context)[1]"
 )
 RESULT_SCHEMA = {
     "removed_dead_operators": 0,
@@ -303,7 +307,10 @@ def test_indexed_prune_reconcile_phase_boundaries_are_explicit() -> None:
         if successor == "_advance_post_progress":
             assert _call_name(block[index + 1]) == successor
         else:
-            assert _single_target(block[index + 1]) == successor
+            assert _phase_id(block[index + 1]) == successor
+            assert ast.unparse(block[index + 1].value.args[1]) == (
+                POST_CLEANUP_OWNER_EXPRESSION
+            )
 
 
 def test_raw_prune_reconcile_result_schemas_are_explicit() -> None:
@@ -400,8 +407,11 @@ def test_very_late_residual_cleanup_uses_phase_result_store() -> None:
     assert _phase_id(lowerer.body[indices[0] - 1]) == (
         "shape_topology.terminal.indexed_convergence"
     )
-    assert _single_target(lowerer.body[indices[-1] + 1]) == (
-        "_post_cleanup_sinet_preadd_resize_results"
+    assert _phase_id(lowerer.body[indices[-1] + 1]) == (
+        "cleanup.post_cleanup.csp_attention"
+    )
+    assert ast.unparse(lowerer.body[indices[-1] + 1].value.args[1]) == (
+        POST_CLEANUP_OWNER_EXPRESSION
     )
     assert not any(
         isinstance(node, ast.Name) and node.id in VERY_LATE_RESULT_TARGETS
