@@ -8,6 +8,9 @@ import pytest
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import (
+    layout_pass_set_2_qlinear_preadd_orchestration,
+)
 from onnx2tf.tflite_builder.passes.attention_recovery_orchestration import (
     ATTENTION_GATE_QDQ_PASS_IDS,
     PREADD_MEAN_ATTENTION_PASS_IDS,
@@ -151,19 +154,20 @@ def _contexts() -> tuple[
 
 def test_layout_pass_set_2_qlinear_preadd_current_contract() -> None:
     body = _guard_body()
-    first = next(
+    assignment = next(
         statement
         for statement in body
-        if _single_target(statement) == RESULT_TARGETS[0]
+        if _single_target(statement) == COMPOSITE_TARGET
     )
-    index = body.index(first)
-    assert _call_name(first) == CHILD_OWNERS[0]
-    first_call = _call(first)
-    assert first_call is not None
-    assert [ast.unparse(argument) for argument in first_call.args] == [
-        "layout_recovery_context"
+    index = body.index(assignment)
+    assert _call_name(assignment) == OWNER
+    call = _call(assignment)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == [
+        "layout_recovery_context",
+        "attention_recovery_context",
     ]
-    assert first_call.keywords == []
+    assert call.keywords == []
 
     predecessor = body[index - 1]
     assert _call_name(predecessor) == PREDECESSOR
@@ -174,16 +178,7 @@ def test_layout_pass_set_2_qlinear_preadd_current_contract() -> None:
     ]
     assert predecessor_call.keywords == []
 
-    second = body[index + 1]
-    assert _single_target(second) == RESULT_TARGETS[1]
-    assert _call_name(second) == CHILD_OWNERS[1]
-    second_call = _call(second)
-    assert second_call is not None
-    assert [ast.unparse(argument) for argument in second_call.args] == [
-        "attention_recovery_context"
-    ]
-    assert second_call.keywords == []
-    assert _phase_id(body[index + 2]) == SUCCESSOR_PHASE_ID
+    assert _phase_id(body[index + 1]) == SUCCESSOR_PHASE_ID
     assert not any(
         isinstance(node, ast.Name)
         and isinstance(node.ctx, ast.Load)
@@ -216,10 +211,6 @@ def test_layout_pass_set_2_qlinear_preadd_child_schemas_and_contexts() -> None:
     assert preadd_results[1][5] is callback_results["unary"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="layout-pass-set-2 QLinear/pre-add owner is not implemented",
-)
 def test_layout_pass_set_2_qlinear_preadd_has_one_two_context_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -269,3 +260,43 @@ def test_layout_pass_set_2_qlinear_preadd_has_one_two_context_owner() -> None:
         and "lower_from_onnx2tf" in ast.unparse(node)
         for node in ast.parse(OWNER_PATH.read_text(encoding="utf-8")).body
     )
+
+
+def test_layout_pass_set_2_qlinear_preadd_runtime_order_and_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    layout_context, attention_context, _ = _contexts()
+    qlinear_results = (({"qlinear": 1},), ({"layout": 2},))
+    preadd_results = (({"preadd": 3},), ({"attention": 4},))
+    observed: list[tuple[str, object]] = []
+
+    def _qlinear(active_context: LayoutRecoveryContext) -> object:
+        observed.append((CHILD_OWNERS[0], active_context))
+        return qlinear_results
+
+    def _preadd(active_context: AttentionRecoveryContext) -> object:
+        observed.append((CHILD_OWNERS[1], active_context))
+        return preadd_results
+
+    monkeypatch.setattr(
+        layout_pass_set_2_qlinear_preadd_orchestration,
+        CHILD_OWNERS[0],
+        _qlinear,
+    )
+    monkeypatch.setattr(
+        layout_pass_set_2_qlinear_preadd_orchestration,
+        CHILD_OWNERS[1],
+        _preadd,
+    )
+
+    actual = layout_pass_set_2_qlinear_preadd_orchestration.run_layout_pass_set_2_qlinear_preadd_cleanup(
+        layout_context,
+        attention_context,
+    )
+    assert actual[0] is qlinear_results
+    assert actual[1] is preadd_results
+    assert observed == [
+        (CHILD_OWNERS[0], layout_context),
+        (CHILD_OWNERS[1], attention_context),
+    ]
+    assert layout_context.pass_context is attention_context.pass_context

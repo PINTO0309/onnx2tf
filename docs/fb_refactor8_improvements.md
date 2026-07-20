@@ -7235,3 +7235,24 @@ Focused and reference-based affected sequential validation report
 is the deliberately absent owner module. Phase-store validation remains
 `2 passed`, the managed inventory remains 36, and the store remains exactly
 128 IDs and 128 owners.
+
+## Extract layout-pass-set-2 QLinear/pre-add recovery
+
+`passes/layout_pass_set_2_qlinear_preadd_orchestration.py` now owns the two
+leading recovery children. It forwards the exact existing
+`LayoutRecoveryContext` and `AttentionRecoveryContext` in source order and
+returns both complete nested result tuples by identity. Their shared embedded
+`ModelIRPassContext` and all callback objects remain untouched.
+
+The lowerer replaces only the two observation-only locals with
+`_layout_pass_set_2_qlinear_preadd_results`. The existing layout-opt guard,
+pass-set progress description, and recorded dequant/TransposeConv/quantize
+successor phase remain unchanged. Both specialized child owners and their
+independent routes remain available.
+
+The first affected run deliberately recorded six failures across four files;
+all were stale direct-target, guard-discovery, or predecessor expectations.
+After owner-aware updates, sequential validation passes: focused `4`, affected
+`304`, and standard `92 / 55 / 196 / 2 / 11`. Ruff, bytecode compilation,
+and whitespace checks pass. The phase store remains exactly 128 IDs and 128
+owners, while the managed unconsumed-result inventory decreases from 36 to 35.

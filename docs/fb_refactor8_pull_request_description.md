@@ -1933,3 +1933,17 @@ is the deliberately absent future owner. Production behavior, the surrounding
 layout-opt guard and recorded successor phase, dependencies, TensorFlow
 isolation, the managed 36-result inventory, and the exactly 128-ID/128-owner
 phase store remain unchanged.
+
+The latest implementation adds a straight-line layout-pass-set-2
+QLinear/pre-add owner. It preserves both distinct callback-bearing context
+objects, their common embedded pass context, fixed child order, and both raw
+nested result identities.
+
+Only the two observation-only lowerer assignments are replaced. The enclosing
+layout-opt guard, progress description, recorded successor phase, graph
+behavior, APIs, artifacts, dependencies, and TensorFlow isolation remain
+unchanged. The initially recorded six affected failures were all stale
+structural ownership expectations; after owner-aware updates, focused `4`,
+affected `304`, and standard `92 / 55 / 196 / 2 / 11` sequential tests pass.
+The phase store remains exactly 128 IDs and 128 owners, and the managed
+unconsumed-result inventory decreases from 36 to 35.

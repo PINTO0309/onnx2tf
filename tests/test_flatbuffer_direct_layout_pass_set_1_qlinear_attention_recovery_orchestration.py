@@ -82,7 +82,18 @@ SET_2_RESULT_TARGETS = (
 SET_2_COMPOSITE_TARGET = "_layout_pass_set_2_qlinear_layout_recovery_results"
 SET_2_PREDECESSOR = "_set_post_progress_desc"
 SET_2_PREDECESSOR_ARGUMENT = "layout recovery pass-set 2"
-SET_2_SUCCESSOR_TARGET = "_layout_pass_set_2_preadd_attention_gate_results"
+SET_2_OUTER_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "layout_pass_set_2_qlinear_preadd_orchestration.py"
+)
+SET_2_OUTER_OWNER = "run_layout_pass_set_2_qlinear_preadd_cleanup"
+SET_2_OUTER_TARGET = "_layout_pass_set_2_qlinear_preadd_results"
+SET_2_SUCCESSOR_PHASE_ID = (
+    "cleanup.layout_pass_set_2.dequant_transposeconv_quantize"
+)
 
 QLINEAR_SCHEMA = (
     ("optimized_transpose_mean_hardsigmoid_muladd_chains",),
@@ -235,7 +246,11 @@ def _set_2_guard_body() -> list[ast.stmt]:
         and ast.unparse(statement.test) == GUARD
         and any(
             _single_target(candidate)
-            in (*SET_2_RESULT_TARGETS, SET_2_COMPOSITE_TARGET)
+                in (
+                    *SET_2_RESULT_TARGETS,
+                    SET_2_COMPOSITE_TARGET,
+                    SET_2_OUTER_TARGET,
+                )
             for candidate in statement.body
         )
     )
@@ -445,14 +460,15 @@ def test_layout_pass_set_2_qlinear_layout_recovery_current_contract() -> None:
     assignment = next(
         statement
         for statement in body
-        if _single_target(statement) == SET_2_COMPOSITE_TARGET
+        if _single_target(statement) == SET_2_OUTER_TARGET
     )
     index = body.index(assignment)
-    assert _call_name(assignment) == SET_2_OWNER
+    assert _call_name(assignment) == SET_2_OUTER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
-        "layout_recovery_context"
+        "layout_recovery_context",
+        "attention_recovery_context",
     ]
     assert call.keywords == []
     predecessor = body[index - 1]
@@ -463,7 +479,7 @@ def test_layout_pass_set_2_qlinear_layout_recovery_current_contract() -> None:
         SET_2_PREDECESSOR_ARGUMENT
     ]
     assert predecessor_call.keywords == []
-    assert _single_target(body[index + 1]) == SET_2_SUCCESSOR_TARGET
+    assert _phase_id(body[index + 1]) == SET_2_SUCCESSOR_PHASE_ID
     assert not any(
         isinstance(node, ast.Name)
         and node.id in SET_2_RESULT_TARGETS
@@ -502,14 +518,15 @@ def test_layout_pass_set_2_qlinear_layout_recovery_has_one_context_owner() -> No
     assignment = next(
         statement
         for statement in body
-        if _single_target(statement) == SET_2_COMPOSITE_TARGET
+        if _single_target(statement) == SET_2_OUTER_TARGET
     )
     index = body.index(assignment)
-    assert _call_name(assignment) == SET_2_OWNER
+    assert _call_name(assignment) == SET_2_OUTER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
-        "layout_recovery_context"
+        "layout_recovery_context",
+        "attention_recovery_context",
     ]
     assert call.keywords == []
     predecessor = body[index - 1]
@@ -519,7 +536,7 @@ def test_layout_pass_set_2_qlinear_layout_recovery_has_one_context_owner() -> No
     assert [ast.literal_eval(argument) for argument in predecessor_call.args] == [
         SET_2_PREDECESSOR_ARGUMENT
     ]
-    assert _single_target(body[index + 1]) == SET_2_SUCCESSOR_TARGET
+    assert _phase_id(body[index + 1]) == SET_2_SUCCESSOR_PHASE_ID
     assert not any(
         isinstance(node, ast.Name) and node.id in SET_2_RESULT_TARGETS
         for node in ast.walk(_lowerer())
@@ -533,6 +550,19 @@ def test_layout_pass_set_2_qlinear_layout_recovery_has_one_context_owner() -> No
     assert all(
         name in lowerer_functions for name in SET_2_CURRENT_CHILD_OWNERS
     )
+    outer_owner = _functions(SET_2_OUTER_OWNER_PATH)[SET_2_OUTER_OWNER]
+    outer_calls = [
+        node
+        for node in ast.walk(outer_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == SET_2_OWNER
+    ]
+    assert len(outer_calls) == 1
+    assert [ast.unparse(argument) for argument in outer_calls[0].args] == [
+        "layout_context"
+    ]
+    assert outer_calls[0].keywords == []
 
 
 def test_layout_pass_set_2_qlinear_layout_recovery_runtime_identity(

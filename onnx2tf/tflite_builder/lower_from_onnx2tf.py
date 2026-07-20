@@ -198,8 +198,8 @@ from onnx2tf.tflite_builder.passes.attention_recovery_orchestration import (
 from onnx2tf.tflite_builder.passes.layout_pass_set_1_mean_attention_gate_orchestration import (
     run_layout_pass_set_1_mean_attention_gate_cleanup,
 )
-from onnx2tf.tflite_builder.passes.layout_pass_set_2_preadd_attention_gate_orchestration import (
-    run_layout_pass_set_2_preadd_attention_gate_recovery,
+from onnx2tf.tflite_builder.passes.layout_pass_set_2_qlinear_preadd_orchestration import (
+    run_layout_pass_set_2_qlinear_preadd_cleanup,
 )
 from onnx2tf.tflite_builder.passes.layout_pass_set_2_channel_preadd_orchestration import (
     run_layout_pass_set_2_channel_preadd_recovery,
@@ -213,9 +213,6 @@ from onnx2tf.tflite_builder.passes.qlinear_recovery_orchestration import (
 )
 from onnx2tf.tflite_builder.passes.layout_pass_set_1_qlinear_attention_recovery_orchestration import (
     run_layout_pass_set_1_qlinear_attention_recovery,
-)
-from onnx2tf.tflite_builder.passes.layout_pass_set_2_qlinear_layout_recovery_orchestration import (
-    run_layout_pass_set_2_qlinear_layout_recovery,
 )
 from onnx2tf.tflite_builder.passes.layout_attention_quantized_suffix_orchestration import (
     LayoutAttentionQuantizedSuffixContext,
@@ -4499,14 +4496,10 @@ def lower_onnx_to_ir(
         # Final recovery sweep:
         # some transpose-binary patterns become shape-safe only after static
         # metadata reconciliation, so run bridge passes once more.
-        _layout_pass_set_2_qlinear_layout_recovery_results = (
-            run_layout_pass_set_2_qlinear_layout_recovery(
-                layout_recovery_context
-            )
-        )
-        _layout_pass_set_2_preadd_attention_gate_results = (
-            run_layout_pass_set_2_preadd_attention_gate_recovery(
-                attention_recovery_context
+        _layout_pass_set_2_qlinear_preadd_results = (
+            run_layout_pass_set_2_qlinear_preadd_cleanup(
+                layout_recovery_context,
+                attention_recovery_context,
             )
         )
         session.record_phase_result(

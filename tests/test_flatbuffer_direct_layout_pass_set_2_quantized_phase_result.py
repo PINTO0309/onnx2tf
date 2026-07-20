@@ -11,7 +11,7 @@ OWNER_EXPRESSION = (
     "_optimize_dequant_transposeconv_quantize_chains(model_ir, "
     "layout_state=session.layout_state)"
 )
-PREDECESSOR_TARGET = "_layout_pass_set_2_preadd_attention_gate_results"
+PREDECESSOR_TARGET = "_layout_pass_set_2_qlinear_preadd_results"
 SUCCESSOR_TARGET = "_layout_pass_set_2_quantized_activation_binary_results"
 
 

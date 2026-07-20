@@ -161,7 +161,7 @@ def test_direct_quantized_transpose_conv_results_are_retained_observation_only()
         "layout_state=session.layout_state))"
     )
     assert _single_target(second_body[second_index - 1]) == (
-        "_layout_pass_set_2_preadd_attention_gate_results"
+            "_layout_pass_set_2_qlinear_preadd_results"
     )
     assert _single_target(second_body[second_index + 1]) == (
         "_layout_pass_set_2_quantized_activation_binary_results"

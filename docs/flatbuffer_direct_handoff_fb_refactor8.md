@@ -6979,3 +6979,52 @@ update only structural expectations made stale by the new outer route. Run
 affected and standard gates sequentially under `uv`, confirm the expected
 managed inventory reduction from 36 to 35, then commit and push the complete
 unit. Do not create, update, reopen, or otherwise modify a pull request.
+
+## Layout-pass-set-2 QLinear/pre-add implementation checkpoint
+
+`passes/layout_pass_set_2_qlinear_preadd_orchestration.py` now provides
+`run_layout_pass_set_2_qlinear_preadd_cleanup()`. It calls
+`run_layout_pass_set_2_qlinear_layout_recovery(layout_context)` followed by
+`run_layout_pass_set_2_preadd_attention_gate_recovery(attention_context)` and
+returns both complete raw child tuples without copying, flattening, schema
+inspection, or result-driven control flow. Runtime injection proves exact
+order, both specialized context identities, their common embedded
+`ModelIRPassContext`, absence of keyword options, and both result identities.
+
+The lowerer replaces only
+`_layout_pass_set_2_qlinear_layout_recovery_results` and
+`_layout_pass_set_2_preadd_attention_gate_results` with
+`_layout_pass_set_2_qlinear_preadd_results`. It passes the existing
+`layout_recovery_context` and `attention_recovery_context` directly. The
+enclosing `optimize_layout_transpose_chains` guard and
+`_set_post_progress_desc("layout recovery pass-set 2")` predecessor remain
+unchanged. Recorded
+`cleanup.layout_pass_set_2.dequant_transposeconv_quantize` remains the direct
+successor. Both child modules, nested owners, callbacks, lowerer compatibility
+wrappers, and independent routes remain available; only the now-unused direct
+lowerer imports were removed.
+
+The first fixed 9-file affected run was intentionally executed before test
+updates and recorded six failures across four files. Every failure was a
+stale direct-target, guard-discovery, or predecessor assertion caused by the
+ownership move; no runtime schema, callback identity, pass behavior, phase
+store, or TensorFlow boundary failed. Those structural expectations now
+follow both children through the outer owner.
+
+Sequential validation passes: focused `4`, fixed 9-file affected `304`,
+terminal-layout/efficiency `92`, core `55`, result contracts `196`, phase
+store `2`, and TensorFlow import-blocking, default-direct, and `-cotof` `11`.
+Ruff, bytecode compilation, and whitespace checks pass. The read-only AST
+audit reports 37 raw unconsumed results, 35 managed results after the two
+intentionally retained layout-pass-set-1 recovery-prefix observations, zero
+old QLinear/pre-add targets, one new composite target, and exactly 128 phase
+IDs with 128 owners. No real-model conversion was repeated for this ownership-
+only extraction.
+
+At resume, refresh the managed 35-result inventory and select the next
+smallest source-adjacent, semantically closed observation-only boundary.
+Characterize all guards, recorded phase boundaries, option policies, exact
+context and callback identities, child schemas, and independent routes before
+changing production. Continue with sequential `uv` validation and complete
+checkpoint commits/pushes only. Do not create, update, reopen, or otherwise
+modify a pull request.

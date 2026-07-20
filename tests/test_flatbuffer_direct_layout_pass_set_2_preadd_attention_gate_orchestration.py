@@ -46,8 +46,15 @@ RESULT_TARGETS = (
     "_layout_pass_set_2_attention_gate_qdq_results",
 )
 COMPOSITE_TARGET = "_layout_pass_set_2_preadd_attention_gate_results"
-PREDECESSOR_TARGET = "_layout_pass_set_2_qlinear_layout_recovery_results"
-PREDECESSOR_OWNER = "run_layout_pass_set_2_qlinear_layout_recovery"
+OUTER_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "layout_pass_set_2_qlinear_preadd_orchestration.py"
+)
+OUTER_OWNER = "run_layout_pass_set_2_qlinear_preadd_cleanup"
+OUTER_TARGET = "_layout_pass_set_2_qlinear_preadd_results"
 SUCCESSOR_PHASE_ID = (
     "cleanup.layout_pass_set_2.dequant_transposeconv_quantize"
 )
@@ -129,7 +136,7 @@ def _guard_body() -> list[ast.stmt]:
         and ast.unparse(statement.test) == GUARD
         and any(
             _single_target(candidate)
-            in (*RESULT_TARGETS, COMPOSITE_TARGET)
+                in (*RESULT_TARGETS, COMPOSITE_TARGET, OUTER_TARGET)
             for candidate in statement.body
         )
     )
@@ -171,18 +178,18 @@ def test_layout_pass_set_2_preadd_attention_gate_current_contract() -> None:
     assignment = next(
         statement
         for statement in body
-        if _single_target(statement) == COMPOSITE_TARGET
+        if _single_target(statement) == OUTER_TARGET
     )
     index = body.index(assignment)
-    assert _call_name(assignment) == OWNER
+    assert _call_name(assignment) == OUTER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
-        "attention_recovery_context"
+        "layout_recovery_context",
+        "attention_recovery_context",
     ]
     assert call.keywords == []
-    assert _single_target(body[index - 1]) == PREDECESSOR_TARGET
-    assert _call_name(body[index - 1]) == PREDECESSOR_OWNER
+    assert _call_name(body[index - 1]) == "_set_post_progress_desc"
     assert _phase_id(body[index + 1]) == SUCCESSOR_PHASE_ID
     assert not any(
         isinstance(node, ast.Name)
@@ -258,18 +265,18 @@ def test_layout_pass_set_2_preadd_attention_gate_has_one_context_owner() -> None
     assignment = next(
         statement
         for statement in body
-        if _single_target(statement) == COMPOSITE_TARGET
+        if _single_target(statement) == OUTER_TARGET
     )
     index = body.index(assignment)
-    assert _call_name(assignment) == OWNER
+    assert _call_name(assignment) == OUTER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
-        "attention_recovery_context"
+        "layout_recovery_context",
+        "attention_recovery_context",
     ]
     assert call.keywords == []
-    assert _single_target(body[index - 1]) == PREDECESSOR_TARGET
-    assert _call_name(body[index - 1]) == PREDECESSOR_OWNER
+    assert _call_name(body[index - 1]) == "_set_post_progress_desc"
     assert _phase_id(body[index + 1]) == SUCCESSOR_PHASE_ID
     assert not any(
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
@@ -284,6 +291,19 @@ def test_layout_pass_set_2_preadd_attention_gate_has_one_context_owner() -> None
         if isinstance(node, ast.FunctionDef)
     }
     assert all(name in nested_functions for name in CURRENT_CHILD_OWNERS)
+    outer_owner = _functions(OUTER_OWNER_PATH)[OUTER_OWNER]
+    outer_calls = [
+        node
+        for node in ast.walk(outer_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OWNER
+    ]
+    assert len(outer_calls) == 1
+    assert [ast.unparse(argument) for argument in outer_calls[0].args] == [
+        "attention_context"
+    ]
+    assert outer_calls[0].keywords == []
     assert not any(
         isinstance(node, (ast.Import, ast.ImportFrom))
         and "lower_from_onnx2tf" in ast.unparse(node)
