@@ -12,6 +12,9 @@ from onnx2tf.tflite_builder.ir import ModelIR
 from onnx2tf.tflite_builder.passes.hardswish_se_layout import (
     optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains,
 )
+from onnx2tf.tflite_builder.passes import (
+    terminal_singleton_clamp_sinet_hardswish_orchestration,
+)
 from onnx2tf.tflite_builder.passes.sinet_terminal_layout_recovery_orchestration import (
     SINetTerminalLayoutRecoveryContext,
 )
@@ -192,8 +195,8 @@ def test_terminal_singleton_clamp_sinet_hardswish_current_contract() -> None:
     predecessor = _predecessor_guard(lowerer)
     predecessor_index = lowerer.body.index(predecessor)
     assignment = lowerer.body[predecessor_index + 1]
-    assert _single_target(assignment) == CURRENT_RESULT_TARGET
-    assert _call_name(assignment) == CHILD_OWNERS[0]
+    assert _single_target(assignment) == COMPOSITE_TARGET
+    assert _call_name(assignment) == OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
@@ -207,9 +210,7 @@ def test_terminal_singleton_clamp_sinet_hardswish_current_contract() -> None:
     assert _phase_id(hardswish_record) == HARDSWISH_PHASE_ID
     hardswish_call = _phase_call(hardswish_record)
     assert hardswish_call is not None
-    assert ast.unparse(hardswish_call.args[1]) == (
-        f"{CURRENT_HARDSWISH_WRAPPER}(model_ir)"
-    )
+    assert ast.unparse(hardswish_call.args[1]) == f"{COMPOSITE_TARGET}[1]"
     assert _phase_id(lowerer.body[predecessor_index + 3]) == (
         SUCCESSOR_PHASE_ID
     )
@@ -219,7 +220,6 @@ def test_terminal_singleton_clamp_sinet_hardswish_current_contract() -> None:
     assert not any(
         isinstance(node, ast.Name)
         and node.id == CURRENT_RESULT_TARGET
-        and isinstance(node.ctx, ast.Load)
         for node in ast.walk(lowerer)
     )
 
@@ -260,10 +260,6 @@ def test_terminal_singleton_clamp_sinet_hardswish_wrapper_is_retained() -> None:
     assert call.keywords == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="terminal singleton/Clamp-SiNet/HardSwish owner is not implemented",
-)
 def test_terminal_singleton_clamp_sinet_hardswish_has_one_context_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -331,3 +327,48 @@ def test_terminal_singleton_clamp_sinet_hardswish_has_one_context_owner() -> Non
         and "lower_from_onnx2tf" in ast.unparse(node)
         for node in ast.parse(OWNER_PATH.read_text(encoding="utf-8")).body
     )
+
+
+@pytest.mark.parametrize("include_terminal_singleton", [False, True])
+def test_terminal_singleton_clamp_sinet_hardswish_runtime_order_and_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    include_terminal_singleton: bool,
+) -> None:
+    context, _ = _context()
+    terminal_results = ({"terminal": 1}, {"sinet": 2})
+    hardswish_results = {"hardswish": 3}
+    observed: list[tuple[str, object, dict[str, object]]] = []
+
+    def terminal(active_context: object, **options: object) -> object:
+        observed.append((CHILD_OWNERS[0], active_context, options))
+        return terminal_results
+
+    def hardswish(active_model_ir: object) -> object:
+        observed.append((CHILD_OWNERS[1], active_model_ir, {}))
+        return hardswish_results
+
+    monkeypatch.setattr(
+        terminal_singleton_clamp_sinet_hardswish_orchestration,
+        CHILD_OWNERS[0],
+        terminal,
+    )
+    monkeypatch.setattr(
+        terminal_singleton_clamp_sinet_hardswish_orchestration,
+        CHILD_OWNERS[1],
+        hardswish,
+    )
+
+    actual = terminal_singleton_clamp_sinet_hardswish_orchestration.run_terminal_singleton_clamp_sinet_hardswish_cleanup(
+        context,
+        include_terminal_singleton=include_terminal_singleton,
+    )
+    assert actual[0] is terminal_results
+    assert actual[1] is hardswish_results
+    assert observed == [
+        (
+            CHILD_OWNERS[0],
+            context,
+            {"include_terminal_singleton": include_terminal_singleton},
+        ),
+        (CHILD_OWNERS[1], context.pass_context.model_ir, {}),
+    ]

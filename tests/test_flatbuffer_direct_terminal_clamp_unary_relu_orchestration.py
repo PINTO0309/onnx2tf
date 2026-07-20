@@ -38,13 +38,18 @@ LAYOUT_TRANSPOSE_PATH = (
 TERMINAL_CLAMP_UNARY_RELU = "_run_terminal_clamp_unary_relu_pass_cluster"
 RESULT_TARGET = "_terminal_clamp_unary_relu_results"
 COMPOSITE_OWNER = "run_terminal_singleton_clamp_sinet_cleanup"
-COMPOSITE_TARGET = "_terminal_singleton_clamp_sinet_results"
 COMPOSITE_PATH = (
     REPO_ROOT
     / "onnx2tf"
     / "tflite_builder"
     / "passes"
     / "terminal_singleton_clamp_sinet_orchestration.py"
+)
+LOWERER_COMPOSITE_OWNER = (
+    "run_terminal_singleton_clamp_sinet_hardswish_cleanup"
+)
+LOWERER_COMPOSITE_TARGET = (
+    "_terminal_singleton_clamp_sinet_hardswish_results"
 )
 
 
@@ -266,8 +271,8 @@ def test_terminal_clamp_unary_relu_invocation_remains_zero_argument() -> None:
     assert helper.args.kwonlyargs == []
     assert any(
         isinstance(statement, ast.Assign)
-        and _single_target(statement) == COMPOSITE_TARGET
-        and _direct_call_name(statement) == COMPOSITE_OWNER
+        and _single_target(statement) == LOWERER_COMPOSITE_TARGET
+        and _direct_call_name(statement) == LOWERER_COMPOSITE_OWNER
         for statement in lowerer.body
     )
 
@@ -278,10 +283,10 @@ def test_terminal_clamp_unary_relu_preserves_outer_boundaries() -> None:
         index
         for index, statement in enumerate(lowerer.body)
         if isinstance(statement, ast.Assign)
-        and _single_target(statement) == COMPOSITE_TARGET
+        and _single_target(statement) == LOWERER_COMPOSITE_TARGET
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == COMPOSITE_OWNER
+        and statement.value.func.id == LOWERER_COMPOSITE_OWNER
     )
 
     previous = lowerer.body[invocation_index - 1]
@@ -438,9 +443,9 @@ def test_terminal_clamp_unary_relu_propagates_and_retains_ordered_results(
     invocation_statement = next(
         statement
         for statement in lowerer.body
-        if _direct_call_name(statement) == COMPOSITE_OWNER
+        if _direct_call_name(statement) == LOWERER_COMPOSITE_OWNER
     )
-    assert _single_target(invocation_statement) == COMPOSITE_TARGET
+    assert _single_target(invocation_statement) == LOWERER_COMPOSITE_TARGET
     assert not any(
         isinstance(node, ast.Name)
         and node.id == RESULT_TARGET

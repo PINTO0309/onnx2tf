@@ -19,13 +19,23 @@ TERMINAL_OWNER_PATH = (
     / "passes"
     / "terminal_activation_bridge_orchestration.py"
 )
+EARLY_TERMINAL_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_singleton_clamp_sinet_hardswish_orchestration.py"
+)
+EARLY_TERMINAL_OWNER = (
+    "run_terminal_singleton_clamp_sinet_hardswish_cleanup"
+)
 HARDSWISH_SE = (
     "_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains"
 )
 OWNER_NAME = (
     "optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains"
 )
-SINET_TERMINAL_TARGET = "_terminal_singleton_clamp_sinet_results"
+SINET_TERMINAL_TARGET = "_terminal_singleton_clamp_sinet_hardswish_results"
 RESULT_TARGET = "_terminal_sinet_hardswish_se_stats"
 DEQUANT_TARGET = "_terminal_dequant_hardsigmoid_bridge_stats"
 LATE_RESULT_TARGET = "_terminal_hardswish_se_stats"
@@ -34,10 +44,7 @@ EXPECTED_PHASE_IDS = (
     "cleanup.terminal.dequant_hardsigmoid_bridge",
 )
 EXPECTED_OWNER_EXPRESSIONS = (
-    (
-        "_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_"
-        "nhwc_chains(model_ir)"
-    ),
+    f"{SINET_TERMINAL_TARGET}[1]",
     "_optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)",
 )
 SINET_RECOVERY_TARGET = "_terminal_sinet_singleton_reshape_results"
@@ -127,27 +134,27 @@ def test_hardswish_se_wrapper_schema_and_cleanup_are_explicit() -> None:
 
 def test_hardswish_se_has_exactly_two_production_forms() -> None:
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
-    owner_statements = [
-        statement
-        for statement in lowerer.body
-        if any(
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == HARDSWISH_SE
-            for node in ast.walk(statement)
-        )
-    ]
-    assert len(owner_statements) == 1
-
-    first_call = next(
-        node
-        for node in ast.walk(owner_statements[0])
-        if isinstance(node, ast.Call)
+    assert not any(
+        isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == HARDSWISH_SE
+        for node in ast.walk(lowerer)
     )
-    assert [ast.unparse(argument) for argument in first_call.args] == ["model_ir"]
-    assert first_call.keywords == []
+    early_terminal_owner = _functions(EARLY_TERMINAL_OWNER_PATH)[
+        EARLY_TERMINAL_OWNER
+    ]
+    early_calls = [
+        node
+        for node in ast.walk(early_terminal_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OWNER_NAME
+    ]
+    assert len(early_calls) == 1
+    assert [ast.unparse(argument) for argument in early_calls[0].args] == [
+        "context.pass_context.model_ir"
+    ]
+    assert early_calls[0].keywords == []
 
     terminal_owner = _functions(TERMINAL_OWNER_PATH)[
         "run_terminal_activation_bridge_cleanup"

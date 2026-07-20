@@ -204,7 +204,7 @@ EXPECTED_OWNERS = (
     "_optimize_batchmatmul_reshape_se_nhwc_chains",
     "_optimize_batchmatmul_transpose_input_to_adj_flags",
     "_optimize_split_conv_concat_transpose_bridge_to_single_post_nchw",
-    "_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains",
+    "_terminal_singleton_clamp_sinet_hardswish_results[1]",
     "_optimize_transpose_dequant_hardsigmoid_quantize_bridges",
     "_run_indexed_shape_convergence_cleanup",
     "_optimize_transpose_pre_add_mul_add_prelu_nhwc_chains",
@@ -274,7 +274,9 @@ EXPECTED_OWNERS = (
     "run_topology_layout_validation",
 )
 EXPECTED_MODEL_ARGUMENTS = (
-    *("model_ir",) * 77,
+    *("model_ir",) * 60,
+    None,
+    *("model_ir",) * 16,
     "shared_model_ir_pass_context",
     *("model_ir",) * 8,
     *("fallback_ir",) * 14,
@@ -464,17 +466,18 @@ def test_one_hundred_twenty_eight_observations_use_the_bounded_session_store() -
     assert tuple(
         ast.literal_eval(_statement_call(node).args[0]) for node in records
     ) == EXPECTED_PHASE_IDS
-    nested_calls = tuple(_statement_call(node).args[1] for node in records)
-    assert all(isinstance(call, ast.Call) for call in nested_calls)
+    owners = tuple(_statement_call(node).args[1] for node in records)
+    assert sum(isinstance(owner, ast.Call) for owner in owners) == 127
+    assert sum(isinstance(owner, ast.Subscript) for owner in owners) == 1
     assert tuple(
-        call.func.id
-        for call in nested_calls
-        if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+        owner.func.id
+        if isinstance(owner, ast.Call) and isinstance(owner.func, ast.Name)
+        else ast.unparse(owner)
+        for owner in owners
     ) == EXPECTED_OWNERS
     assert tuple(
-        ast.unparse(call.args[0])
-        for call in nested_calls
-        if isinstance(call, ast.Call)
+        ast.unparse(owner.args[0]) if isinstance(owner, ast.Call) else None
+        for owner in owners
     ) == EXPECTED_MODEL_ARGUMENTS
     assert not any(
         isinstance(node, ast.Name) and node.id in EXPECTED_RESULT_TARGETS

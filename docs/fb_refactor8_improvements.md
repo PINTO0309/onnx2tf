@@ -7471,3 +7471,39 @@ and `395 passed, 1 xfailed` across 14 files; the sole expected failure is the
 deliberately absent owner module. Phase-store validation remains `2 passed`,
 the raw/managed inventory remains 32/30, and the store remains exactly 128 IDs
 and 128 owners. Ruff, bytecode compilation, and whitespace checks pass.
+
+## Extract terminal singleton/Clamp-SiNet/HardSwish cleanup
+
+`passes/terminal_singleton_clamp_sinet_hardswish_orchestration.py` now owns
+the characterized terminal singleton/Clamp-SiNet composite and its immediately
+following HardSwish-SE cleanup. It forwards the exact existing
+`SINetTerminalLayoutRecoveryContext` and layout-option policy to
+`run_terminal_singleton_clamp_sinet_cleanup()`, then calls the public
+`optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains()`
+owner with `context.pass_context.model_ir`. Both complete raw result objects
+are returned by identity without flattening, copying, schema inspection, or
+result-driven control flow. Runtime injection covers both Boolean option paths
+and proves exact child order, context/model identity, option forwarding, and
+result identity.
+
+The lowerer replaces only `_terminal_singleton_clamp_sinet_results` with
+`_terminal_singleton_clamp_sinet_hardswish_results`. It records composite
+element `[1]` immediately under the unchanged
+`cleanup.terminal.sinet_hardswish_se` phase ID, before the existing terminal
+Dequant/HardSigmoid phase mutates the graph. The layout-guarded QKV predecessor,
+Dequant successor, terminal SiNet/singleton-Reshape successor, child owner,
+compatibility wrapper, public APIs, artifacts, dependencies, TensorFlow
+isolation, and graph mutation order remain unchanged.
+
+The first fixed 14-file affected run was intentionally executed before stale
+test updates and recorded `376 passed / 22 failed`, with failures across 11
+files. Every failure was a stale direct-owner, target, route, phase-expression,
+or neighbor assertion caused by the ownership move; no runtime schema, option
+path, context identity, pass behavior, phase count, or TensorFlow boundary
+failed. After owner-aware updates, focused `7`, fixed affected `398`, and
+standard `92 / 55 / 196 / 2 / 11` sequential tests pass. Ruff, bytecode
+compilation, and whitespace checks pass. The AST audit reports 31 raw and 29
+managed unconsumed lowerer results, zero old selected-target stores, one new
+composite store and load, and exactly 128 phase calls with 128 unique IDs and
+128 owners. No real-model conversion was repeated for this ownership-only
+extraction.

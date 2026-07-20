@@ -26,6 +26,9 @@ OWNER_NAME = "optimize_transpose_dequant_hardsigmoid_quantize_bridges"
 HARDSWISH_SE = (
     "_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains"
 )
+TERMINAL_SINET_HARDSWISH_RESULT = (
+    "_terminal_singleton_clamp_sinet_hardswish_results"
+)
 MIXED_ATTENTION = "run_mixed_attention_layout_cleanup"
 LATE_DEQUANT_CLUSTER = "_run_late_dequant_unary_fanout_pass_cluster"
 LATE_OWNER_PATH = (
@@ -190,7 +193,13 @@ def test_lowerer_records_post_sinet_dequant_hardsigmoid_result() -> None:
         )
 
     terminal_index = lowerer.body.index(direct_results[0])
-    assert _call_name(lowerer.body[terminal_index - 1]) == HARDSWISH_SE
+    hardswish_record = lowerer.body[terminal_index - 1]
+    assert _phase_id(hardswish_record) == "cleanup.terminal.sinet_hardswish_se"
+    hardswish_record_call = _statement_call(hardswish_record)
+    assert hardswish_record_call is not None
+    assert ast.unparse(hardswish_record_call.args[1]) == (
+        f"{TERMINAL_SINET_HARDSWISH_RESULT}[1]"
+    )
     assert _single_target(lowerer.body[terminal_index + 1]) == (
         "_terminal_sinet_singleton_reshape_results"
     )

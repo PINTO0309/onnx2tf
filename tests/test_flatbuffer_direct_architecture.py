@@ -3106,11 +3106,14 @@ def test_lowerer_sinet_terminal_layout_recovery_has_one_ordered_owner() -> None:
         for statement in lowerer.body
         if isinstance(statement, ast.Assign)
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_terminal_singleton_clamp_sinet_results"
+        and statement.targets[0].id
+        == "_terminal_singleton_clamp_sinet_hardswish_results"
     )
     assert isinstance(composite.value, ast.Call)
     assert isinstance(composite.value.func, ast.Name)
-    assert composite.value.func.id == "run_terminal_singleton_clamp_sinet_cleanup"
+    assert composite.value.func.id == (
+        "run_terminal_singleton_clamp_sinet_hardswish_cleanup"
+    )
 
 
 def test_terminal_affine_prelu_owner_has_one_lowerer_adapter() -> None:
@@ -5385,10 +5388,20 @@ def test_hardswish_se_layout_optimizer_has_one_module_owner() -> None:
     lowerer_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
+    terminal_owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "terminal_singleton_clamp_sinet_hardswish_orchestration.py"
+    )
     owner_source = owner_path.read_text(encoding="utf-8")
     lowerer_source = lowerer_path.read_text(encoding="utf-8")
     owner_tree = ast.parse(owner_source)
     lowerer_tree = ast.parse(lowerer_source)
+    terminal_owner_tree = ast.parse(
+        terminal_owner_path.read_text(encoding="utf-8")
+    )
     owner_name = (
         "optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains"
     )
@@ -5432,14 +5445,32 @@ def test_hardswish_se_layout_optimizer_has_one_module_owner() -> None:
         for node in lowerer_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
-    production_calls = [
+    lowerer_wrapper_calls = [
         node
         for node in ast.walk(lowerer)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
+    assert lowerer_wrapper_calls == []
+    terminal_owner = next(
+        node
+        for node in terminal_owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_terminal_singleton_clamp_sinet_hardswish_cleanup"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(terminal_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == owner_name
+    ]
     assert len(production_calls) == 1
+    assert [ast.unparse(argument) for argument in production_calls[0].args] == [
+        "context.pass_context.model_ir"
+    ]
+    assert production_calls[0].keywords == []
     summary_owner = next(
         node
         for node in owner_tree.body
@@ -6875,10 +6906,12 @@ def test_lowerer_terminal_clamp_unary_relu_cluster_reuses_scope() -> None:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_terminal_singleton_clamp_sinet_results"
+        and statement.targets[0].id
+        == "_terminal_singleton_clamp_sinet_hardswish_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == "run_terminal_singleton_clamp_sinet_cleanup"
+        and statement.value.func.id
+        == "run_terminal_singleton_clamp_sinet_hardswish_cleanup"
     )
     previous_boundary = lowerer.body[invocation_index - 1]
     assert isinstance(previous_boundary, ast.If)
@@ -6899,8 +6932,15 @@ def test_lowerer_terminal_clamp_unary_relu_cluster_reuses_scope() -> None:
         for keyword in invocation.value.keywords
     } == {"include_terminal_singleton": "optimize_layout_transpose_chains"}
     next_boundary = lowerer.body[invocation_index + 1]
-    assert _phase_aware_call(next_boundary)[1] == (
+    assert isinstance(next_boundary, ast.Expr)
+    assert isinstance(next_boundary.value, ast.Call)
+    assert isinstance(next_boundary.value.func, ast.Attribute)
+    assert ast.unparse(next_boundary.value.func) == "session.record_phase_result"
+    assert ast.literal_eval(next_boundary.value.args[0]) == (
         "cleanup.terminal.sinet_hardswish_se"
+    )
+    assert ast.unparse(next_boundary.value.args[1]) == (
+        "_terminal_singleton_clamp_sinet_hardswish_results[1]"
     )
 
 

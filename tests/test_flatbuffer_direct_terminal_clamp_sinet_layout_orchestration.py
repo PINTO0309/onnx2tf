@@ -44,7 +44,8 @@ LOWERER_OWNER_PATH = (
     / "terminal_singleton_clamp_sinet_orchestration.py"
 )
 LOWERER_OWNER = "run_terminal_singleton_clamp_sinet_cleanup"
-COMPOSITE_TARGET = "_terminal_singleton_clamp_sinet_results"
+OUTER_OWNER = "run_terminal_singleton_clamp_sinet_hardswish_cleanup"
+OUTER_TARGET = "_terminal_singleton_clamp_sinet_hardswish_results"
 PREDECESSOR_GUARD = "optimize_layout_transpose_chains"
 SUCCESSOR_PHASE_ID = "cleanup.terminal.sinet_hardswish_se"
 
@@ -98,10 +99,10 @@ def test_terminal_clamp_sinet_layout_current_boundary_and_schema() -> None:
     assignment = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == COMPOSITE_TARGET
+        if _single_target(statement) == OUTER_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == LOWERER_OWNER
+    assert _call_name(assignment) == OUTER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
@@ -193,10 +194,10 @@ def test_terminal_clamp_sinet_layout_has_one_context_owner() -> None:
     assignment = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == COMPOSITE_TARGET
+        if _single_target(statement) == OUTER_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == LOWERER_OWNER
+    assert _call_name(assignment) == OUTER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [

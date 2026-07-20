@@ -12,7 +12,7 @@ EXPECTED_OWNER_EXPRESSION = (
     "model_ir, layout_state=session.layout_state)"
 )
 PREDECESSOR_TARGET = "_terminal_qkv_attention_results"
-SUCCESSOR_TARGET = "_terminal_singleton_clamp_sinet_results"
+SUCCESSOR_TARGET = "_terminal_singleton_clamp_sinet_hardswish_results"
 
 
 def _lowerer() -> ast.FunctionDef:

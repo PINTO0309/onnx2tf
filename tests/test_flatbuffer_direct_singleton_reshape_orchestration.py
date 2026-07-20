@@ -38,13 +38,18 @@ PHASE_PATH = (
 )
 SINGLETON_RESHAPE = "_run_singleton_reshape_layout_pass_cluster"
 LAYOUT_MULTI_OWNER = "run_terminal_singleton_clamp_sinet_cleanup"
-LAYOUT_MULTI_TARGET = "_terminal_singleton_clamp_sinet_results"
 LAYOUT_MULTI_PATH = (
     REPO_ROOT
     / "onnx2tf"
     / "tflite_builder"
     / "passes"
     / "terminal_singleton_clamp_sinet_orchestration.py"
+)
+LOWERER_LAYOUT_MULTI_OWNER = (
+    "run_terminal_singleton_clamp_sinet_hardswish_cleanup"
+)
+LOWERER_LAYOUT_MULTI_TARGET = (
+    "_terminal_singleton_clamp_sinet_hardswish_results"
 )
 TERMINAL_COMPOSITE_OWNER = "run_terminal_sinet_singleton_reshape_cleanup"
 TERMINAL_COMPOSITE_TARGET = "_terminal_sinet_singleton_reshape_results"
@@ -474,9 +479,9 @@ def test_singleton_reshape_propagates_policy_results_to_direct_primary_callers(
         for statement in lowerer.body
         if isinstance(statement, ast.Assign)
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == LAYOUT_MULTI_TARGET
+        and statement.targets[0].id == LOWERER_LAYOUT_MULTI_TARGET
     )
-    assert _direct_call_name(layout_multi_composite) == LAYOUT_MULTI_OWNER
+    assert _direct_call_name(layout_multi_composite) == LOWERER_LAYOUT_MULTI_OWNER
     composite = next(
         statement
         for statement in lowerer.body
@@ -499,11 +504,11 @@ def test_singleton_reshape_preserves_layout_multi_policy_and_boundaries() -> Non
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == LAYOUT_MULTI_TARGET
+        and statement.targets[0].id == LOWERER_LAYOUT_MULTI_TARGET
     )
     invocation = lowerer.body[invocation_index]
     assert isinstance(invocation, ast.Assign)
-    assert _direct_call_name(invocation) == LAYOUT_MULTI_OWNER
+    assert _direct_call_name(invocation) == LOWERER_LAYOUT_MULTI_OWNER
     assert [ast.unparse(argument) for argument in invocation.value.args] == [
         "sinet_terminal_layout_recovery_context"
     ]

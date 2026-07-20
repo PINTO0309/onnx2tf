@@ -7463,3 +7463,48 @@ run all affected and standard gates sequentially under `uv`, confirm the
 expected raw/managed inventory reduction from 32/30 to 31/29, and commit and
 push the complete unit. Do not create, update, reopen, or otherwise modify a
 pull request.
+
+## Terminal singleton/Clamp-SiNet/HardSwish implementation checkpoint
+
+`passes/terminal_singleton_clamp_sinet_hardswish_orchestration.py` now
+provides `run_terminal_singleton_clamp_sinet_hardswish_cleanup()`. It first
+calls `run_terminal_singleton_clamp_sinet_cleanup()` with the exact existing
+`SINetTerminalLayoutRecoveryContext` and layout-option policy, then calls the
+public HardSwish-SE owner with `context.pass_context.model_ir`. Both complete
+raw child results are returned by identity. Runtime injection for both Boolean
+paths proves exact order, context/model identity, option forwarding, and result
+identity without result-driven control flow.
+
+The lowerer replaces `_terminal_singleton_clamp_sinet_results` with
+`_terminal_singleton_clamp_sinet_hardswish_results` and supplies element `[1]`
+directly to the unchanged `cleanup.terminal.sinet_hardswish_se` record. The
+record remains immediately before terminal Dequant/HardSigmoid cleanup, so
+graph mutation and observation order are unchanged. The layout-guarded QKV
+predecessor and terminal SiNet/singleton-Reshape successor remain fixed. The
+child owner, retained lowerer compatibility wrapper, independent routes,
+public APIs, artifacts, dependencies, and TensorFlow isolation remain intact.
+
+The first fixed 14-file affected run was intentionally captured before stale
+test updates: `376 passed / 22 failed`, with failures across 11 files. Every
+failure was a stale owner, target, route, phase-expression, or neighboring
+boundary expectation caused by the ownership move; no runtime behavior or
+phase-count regression was found. Sequential validation now passes: focused
+`7`, affected `398`, terminal-layout/efficiency `92`, core `55`, result
+contracts `196`, phase store `2`, and TensorFlow import-blocking,
+default-direct, and `-cotof` `11`. Ruff, bytecode compilation, and whitespace
+checks pass.
+
+The read-only AST audit reports 31 raw unconsumed results and 29 managed
+results after excluding the two intentionally retained layout-pass-set-1
+recovery-prefix observations. The old selected target has zero stores, the new
+composite has one store and one load, and the phase store remains exactly 128
+calls, 128 unique IDs, and 128 owners. No real-model conversion was repeated
+for this ownership-only extraction.
+
+At resume, refresh the managed 29-result inventory and select the next smallest
+source-adjacent, semantically closed observation-only boundary. Characterize
+all guards, recorded phase boundaries, option policies, exact context and
+callback identities, child schemas, and independent routes before changing
+production. Continue with sequential `uv` validation and complete checkpoint
+commits/pushes only. Do not create, update, reopen, or otherwise modify a pull
+request.

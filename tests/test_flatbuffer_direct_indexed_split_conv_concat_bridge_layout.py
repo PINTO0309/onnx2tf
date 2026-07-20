@@ -65,10 +65,10 @@ TOP_RESULT = "_terminal_qkv_activation_layout_shape_results"
 LOWERER_OWNER = "run_terminal_affine_qkv_layout_shape_cleanup"
 LOWERER_RESULT = "_terminal_affine_qkv_layout_shape_results"
 TERMINAL_SINGLETON_CLAMP_SINET_OWNER = (
-    "run_terminal_singleton_clamp_sinet_cleanup"
+    "run_terminal_singleton_clamp_sinet_hardswish_cleanup"
 )
 TERMINAL_SINGLETON_CLAMP_SINET_RESULT = (
-    "_terminal_singleton_clamp_sinet_results"
+    "_terminal_singleton_clamp_sinet_hardswish_results"
 )
 PUBLIC_SPLIT_CONV_CONCAT_BRIDGE_OWNER = (
     "optimize_split_conv_concat_transpose_bridge_to_single_post_nchw"

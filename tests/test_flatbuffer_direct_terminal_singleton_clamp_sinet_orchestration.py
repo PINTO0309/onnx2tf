@@ -47,7 +47,8 @@ RESULT_TARGETS = (
     "_terminal_singleton_reshape_results",
     "_terminal_clamp_sinet_layout_results",
 )
-COMPOSITE_TARGET = "_terminal_singleton_clamp_sinet_results"
+LOWERER_OWNER = "run_terminal_singleton_clamp_sinet_hardswish_cleanup"
+LOWERER_TARGET = "_terminal_singleton_clamp_sinet_hardswish_results"
 PREDECESSOR_PHASE_ID = "cleanup.terminal.qkv_split_conv_concat_bridge"
 SUCCESSOR_PHASE_ID = "cleanup.terminal.sinet_hardswish_se"
 GUARD = "optimize_layout_transpose_chains"
@@ -187,8 +188,8 @@ def test_terminal_singleton_clamp_sinet_current_contract() -> None:
 
     guard_index = lowerer.body.index(guard)
     assignment = lowerer.body[guard_index + 1]
-    assert _single_target(assignment) == COMPOSITE_TARGET
-    assert _call_name(assignment) == OWNER
+    assert _single_target(assignment) == LOWERER_TARGET
+    assert _call_name(assignment) == LOWERER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
@@ -293,8 +294,8 @@ def test_terminal_singleton_clamp_sinet_has_one_optional_context_owner() -> None
     guard_index = lowerer.body.index(guard)
     assert _phase_id(guard.body[-1]) == PREDECESSOR_PHASE_ID
     assignment = lowerer.body[guard_index + 1]
-    assert _single_target(assignment) == COMPOSITE_TARGET
-    assert _call_name(assignment) == OWNER
+    assert _single_target(assignment) == LOWERER_TARGET
+    assert _call_name(assignment) == LOWERER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [

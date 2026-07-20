@@ -2076,3 +2076,22 @@ Focused and reference-based affected sequential validation report
 expected failure is the deliberately absent future owner. Production behavior,
 dependencies, TensorFlow isolation, the raw/managed 32/30 inventory, and the
 exactly 128-ID/128-owner phase store remain unchanged.
+
+The latest implementation adds a terminal singleton/Clamp-SiNet/HardSwish
+owner. It reuses the exact existing SiNet terminal context, forwards the
+layout-option policy unchanged, runs the established terminal composite before
+the public HardSwish implementation, and returns both complete raw results by
+identity. The lowerer records returned element `[1]` under the unchanged
+HardSwish phase ID immediately before the existing Dequant/HardSigmoid phase,
+preserving graph mutation order and observation timing.
+
+Only the old observation-only terminal target is replaced. The QKV predecessor,
+Dequant and terminal SiNet/singleton-Reshape successors, child owner,
+compatibility wrapper, APIs, artifacts, dependencies, and TensorFlow isolation
+remain unchanged. The initially recorded `376 passed / 22 failed` affected
+result contained only stale structural ownership expectations across 11 files;
+after owner-aware updates, focused `7`, affected `398`, and standard
+`92 / 55 / 196 / 2 / 11` sequential tests pass. The AST audit reports 31 raw
+and 29 managed unconsumed lowerer results, zero old selected-target stores, one
+new composite store and load, and exactly 128 phase calls, unique IDs, and
+owners.
