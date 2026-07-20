@@ -1973,3 +1973,16 @@ expectations; after owner-aware updates, focused `4`, affected `396`, and
 standard `92 / 55 / 196 / 2 / 11` sequential tests pass. The phase store
 remains exactly 128 IDs and 128 owners, and the managed unconsumed-result
 inventory decreases from 35 to 33.
+
+The next characterization freezes adjacent late final-shape boundary cleanup
+and terminal optional fan-out/singleton cleanup. The two children share the
+exact existing pass context through the already-created late-boundary context;
+the layout option continues to control only elementwise fan-out. Complete raw
+result schemas, child order, observation-only semantics, and the neighboring
+late-affine and terminal Conv/Pool/no-layout boundaries are preserved.
+
+Focused and reference-based affected sequential validation report
+`3 passed, 1 xfailed` and `419 passed, 1 xfailed`; the sole expected failure is
+the deliberately absent future owner. Production behavior, dependencies,
+TensorFlow isolation, the managed 33-result inventory, and the exactly
+128-ID/128-owner phase store remain unchanged.

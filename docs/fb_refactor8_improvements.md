@@ -7299,3 +7299,26 @@ focused `4`, affected `396`, and standard `92 / 55 / 196 / 2 / 11`. Ruff,
 bytecode compilation, and whitespace checks pass. The phase store remains
 exactly 128 IDs and 128 owners, while the managed unconsumed-result inventory
 decreases from 35 to 33.
+
+## Characterize late final-shape/terminal fan-out cleanup
+
+The managed 33-result inventory next selects the two adjacent unconditional
+observations immediately before the terminal Conv/Pool/no-layout branch: late
+final-shape boundary cleanup followed by terminal optional fan-out/singleton
+cleanup. The existing late-boundary context already embeds the exact shared
+`ModelIRPassContext`, so a future owner can forward that object to the first
+child and its `pass_context` member to the second without reconstructing graph,
+layout, or diagnostic state.
+
+The strict contract fixes source order, both shared-context identities, both
+complete nested result schemas, the layout-option policy for elementwise
+fan-out, observation-only results, and the surrounding late-affine predecessor
+and terminal Conv/Pool/no-layout successor. Both existing child owners and
+their independent routes remain part of the contract.
+
+Production remains unchanged pending one straight-line context owner. Focused
+and reference-based affected sequential validation report
+`3 passed, 1 xfailed` and `419 passed, 1 xfailed`; the sole expected failure is
+the deliberately absent owner module. Phase-store validation remains
+`2 passed`, the managed inventory remains 33, and the store remains exactly
+128 IDs and 128 owners. Ruff, bytecode compilation, and whitespace checks pass.
