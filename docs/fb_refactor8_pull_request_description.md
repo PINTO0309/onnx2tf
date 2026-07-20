@@ -2030,3 +2030,16 @@ after owner-aware updates, focused `6`, affected `433`, and standard
 `92 / 55 / 196 / 2 / 11` sequential tests pass. The phase store remains
 exactly 128 IDs and 128 owners, and the managed unconsumed-result inventory
 decreases from 32 to 31.
+
+The next characterization freezes the unconditional late terminal composite
+with the immediately following layout-opt-only Conv/Pool output passthrough.
+The exact late-boundary context, option policy, complete nested schemas,
+optional result, and compatibility wrapper are preserved. The mutually
+exclusive no-layout branch, recorded safe-transpose phase, and affine cleanup
+remain outside the future owner under an equivalent negative-layout guard.
+
+Focused and reference-based affected sequential validation report
+`4 passed, 1 xfailed` and `453 passed, 1 xfailed`; the sole expected failure is
+the deliberately absent future owner. Production behavior, dependencies,
+TensorFlow isolation, the managed 31-result inventory, and the exactly
+128-ID/128-owner phase store remain unchanged.

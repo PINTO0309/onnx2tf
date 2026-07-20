@@ -7393,3 +7393,24 @@ focused `6`, affected `433`, and standard `92 / 55 / 196 / 2 / 11`. Ruff,
 bytecode compilation, and whitespace checks pass. The phase store remains
 exactly 128 IDs and 128 owners, while the managed unconsumed-result inventory
 decreases from 32 to 31.
+
+## Characterize late terminal optional Conv/Pool cleanup
+
+The managed 31-result inventory next selects the unconditional late
+affine/final-shape/terminal composite and the immediately following Conv/Pool
+output passthrough observation that runs only with layout optimization. The
+mutually exclusive no-layout branch remains outside the proposed owner,
+including its recorded safe-transpose phase and affine cleanup.
+
+The strict contract fixes the exact late-boundary context, layout-option
+policy, complete child schemas, retained compatibility wrapper, optional
+Conv/Pool result, and both current branch paths. The future lowerer guard is
+fixed to the equivalent conjunction `not layout_opt and safe_reduction`, so
+the recorded no-layout phase cannot run when layout optimization is enabled.
+
+Production remains unchanged pending one optional-child context owner. Focused
+and reference-based affected sequential validation report
+`4 passed, 1 xfailed` and `453 passed, 1 xfailed`; the sole expected failure is
+the deliberately absent owner module. Phase-store validation remains
+`2 passed`, the managed inventory remains 31, and the store remains exactly
+128 IDs and 128 owners. Ruff, bytecode compilation, and whitespace checks pass.

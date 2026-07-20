@@ -7316,3 +7316,50 @@ recorded phase boundaries, option policies, exact context and callback
 identities, child schemas, and independent routes before changing production.
 Continue with sequential `uv` validation and complete checkpoint commits/pushes
 only. Do not create, update, reopen, or otherwise modify a pull request.
+
+## Late terminal optional Conv/Pool characterization checkpoint
+
+The managed inventory contains 31 unconsumed lowerer results after excluding
+the two intentionally retained layout-pass-set-1 recovery-prefix observations.
+The selected boundary starts with the unconditional
+`_late_affine_final_shape_terminal_results` assignment. Its direct successor
+is the `optimize_layout_transpose_chains` guard whose only body statement stores
+`_terminal_convpool_output_passthrough_stats` from the retained lowerer
+compatibility wrapper. The guard's `elif` contains the recorded no-layout safe
+transpose phase and `_no_layout_fallback_affine_prepost_stats` assignment.
+
+The characterization fixes the exact existing late-boundary context, complete
+late-terminal and Conv/Pool schemas, both Boolean paths, wrapper delegation,
+child order, and observation-only results. The future owner receives one
+`optimize_layout_transpose_chains` policy, forwards it as the existing
+elementwise-fan-out option, and calls public Conv/Pool passthrough only when it
+is true. The no-layout phase and affine cleanup remain outside the owner under
+the equivalent `not optimize_layout_transpose_chains and
+apply_safe_transpose_reduction_lite_on_no_layout_opt` guard. This explicitly
+avoids moving or crossing the recorded phase.
+
+Production remains unchanged pending
+`passes/late_affine_final_shape_terminal_convpool_orchestration.py` and
+`run_late_affine_final_shape_terminal_convpool_cleanup()`. The lowerer must
+replace only the two selected targets with
+`_late_affine_final_shape_terminal_convpool_results`, pass the exact existing
+context and layout option, retain the Conv/Pool compatibility wrapper and
+independent child routes, preserve the recorded late NDHWC predecessor, and
+leave the no-layout phase and affine cleanup in the lowerer.
+
+Focused sequential validation reports `4 passed, 1 xfailed`; the fixed
+31-file affected suite reports `453 passed, 1 xfailed`. The sole expected
+failure requires the intentionally absent owner. Phase-store validation is
+`2 passed`; production, the managed 31-result inventory, and the exactly
+128-ID/128-owner store remain unchanged. Ruff, bytecode compilation, and
+whitespace checks pass. No real-model conversion was repeated for this
+characterization.
+
+At resume, implement only this characterized optional Conv/Pool owner and the
+equivalent negative-layout no-layout guard, convert the strict xfail to runtime
+order, context, option, and result-identity coverage, and update only
+structural expectations made stale by the ownership move. Run the affected
+suite once before changing stale tests, then run all affected and standard
+gates sequentially under `uv`, confirm the expected managed inventory
+reduction from 31 to 30, and commit and push the complete unit. Do not create,
+update, reopen, or otherwise modify a pull request.
