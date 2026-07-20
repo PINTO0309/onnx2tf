@@ -6735,3 +6735,52 @@ callback identities, child schemas, and independent routes before changing
 production. Continue with sequential `uv` validation and complete checkpoint
 commits/pushes only. Do not create, update, reopen, or otherwise modify a pull
 request.
+
+## Late affine/optional elementwise fan-out characterization checkpoint
+
+The refreshed inventory contains 38 unconsumed lowerer results. The selected
+boundary starts with unconditional `_late_affine_concat_results` and continues
+with `_late_concat_elementwise_fanout_stats`, the sole statement in the
+immediately following `optimize_layout_transpose_chains` guard. The affine
+owner receives `shared_model_ir_pass_context`; the fan-out lowerer wrapper
+receives `model_ir`, which is that exact context's model.
+
+The characterization freezes the two-slot affine result: the first mapping
+contains four Conv-affine counters and the second tuple contains the four
+existing Concat/layout mappings. It also freezes the optional fan-out's
+one-counter mapping, enabled-path order, disabled-path non-execution, context
+and model identity, zero-keyword policy, observation-only results, and the
+public fan-out owner behind the retained compatibility wrapper.
+
+Recorded `cleanup.late.ndhwc_cost_volume` remains the direct predecessor. The
+independent `_late_final_shape_boundary_results` assignment remains the direct
+successor after the optional guard and stays outside the proposed owner. No
+public API, artifact, graph mutation, dependency, or TensorFlow boundary has
+changed.
+
+Production is unchanged pending
+`passes/late_affine_optional_fanout_orchestration.py` and
+`run_late_affine_optional_fanout_cleanup()`. The owner must always call
+`run_late_affine_concat_cleanup(context)`, conditionally call
+`optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(
+context.model_ir)` only when `include_elementwise_fanout=True`, and return the
+raw affine tuple plus either the raw fan-out mapping or `None`. The lowerer
+must replace only the two selected locals with
+`_late_affine_optional_fanout_results`, pass the exact shared context and
+layout-optimization flag, remove only the now-empty guard, and keep both outer
+boundaries intact.
+
+Focused sequential validation reports `2 passed, 1 xfailed`; complete
+reference-based affected validation reports `424 passed, 1 xfailed`. The sole
+expected failure requires the intentionally absent owner. Production, both
+flag paths, the 38-result inventory, and the exactly 128-ID/128-owner phase
+store are unchanged. Ruff and whitespace checks pass. No real-model
+conversion was repeated for this characterization.
+
+At resume, implement only this characterized optional owner and lowerer
+replacement, convert the strict xfail to runtime true/false order, model,
+context, option, non-call, and result-identity coverage, and update only
+structural expectations made stale by the new outer route. Run affected and
+standard gates sequentially under `uv`, confirm the expected inventory
+reduction from 38 to 37, then commit and push the complete unit. Do not create,
+update, reopen, or otherwise modify a pull request.

@@ -7127,3 +7127,22 @@ validation passes: focused `5`, affected `636`, and standard
 `92 / 55 / 196 / 2 / 11`. Ruff, bytecode compilation, and whitespace checks
 pass. The phase store remains exactly 128 IDs and 128 owners, while the
 unconsumed lowerer-result inventory decreases from 39 to 38.
+
+## Characterize late affine/optional elementwise fan-out cleanup
+
+The refreshed 38-result inventory selects unconditional late affine/Concat
+cleanup followed immediately by layout-opt-only elementwise fan-out cleanup.
+Both use the exact shared `ModelIRPassContext`; the optional child receives
+its `ModelIR` and preserves the existing no-keyword policy.
+
+The strict contract fixes the two-slot affine result and its nested four-slot
+Concat schema, the one-key fan-out schema, both flag paths, result identity,
+the existing fan-out compatibility wrapper, and observation-only results.
+Recorded late NDHWC cost-volume cleanup remains the predecessor, while the
+independent late final shape boundary remains the successor.
+
+Production remains unchanged pending one optional two-child owner. Focused and
+reference-based affected sequential validation report
+`2 passed, 1 xfailed` and `424 passed, 1 xfailed`; the sole expected failure is
+the deliberately absent owner module. The characterized inventory remains 38,
+and the phase-result store remains exactly 128 IDs and 128 owners.

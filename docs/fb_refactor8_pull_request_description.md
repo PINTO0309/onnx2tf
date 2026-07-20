@@ -1866,3 +1866,15 @@ artifacts, dependencies, and TensorFlow isolation remain unchanged. Focused
 `5`, affected `636`, and standard `92 / 55 / 196 / 2 / 11` sequential tests
 pass. The phase store remains exactly 128 IDs and 128 owners, and the
 unconsumed-result inventory decreases from 39 to 38.
+
+The next characterization freezes unconditional late affine/Concat cleanup
+followed by optional elementwise fan-out cleanup before changing production.
+Both share the exact pass context; the fan-out child executes only when layout
+optimization is enabled. Both result schemas, both flag paths, the fan-out
+wrapper, and the recorded predecessor and late-shape successor are fixed.
+
+Focused and reference-based affected sequential validation report
+`2 passed, 1 xfailed` and `424 passed, 1 xfailed`; the sole expected failure is
+the deliberately absent future owner. Production behavior, dependencies,
+TensorFlow isolation, the 38-result inventory, and the exactly
+128-ID/128-owner phase store remain unchanged.
