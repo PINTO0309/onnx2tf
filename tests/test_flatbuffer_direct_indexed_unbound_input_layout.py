@@ -6,6 +6,7 @@ from typing import Any
 
 import numpy as np
 import onnx2tf.tflite_builder.lower_from_onnx2tf as lowering_module
+from onnx2tf.tflite_builder.passes import unbound_input_repair_orchestration
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import (
@@ -513,7 +514,9 @@ def test_indexed_unbound_wrapper_reconciles_once_after_positive_repair(
 ) -> None:
     model_ir = _make_all_family_model_ir()
     reconcile_graph_indexes: list[ModelIRGraphIndex | None] = []
-    original_reconcile = lowering_module._reconcile_static_tensor_shapes
+    original_reconcile = (
+        unbound_input_repair_orchestration.reconcile_static_tensor_shapes
+    )
 
     def counted_reconcile(
         active_model_ir: ModelIR,
@@ -529,8 +532,8 @@ def test_indexed_unbound_wrapper_reconciles_once_after_positive_repair(
         )
 
     monkeypatch.setattr(
-        lowering_module,
-        "_reconcile_static_tensor_shapes",
+        unbound_input_repair_orchestration,
+        "reconcile_static_tensor_shapes",
         counted_reconcile,
     )
 

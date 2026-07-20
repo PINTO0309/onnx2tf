@@ -39,6 +39,18 @@ def _safety_fallback_body(lowerer: ast.FunctionDef) -> list[ast.stmt]:
     return guard.body
 
 
+def _assert_phase_result_record(
+    statement: ast.stmt,
+    *,
+    phase_id: str,
+    owner_expression: str,
+) -> None:
+    assert isinstance(statement, ast.Expr)
+    assert ast.unparse(statement) == (
+        f"session.record_phase_result('{phase_id}', {owner_expression})"
+    )
+
+
 def test_fallback_norm_owner_can_prune_without_a_rewrite() -> None:
     model_ir = ModelIR("fallback_norm_zero_rewrite_prune")
     model_ir.tensors["unused"] = TensorIR(
@@ -70,36 +82,11 @@ def test_safety_fallback_stages_complete_norm_mutation_evidence() -> None:
         and statement.targets[0].id == "fallback_norm_stats"
     )
 
-    tensor_count = body[stats_index - 1]
-    assert isinstance(tensor_count, ast.Assign)
-    assert len(tensor_count.targets) == 1
-    assert isinstance(tensor_count.targets[0], ast.Name)
-    assert tensor_count.targets[0].id == "fallback_norm_tensor_count"
-    assert ast.unparse(tensor_count.value) == "len(fallback_ir.tensors)"
-
     stats = body[stats_index]
     assert isinstance(stats, ast.Assign)
-    assert isinstance(stats.value, ast.Dict)
-    assert stats.value.keys[0] is None
-    owner = stats.value.values[0]
-    assert isinstance(owner, ast.Call)
-    assert isinstance(owner.func, ast.Name)
-    assert owner.func.id == "run_pad_layout_cleanup"
-    assert [ast.unparse(argument) for argument in owner.args] == ["fallback_ir"]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in owner.keywords
-    } == {
-        "include_pad": "False",
-        "include_unary": "False",
-        "include_norm": "True",
-        "diagnostics": "session.diagnostics",
-    }
-    prune_key = stats.value.keys[1]
-    assert isinstance(prune_key, ast.Constant)
-    assert prune_key.value == "pruned_unused_tensors"
-    assert ast.unparse(stats.value.values[1]) == (
-        "max(0, fallback_norm_tensor_count - len(fallback_ir.tensors))"
+    assert ast.unparse(stats.value) == (
+        "run_norm_subgraph_pad_layout_summary("
+        "fallback_ir, diagnostics=session.diagnostics)"
     )
 
     guard = body[stats_index + 1]
@@ -133,76 +120,46 @@ def test_safety_fallback_stages_dynamic_rank1_mutation_evidence() -> None:
     ]
     assert invocation.value.keywords == []
 
-    topological_sort = body[invocation_index + 1]
-    assert isinstance(topological_sort, ast.Expr)
-    assert ast.unparse(topological_sort.value) == (
-        "_topologically_sort_operators(fallback_ir)"
-    )
-    layout_inference = body[invocation_index + 2]
-    assert isinstance(layout_inference, ast.Expr)
-    assert ast.unparse(layout_inference.value) == (
-        "infer_model_ir_logical_layouts(fallback_ir)"
+    topology_layout_refresh = body[invocation_index + 1]
+    _assert_phase_result_record(
+        topology_layout_refresh,
+        phase_id="topology_layout.fallback.post_dynamic_rank1",
+        owner_expression="run_topology_layout_refresh(fallback_ir)",
     )
 
 
-def test_safety_fallback_retains_precision_cleanup_results() -> None:
+def test_safety_fallback_retains_precision_unbound_composite_results() -> None:
     body = _safety_fallback_body(_lowerer())
-    rewrite_name = "_rewrite_constant_divisors_to_multiplicative_reciprocals"
-    consecutive_name = "run_consecutive_mul_constants_cleanup"
-    restore_name = "_restore_precision_sensitive_reciprocal_divisions"
-    rewrite_index = next(
+    sequence_index = next(
         index
         for index, statement in enumerate(body)
-        if isinstance(statement, (ast.Assign, ast.Expr))
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id
+        == "_fallback_precision_unbound_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == rewrite_name
+        and statement.value.func.id
+        == "run_fallback_precision_unbound_cleanup"
     )
-    assert rewrite_index + 2 < len(body)
-
-    expected = (
-        (
-            "_fallback_precision_div_rewrite_stats",
-            rewrite_name,
-            {},
-        ),
-        (
-            "_fallback_precision_consecutive_mul_stats",
-            consecutive_name,
-            {"diagnostics": "session.diagnostics"},
-        ),
-        (
-            "_fallback_precision_div_restore_stats",
-            restore_name,
-            {},
-        ),
+    sequence = body[sequence_index]
+    assert isinstance(sequence, ast.Assign)
+    assert ast.unparse(sequence.value) == (
+        "run_fallback_precision_unbound_cleanup("
+        "fallback_precision_unbound_context)"
     )
-    for statement, (target_name, function_name, keywords) in zip(
-        body[rewrite_index : rewrite_index + 3],
-        expected,
-    ):
-        assert isinstance(statement, ast.Assign)
-        assert len(statement.targets) == 1
-        assert isinstance(statement.targets[0], ast.Name)
-        assert statement.targets[0].id == target_name
-        call = statement.value
-        assert isinstance(call, ast.Call)
-        assert isinstance(call.func, ast.Name)
-        assert call.func.id == function_name
-        assert [ast.unparse(argument) for argument in call.args] == [
-            "fallback_ir"
-        ]
-        assert {
-            keyword.arg: ast.unparse(keyword.value)
-            for keyword in call.keywords
-        } == keywords
 
-    previous = body[rewrite_index - 1]
-    assert ast.unparse(previous) == "_topologically_sort_operators(fallback_ir)"
-    following = body[rewrite_index + 3]
+    previous = body[sequence_index - 1]
+    _assert_phase_result_record(
+        previous,
+        phase_id="topology.fallback.post_placeholder",
+        owner_expression="_topologically_sort_operators(fallback_ir)",
+    )
+    following = body[sequence_index + 1]
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_fallback_unbound_repair_stats"
+    assert following.targets[0].id == "fallback_conv_input_stats"
 
 
 def test_safety_fallback_stages_broadcast_reconciliation_evidence() -> None:
@@ -216,120 +173,64 @@ def test_safety_fallback_stages_broadcast_reconciliation_evidence() -> None:
         and statement.targets[0].id == "fallback_broadcast_repair_stats"
     )
 
-    default_stats = body[owner_index + 1]
-    assert isinstance(default_stats, ast.Assign)
-    assert len(default_stats.targets) == 1
-    assert isinstance(default_stats.targets[0], ast.Name)
-    assert default_stats.targets[0].id == (
-        "_fallback_broadcast_static_shape_stats"
-    )
-    assert isinstance(default_stats.value, ast.Dict)
-    assert {
-        key.value: value.value
-        for key, value in zip(default_stats.value.keys, default_stats.value.values)
-        if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
-    } == {
-        "reconciled_static_tensor_shapes": 0,
-        "reconciled_static_shape_mutations": 0,
-    }
-
-    guard = body[owner_index + 2]
+    guard = body[owner_index + 1]
     assert isinstance(guard, ast.If)
     assert ast.unparse(guard.test) == (
         "int(fallback_broadcast_repair_stats.get("
         "'repaired_rank4_channelwise_broadcast_constants', 0)) > 0"
     )
-    assert len(guard.body) == 3
+    assert len(guard.body) == 2
     reconciliation = guard.body[0]
-    assert isinstance(reconciliation, ast.Assign)
-    assert len(reconciliation.targets) == 1
-    assert isinstance(reconciliation.targets[0], ast.Name)
-    assert reconciliation.targets[0].id == (
-        "_fallback_broadcast_static_shape_stats"
+    _assert_phase_result_record(
+        reconciliation,
+        phase_id="shape_reconciliation.fallback.broadcast",
+        owner_expression=(
+            "_reconcile_static_tensor_shapes(fallback_ir, "
+            "include_mutation_count=True)"
+        ),
     )
-    assert isinstance(reconciliation.value, ast.Call)
-    assert isinstance(reconciliation.value.func, ast.Name)
-    assert reconciliation.value.func.id == "_reconcile_static_tensor_shapes"
-    assert [ast.unparse(argument) for argument in reconciliation.value.args] == [
-        "fallback_ir"
-    ]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in reconciliation.value.keywords
-    } == {"include_mutation_count": "True"}
 
-    assert ast.unparse(guard.body[1]) == (
-        "_topologically_sort_operators(fallback_ir)"
-    )
-    assert ast.unparse(guard.body[2]) == (
-        "infer_model_ir_logical_layouts(fallback_ir)"
+    topology_layout_refresh = guard.body[1]
+    _assert_phase_result_record(
+        topology_layout_refresh,
+        phase_id="topology_layout.fallback.broadcast",
+        owner_expression="run_topology_layout_refresh(fallback_ir)",
     )
 
 
 def test_safety_fallback_stages_se_fc_gather_reconciliation_evidence() -> None:
     body = _safety_fallback_body(_lowerer())
-    cluster_index = next(
+    summary_index = next(
         index
         for index, statement in enumerate(body)
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Tuple)
-        and {
-            element.id
-            for element in statement.targets[0].elts
-            if isinstance(element, ast.Name)
-        }
-        == {"fallback_se_fc_stats", "fallback_gather_stats"}
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "fallback_se_fc_gather_stats"
     )
 
-    default_stats = body[cluster_index + 1]
-    assert isinstance(default_stats, ast.Assign)
-    assert len(default_stats.targets) == 1
-    assert isinstance(default_stats.targets[0], ast.Name)
-    assert default_stats.targets[0].id == (
-        "_fallback_se_fc_gather_static_shape_stats"
+    summary = body[summary_index]
+    assert isinstance(summary, ast.Assign)
+    assert ast.unparse(summary.value) == (
+        "_run_sinet_se_fc_gather_summary(fallback_ir, None)"
     )
-    assert isinstance(default_stats.value, ast.Dict)
-    assert {
-        key.value: value.value
-        for key, value in zip(default_stats.value.keys, default_stats.value.values)
-        if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
-    } == {
-        "reconciled_static_tensor_shapes": 0,
-        "reconciled_static_shape_mutations": 0,
-    }
-
-    guard = body[cluster_index + 2]
+    guard = body[summary_index + 1]
     assert isinstance(guard, ast.If)
     assert ast.unparse(guard.test) == (
-        "int(fallback_sinet_shuffle_stats.get("
-        "'optimized_sinet_shuffle_residual_mul_posttranspose_tail_chains', 0)) "
-        "+ int(fallback_se_fc_stats.get("
-        "'optimized_transpose_se_fc_mul_prepost_nhwc_chains', 0)) + "
-        "int(fallback_gather_stats.get("
-        "'optimized_transpose_gather_transpose_nhwc_channel_chains', 0)) > 0 "
-        "or len(fallback_ir.tensors) < fallback_se_fc_gather_tensor_count"
+        "_stats_have_positive_count(fallback_se_fc_gather_stats)"
     )
     assert len(guard.body) == 1
     reconciliation = guard.body[0]
-    assert isinstance(reconciliation, ast.Assign)
-    assert len(reconciliation.targets) == 1
-    assert isinstance(reconciliation.targets[0], ast.Name)
-    assert reconciliation.targets[0].id == (
-        "_fallback_se_fc_gather_static_shape_stats"
+    _assert_phase_result_record(
+        reconciliation,
+        phase_id="shape_reconciliation.fallback.se_fc_gather",
+        owner_expression=(
+            "_reconcile_static_tensor_shapes(fallback_ir, "
+            "include_mutation_count=True)"
+        ),
     )
-    assert isinstance(reconciliation.value, ast.Call)
-    assert isinstance(reconciliation.value.func, ast.Name)
-    assert reconciliation.value.func.id == "_reconcile_static_tensor_shapes"
-    assert [ast.unparse(argument) for argument in reconciliation.value.args] == [
-        "fallback_ir"
-    ]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in reconciliation.value.keywords
-    } == {"include_mutation_count": "True"}
 
-    following = body[cluster_index + 3]
+    following = body[summary_index + 2]
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
@@ -364,24 +265,7 @@ def test_safety_fallback_stages_placeholder_matmul_reconciliation_evidence() -> 
     ]
     assert owner.value.keywords == []
 
-    default_stats = body[owner_index + 1]
-    assert isinstance(default_stats, ast.Assign)
-    assert len(default_stats.targets) == 1
-    assert isinstance(default_stats.targets[0], ast.Name)
-    assert default_stats.targets[0].id == (
-        "_fallback_placeholder_matmul_static_shape_stats"
-    )
-    assert isinstance(default_stats.value, ast.Dict)
-    assert {
-        key.value: value.value
-        for key, value in zip(default_stats.value.keys, default_stats.value.values)
-        if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
-    } == {
-        "reconciled_static_tensor_shapes": 0,
-        "reconciled_static_shape_mutations": 0,
-    }
-
-    guard = body[owner_index + 2]
+    guard = body[owner_index + 1]
     assert isinstance(guard, ast.If)
     assert ast.unparse(guard.test) == (
         "int(fallback_placeholder_matmul_stats.get("
@@ -389,27 +273,20 @@ def test_safety_fallback_stages_placeholder_matmul_reconciliation_evidence() -> 
     )
     assert len(guard.body) == 1
     reconciliation = guard.body[0]
-    assert isinstance(reconciliation, ast.Assign)
-    assert len(reconciliation.targets) == 1
-    assert isinstance(reconciliation.targets[0], ast.Name)
-    assert reconciliation.targets[0].id == (
-        "_fallback_placeholder_matmul_static_shape_stats"
+    _assert_phase_result_record(
+        reconciliation,
+        phase_id="shape_reconciliation.fallback.placeholder_matmul",
+        owner_expression=(
+            "_reconcile_static_tensor_shapes(fallback_ir, "
+            "include_mutation_count=True)"
+        ),
     )
-    assert isinstance(reconciliation.value, ast.Call)
-    assert isinstance(reconciliation.value.func, ast.Name)
-    assert reconciliation.value.func.id == "_reconcile_static_tensor_shapes"
-    assert [ast.unparse(argument) for argument in reconciliation.value.args] == [
-        "fallback_ir"
-    ]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in reconciliation.value.keywords
-    } == {"include_mutation_count": "True"}
 
-    following = body[owner_index + 3]
-    assert isinstance(following, ast.Expr)
-    assert ast.unparse(following.value) == (
-        "_topologically_sort_operators(fallback_ir)"
+    following = body[owner_index + 2]
+    _assert_phase_result_record(
+        following,
+        phase_id="topology.fallback.post_placeholder",
+        owner_expression="_topologically_sort_operators(fallback_ir)",
     )
 
 
@@ -421,28 +298,27 @@ def test_safety_fallback_does_not_repeat_unbound_input_reconciliation() -> None:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_fallback_unbound_repair_stats"
+        and statement.targets[0].id == "_fallback_precision_unbound_results"
     )
 
     owner = body[owner_index]
     assert isinstance(owner, ast.Assign)
-    assert any(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id
-        == "_repair_unbound_nonconstant_operator_inputs_with_layout_transpose"
-        for node in ast.walk(owner.value)
+    assert ast.unparse(owner.value) == (
+        "run_fallback_precision_unbound_cleanup("
+        "fallback_precision_unbound_context)"
     )
 
     following = body[owner_index + 1]
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "fallback_conv_input_tensor_count"
-    stats = body[owner_index + 2]
-    assert isinstance(stats, ast.Assign)
-    assert isinstance(stats.targets[0], ast.Name)
-    assert stats.targets[0].id == "fallback_conv_input_stats"
+    assert following.targets[0].id == "fallback_conv_input_stats"
+    assert isinstance(following.value, ast.Call)
+    assert isinstance(following.value.func, ast.Name)
+    assert (
+        following.value.func.id
+        == "run_indexed_conv_input_adapter_repairs_summary"
+    )
 
 
 def test_safety_fallback_stages_complete_conv_input_evidence() -> None:
@@ -456,48 +332,24 @@ def test_safety_fallback_stages_complete_conv_input_evidence() -> None:
         and statement.targets[0].id == "fallback_conv_input_stats"
     )
 
-    tensor_count = body[stats_index - 1]
-    assert isinstance(tensor_count, ast.Assign)
-    assert len(tensor_count.targets) == 1
-    assert isinstance(tensor_count.targets[0], ast.Name)
-    assert tensor_count.targets[0].id == "fallback_conv_input_tensor_count"
-    assert ast.unparse(tensor_count.value) == "len(fallback_ir.tensors)"
-
     stats = body[stats_index]
     assert isinstance(stats, ast.Assign)
-    assert isinstance(stats.value, ast.Dict)
-    assert stats.value.keys[0] is None
-    owner = stats.value.values[0]
-    assert isinstance(owner, ast.Call)
-    assert isinstance(owner.func, ast.Name)
-    assert owner.func.id == "_run_indexed_conv_input_adapter_repairs"
-    assert [ast.unparse(argument) for argument in owner.args] == ["fallback_ir"]
-    assert owner.keywords == []
-    prune_key = stats.value.keys[1]
-    assert isinstance(prune_key, ast.Constant)
-    assert prune_key.value == "pruned_unused_tensors"
-    assert ast.unparse(stats.value.values[1]) == (
-        "max(0, fallback_conv_input_tensor_count - len(fallback_ir.tensors))"
+    assert isinstance(stats.value, ast.Call)
+    assert isinstance(stats.value.func, ast.Name)
+    assert (
+        stats.value.func.id
+        == "run_indexed_conv_input_adapter_repairs_summary"
     )
+    assert [ast.unparse(argument) for argument in stats.value.args] == [
+        "fallback_ir"
+    ]
+    assert stats.value.keywords == []
+    predecessor = body[stats_index - 1]
+    assert isinstance(predecessor, ast.Assign)
+    assert isinstance(predecessor.targets[0], ast.Name)
+    assert predecessor.targets[0].id == "_fallback_precision_unbound_results"
 
-    default_stats = body[stats_index + 1]
-    assert isinstance(default_stats, ast.Assign)
-    assert len(default_stats.targets) == 1
-    assert isinstance(default_stats.targets[0], ast.Name)
-    assert default_stats.targets[0].id == (
-        "_fallback_conv_input_static_shape_stats"
-    )
-    assert isinstance(default_stats.value, ast.Dict)
-    assert {
-        key.value: value.value
-        for key, value in zip(default_stats.value.keys, default_stats.value.values)
-        if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
-    } == {
-        "reconciled_static_tensor_shapes": 0,
-        "reconciled_static_shape_mutations": 0,
-    }
-
-    guard = body[stats_index + 2]
+    guard = body[stats_index + 1]
     assert isinstance(guard, ast.If)
     assert ast.unparse(guard.test) == (
         "int(fallback_conv_input_stats.get("
@@ -505,24 +357,16 @@ def test_safety_fallback_stages_complete_conv_input_evidence() -> None:
     )
     assert len(guard.body) == 1
     reconciliation = guard.body[0]
-    assert isinstance(reconciliation, ast.Assign)
-    assert len(reconciliation.targets) == 1
-    assert isinstance(reconciliation.targets[0], ast.Name)
-    assert reconciliation.targets[0].id == (
-        "_fallback_conv_input_static_shape_stats"
+    _assert_phase_result_record(
+        reconciliation,
+        phase_id="shape_reconciliation.fallback.conv_input",
+        owner_expression=(
+            "_reconcile_static_tensor_shapes(fallback_ir, "
+            "include_mutation_count=True)"
+        ),
     )
-    assert isinstance(reconciliation.value, ast.Call)
-    assert isinstance(reconciliation.value.func, ast.Name)
-    assert reconciliation.value.func.id == "_reconcile_static_tensor_shapes"
-    assert [ast.unparse(argument) for argument in reconciliation.value.args] == [
-        "fallback_ir"
-    ]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in reconciliation.value.keywords
-    } == {"include_mutation_count": "True"}
 
-    following = body[stats_index + 3]
+    following = body[stats_index + 2]
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)
     assert following.targets[0].id == "fallback_concat_layout_stats"
@@ -539,24 +383,7 @@ def test_safety_fallback_stages_mixed_concat_reconciliation_evidence() -> None:
         and statement.targets[0].id == "fallback_concat_layout_stats"
     )
 
-    default_stats = body[owner_index + 1]
-    assert isinstance(default_stats, ast.Assign)
-    assert len(default_stats.targets) == 1
-    assert isinstance(default_stats.targets[0], ast.Name)
-    assert default_stats.targets[0].id == (
-        "_fallback_mixed_concat_static_shape_stats"
-    )
-    assert isinstance(default_stats.value, ast.Dict)
-    assert {
-        key.value: value.value
-        for key, value in zip(default_stats.value.keys, default_stats.value.values)
-        if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
-    } == {
-        "reconciled_static_tensor_shapes": 0,
-        "reconciled_static_shape_mutations": 0,
-    }
-
-    guard = body[owner_index + 2]
+    guard = body[owner_index + 1]
     assert isinstance(guard, ast.If)
     assert ast.unparse(guard.test) == (
         "int(fallback_concat_layout_stats.get("
@@ -564,24 +391,16 @@ def test_safety_fallback_stages_mixed_concat_reconciliation_evidence() -> None:
     )
     assert len(guard.body) == 1
     reconciliation = guard.body[0]
-    assert isinstance(reconciliation, ast.Assign)
-    assert len(reconciliation.targets) == 1
-    assert isinstance(reconciliation.targets[0], ast.Name)
-    assert reconciliation.targets[0].id == (
-        "_fallback_mixed_concat_static_shape_stats"
+    _assert_phase_result_record(
+        reconciliation,
+        phase_id="shape_reconciliation.fallback.mixed_concat",
+        owner_expression=(
+            "_reconcile_static_tensor_shapes(fallback_ir, "
+            "include_mutation_count=True)"
+        ),
     )
-    assert isinstance(reconciliation.value, ast.Call)
-    assert isinstance(reconciliation.value.func, ast.Name)
-    assert reconciliation.value.func.id == "_reconcile_static_tensor_shapes"
-    assert [ast.unparse(argument) for argument in reconciliation.value.args] == [
-        "fallback_ir"
-    ]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in reconciliation.value.keywords
-    } == {"include_mutation_count": "True"}
 
-    following = body[owner_index + 3]
+    following = body[owner_index + 2]
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)
     assert following.targets[0].id == "fallback_concat_axis_stats"
@@ -598,23 +417,7 @@ def test_safety_fallback_stages_concat_axis_reconciliation_evidence() -> None:
         and statement.targets[0].id == "fallback_concat_axis_stats"
     )
 
-    default_stats = body[owner_index + 1]
-    assert isinstance(default_stats, ast.Assign)
-    assert isinstance(default_stats.targets[0], ast.Name)
-    assert default_stats.targets[0].id == (
-        "_fallback_concat_axis_static_shape_stats"
-    )
-    assert isinstance(default_stats.value, ast.Dict)
-    assert {
-        key.value: value.value
-        for key, value in zip(default_stats.value.keys, default_stats.value.values)
-        if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
-    } == {
-        "reconciled_static_tensor_shapes": 0,
-        "reconciled_static_shape_mutations": 0,
-    }
-
-    guard = body[owner_index + 2]
+    guard = body[owner_index + 1]
     assert isinstance(guard, ast.If)
     assert ast.unparse(guard.test) == (
         "int(fallback_concat_axis_stats.get("
@@ -622,26 +425,19 @@ def test_safety_fallback_stages_concat_axis_reconciliation_evidence() -> None:
     )
     assert len(guard.body) == 1
     reconciliation = guard.body[0]
-    assert isinstance(reconciliation, ast.Assign)
-    assert isinstance(reconciliation.targets[0], ast.Name)
-    assert reconciliation.targets[0].id == (
-        "_fallback_concat_axis_static_shape_stats"
+    _assert_phase_result_record(
+        reconciliation,
+        phase_id="shape_reconciliation.fallback.concat_axis",
+        owner_expression=(
+            "_reconcile_static_tensor_shapes(fallback_ir, "
+            "include_mutation_count=True)"
+        ),
     )
-    assert isinstance(reconciliation.value, ast.Call)
-    assert isinstance(reconciliation.value.func, ast.Name)
-    assert reconciliation.value.func.id == "_reconcile_static_tensor_shapes"
-    assert [ast.unparse(argument) for argument in reconciliation.value.args] == [
-        "fallback_ir"
-    ]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in reconciliation.value.keywords
-    } == {"include_mutation_count": "True"}
 
-    following = body[owner_index + 3]
+    following = body[owner_index + 2]
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "fallback_binary_layout_tensor_count"
+    assert following.targets[0].id == "fallback_binary_layout_stats"
 
 
 def test_fallback_binary_layout_owner_can_prune_without_a_rewrite() -> None:
@@ -676,48 +472,13 @@ def test_safety_fallback_stages_complete_binary_layout_evidence() -> None:
         and statement.targets[0].id == "fallback_binary_layout_stats"
     )
 
-    tensor_count = body[stats_index - 1]
-    assert isinstance(tensor_count, ast.Assign)
-    assert isinstance(tensor_count.targets[0], ast.Name)
-    assert tensor_count.targets[0].id == "fallback_binary_layout_tensor_count"
-    assert ast.unparse(tensor_count.value) == "len(fallback_ir.tensors)"
-
     stats = body[stats_index]
     assert isinstance(stats, ast.Assign)
-    assert isinstance(stats.value, ast.Dict)
-    assert stats.value.keys[0] is None
-    owner = stats.value.values[0]
-    assert isinstance(owner, ast.Call)
-    assert isinstance(owner.func, ast.Name)
-    assert owner.func.id == (
-        "_repair_stale_nchw_to_nhwc_channelwise_binary_transposes"
-    )
-    assert [ast.unparse(argument) for argument in owner.args] == ["fallback_ir"]
-    assert owner.keywords == []
-    prune_key = stats.value.keys[1]
-    assert isinstance(prune_key, ast.Constant)
-    assert prune_key.value == "pruned_unused_tensors"
-    assert ast.unparse(stats.value.values[1]) == (
-        "max(0, fallback_binary_layout_tensor_count - len(fallback_ir.tensors))"
+    assert ast.unparse(stats.value) == (
+        "run_stale_binary_adapter_repair_summary(fallback_ir)"
     )
 
-    default_stats = body[stats_index + 1]
-    assert isinstance(default_stats, ast.Assign)
-    assert isinstance(default_stats.targets[0], ast.Name)
-    assert default_stats.targets[0].id == (
-        "_fallback_binary_layout_static_shape_stats"
-    )
-    assert isinstance(default_stats.value, ast.Dict)
-    assert {
-        key.value: value.value
-        for key, value in zip(default_stats.value.keys, default_stats.value.values)
-        if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
-    } == {
-        "reconciled_static_tensor_shapes": 0,
-        "reconciled_static_shape_mutations": 0,
-    }
-
-    guard = body[stats_index + 2]
+    guard = body[stats_index + 1]
     assert isinstance(guard, ast.If)
     assert ast.unparse(guard.test) == (
         "int(fallback_binary_layout_stats.get("
@@ -725,26 +486,20 @@ def test_safety_fallback_stages_complete_binary_layout_evidence() -> None:
     )
     assert len(guard.body) == 1
     reconciliation = guard.body[0]
-    assert isinstance(reconciliation, ast.Assign)
-    assert isinstance(reconciliation.targets[0], ast.Name)
-    assert reconciliation.targets[0].id == (
-        "_fallback_binary_layout_static_shape_stats"
+    _assert_phase_result_record(
+        reconciliation,
+        phase_id="shape_reconciliation.fallback.binary_layout",
+        owner_expression=(
+            "_reconcile_static_tensor_shapes(fallback_ir, "
+            "include_mutation_count=True)"
+        ),
     )
-    assert isinstance(reconciliation.value, ast.Call)
-    assert isinstance(reconciliation.value.func, ast.Name)
-    assert reconciliation.value.func.id == "_reconcile_static_tensor_shapes"
-    assert [ast.unparse(argument) for argument in reconciliation.value.args] == [
-        "fallback_ir"
-    ]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in reconciliation.value.keywords
-    } == {"include_mutation_count": "True"}
 
-    following = body[stats_index + 3]
-    assert isinstance(following, ast.Expr)
-    assert ast.unparse(following.value) == (
-        "_topologically_sort_operators(fallback_ir)"
+    following = body[stats_index + 2]
+    _assert_phase_result_record(
+        following,
+        phase_id="topology.fallback.post_layout_repair",
+        owner_expression="_topologically_sort_operators(fallback_ir)",
     )
 
 
@@ -788,14 +543,14 @@ def test_safety_fallback_validates_terminal_layout_and_clears_stale_errors() -> 
         "fallback_ir.metadata['layout_optimize_fallback']"
     )
 
-    guard = body[stats_index + 2]
+    guard = body[stats_index + 1]
     assert isinstance(guard, ast.If)
     assert ast.unparse(guard.test) == (
         "int(fallback_high_rank_bmm_stats.get("
         "'compressed_static_high_rank_batch_matmul', 0)) > 0"
     )
 
-    convergence = body[stats_index + 3]
+    convergence = body[stats_index + 2]
     assert isinstance(convergence, ast.Assign)
     assert isinstance(convergence.targets[0], ast.Name)
     assert convergence.targets[0].id == (
@@ -805,36 +560,14 @@ def test_safety_fallback_validates_terminal_layout_and_clears_stale_errors() -> 
         "_run_indexed_binary_layout_convergence(fallback_ir)"
     )
 
-    final_sort = body[stats_index + 4]
-    assert isinstance(final_sort, ast.Expr)
-    assert ast.unparse(final_sort.value) == (
-        "_topologically_sort_operators(fallback_ir)"
+    validation = body[stats_index + 3]
+    _assert_phase_result_record(
+        validation,
+        phase_id="layout_validation.fallback.terminal",
+        owner_expression="run_topology_layout_validation(fallback_ir)",
     )
 
-    validation = body[stats_index + 5]
-    assert isinstance(validation, ast.Assign)
-    assert isinstance(validation.targets[0], ast.Name)
-    assert validation.targets[0].id == "fallback_layout_problems"
-    assert ast.unparse(validation.value) == (
-        "validate_model_ir_layout_annotations(fallback_ir)"
-    )
-
-    validation_guard = body[stats_index + 6]
-    assert isinstance(validation_guard, ast.If)
-    assert ast.unparse(validation_guard.test) == (
-        "len(fallback_layout_problems) > 0"
-    )
-    assert len(validation_guard.body) == 1
-    assert ast.unparse(validation_guard.body[0]) == (
-        "fallback_ir.metadata['logical_layout_validation_errors'] = "
-        "list(fallback_layout_problems)"
-    )
-    assert len(validation_guard.orelse) == 1
-    assert ast.unparse(validation_guard.orelse[0]) == (
-        "fallback_ir.metadata.pop('logical_layout_validation_errors', None)"
-    )
-
-    terminal = body[stats_index + 7]
+    terminal = body[stats_index + 4]
     assert isinstance(terminal, ast.Return)
     assert ast.unparse(terminal.value) == "_finalize_model_ir(fallback_ir)"
 
@@ -876,51 +609,23 @@ def test_safety_fallback_stages_high_rank_bmm_reconciliation_evidence() -> None:
     ]
     assert stats.value.keywords == []
 
-    default_stats = body[stats_index + 1]
-    assert isinstance(default_stats, ast.Assign)
-    assert isinstance(default_stats.targets[0], ast.Name)
-    assert default_stats.targets[0].id == (
-        "_fallback_high_rank_bmm_static_shape_stats"
-    )
-    assert isinstance(default_stats.value, ast.Dict)
-    assert {
-        key.value: value.value
-        for key, value in zip(default_stats.value.keys, default_stats.value.values)
-        if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
-    } == {
-        "reconciled_static_tensor_shapes": 0,
-        "reconciled_static_shape_mutations": 0,
-    }
-
-    guard = body[stats_index + 2]
+    guard = body[stats_index + 1]
     assert isinstance(guard, ast.If)
     assert ast.unparse(guard.test) == (
         "int(fallback_high_rank_bmm_stats.get("
         "'compressed_static_high_rank_batch_matmul', 0)) > 0"
     )
-    assert len(guard.body) == 2
+    assert len(guard.body) == 1
     reconciliation = guard.body[0]
-    assert isinstance(reconciliation, ast.Assign)
-    assert isinstance(reconciliation.targets[0], ast.Name)
-    assert reconciliation.targets[0].id == (
-        "_fallback_high_rank_bmm_static_shape_stats"
-    )
-    assert isinstance(reconciliation.value, ast.Call)
-    assert isinstance(reconciliation.value.func, ast.Name)
-    assert reconciliation.value.func.id == "_reconcile_static_tensor_shapes"
-    assert [ast.unparse(argument) for argument in reconciliation.value.args] == [
-        "fallback_ir"
-    ]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in reconciliation.value.keywords
-    } == {"include_mutation_count": "True"}
-    assert isinstance(guard.body[1], ast.Expr)
-    assert ast.unparse(guard.body[1].value) == (
-        "_topologically_sort_operators(fallback_ir)"
+    _assert_phase_result_record(
+        reconciliation,
+        phase_id="shape_topology.fallback.high_rank_batch_matmul",
+        owner_expression=(
+            "run_static_shape_topology_reconciliation(fallback_ir)"
+        ),
     )
 
-    following = body[stats_index + 3]
+    following = body[stats_index + 2]
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)
     assert following.targets[0].id == (
@@ -955,7 +660,8 @@ def test_safety_fallback_retains_indexed_binary_convergence_result() -> None:
     assert owner.value.keywords == []
 
     following = body[owner_index + 1]
-    assert isinstance(following, ast.Expr)
-    assert ast.unparse(following.value) == (
-        "_topologically_sort_operators(fallback_ir)"
+    _assert_phase_result_record(
+        following,
+        phase_id="layout_validation.fallback.terminal",
+        owner_expression="run_topology_layout_validation(fallback_ir)",
     )

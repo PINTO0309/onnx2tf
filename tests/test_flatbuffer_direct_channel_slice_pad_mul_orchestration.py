@@ -24,6 +24,28 @@ from onnx2tf.tflite_builder.passes.terminal_slice_concat_recovery_orchestration 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 CHANNEL_SLICE_PAD_MUL = "_run_channel_slice_pad_mul_layout_pass_cluster"
+CHANNEL_SLICE_PAD_MUL_SUMMARY = "run_channel_slice_pad_mul_summary"
+PRE_TERMINAL_PRE_ADD = "run_pre_terminal_pre_add_cleanup"
+PRE_TERMINAL_CLEANUP_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "pre_terminal_cleanup_orchestration.py"
+)
+PRE_TERMINAL_CLEANUP = "run_pre_terminal_cleanup"
+PRE_TERMINAL_CLEANUP_RESULT = "_pre_terminal_cleanup_results"
+OUTER_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "pre_terminal_affine_slice_spp_orchestration.py"
+)
+OUTER_OWNER = "run_pre_terminal_affine_slice_spp_cleanup"
+OUTER_RESULT = "_pre_terminal_affine_slice_spp_results"
+LOWERER_OWNER = "run_terminal_affine_qkv_layout_shape_cleanup"
+LOWERER_RESULT = "_terminal_affine_qkv_layout_shape_results"
 
 
 def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -39,6 +61,39 @@ def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
         if isinstance(node, ast.FunctionDef) and node.name == CHANNEL_SLICE_PAD_MUL
     )
     return lowerer, helper
+
+
+def _pre_terminal_cleanup_calls(function_name: str) -> list[ast.Call]:
+    tree = ast.parse(PRE_TERMINAL_CLEANUP_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == PRE_TERMINAL_CLEANUP
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name
+    ]
+
+
+def _outer_calls() -> list[ast.Call]:
+    tree = ast.parse(OUTER_OWNER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == OUTER_OWNER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == PRE_TERMINAL_CLEANUP
+    ]
 
 
 def _expression_path(node: ast.expr) -> Any:
@@ -149,9 +204,23 @@ def test_channel_slice_pad_mul_preserves_direct_and_callback_invocations() -> No
         and isinstance(node.func, ast.Name)
         and node.func.id == CHANNEL_SLICE_PAD_MUL
     ]
-    assert len(direct_invocations) == 1
-    assert direct_invocations[0].args == []
-    assert direct_invocations[0].keywords == []
+    assert direct_invocations == []
+    summary_invocations = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == CHANNEL_SLICE_PAD_MUL_SUMMARY
+    ]
+    assert summary_invocations == []
+    composite_invocations = _pre_terminal_cleanup_calls(
+        CHANNEL_SLICE_PAD_MUL_SUMMARY
+    )
+    assert len(composite_invocations) == 1
+    assert [ast.unparse(arg) for arg in composite_invocations[0].args] == [
+        "context"
+    ]
+    assert composite_invocations[0].keywords == []
 
     terminal_context = next(
         statement.value
@@ -181,46 +250,36 @@ def test_channel_slice_pad_mul_preserves_direct_boundaries() -> None:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "channel_slice_pad_mul_results"
+        and statement.targets[0].id == LOWERER_RESULT
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == CHANNEL_SLICE_PAD_MUL
+        and statement.value.func.id == LOWERER_OWNER
     )
 
-    pre_add_stats = lowerer.body[invocation_index - 1]
-    pre_add_count = lowerer.body[invocation_index - 2]
-    summary = lowerer.body[invocation_index + 1]
-    following = lowerer.body[invocation_index + 2]
-    assert isinstance(pre_add_count, ast.Assign)
-    assert len(pre_add_count.targets) == 1
-    assert isinstance(pre_add_count.targets[0], ast.Name)
-    assert pre_add_count.targets[0].id == "pre_terminal_pre_add_tensor_count"
-    assert isinstance(pre_add_stats, ast.Assign)
-    assert len(pre_add_stats.targets) == 1
-    assert isinstance(pre_add_stats.targets[0], ast.Name)
-    assert pre_add_stats.targets[0].id == "_pre_terminal_pre_add_stats"
-    assert isinstance(pre_add_stats.value, ast.Dict)
-    pre_add_owner = pre_add_stats.value.values[0]
-    assert isinstance(pre_add_owner, ast.Call)
-    assert isinstance(pre_add_owner.func, ast.Name)
-    assert pre_add_owner.func.id == "_optimize_transpose_pre_add_nhwc_chains"
+    predecessor = lowerer.body[invocation_index - 1]
+    summary = lowerer.body[invocation_index]
+    following = lowerer.body[invocation_index + 1]
+    assert isinstance(predecessor, ast.If)
     assert isinstance(summary, ast.Assign)
-    assert len(summary.targets) == 1
-    assert isinstance(summary.targets[0], ast.Name)
-    assert summary.targets[0].id == "_pre_terminal_channel_slice_pad_mul_stats"
     assert isinstance(summary.value, ast.Call)
-    assert isinstance(summary.value.func, ast.Name)
-    assert summary.value.func.id == "summarize_channel_slice_pad_mul_mutations"
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_pre_terminal_affine_post_add_stats"
-    assert isinstance(following.value, ast.Call)
-    assert isinstance(following.value.func, ast.Name)
-    assert (
-        following.value.func.id
-        == "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
+    assert [ast.unparse(arg) for arg in summary.value.args] == [
+        "shared_model_ir_pass_context"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in summary.value.keywords
+    } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
+    assert isinstance(following, ast.Expr)
+    assert ast.unparse(following).startswith(
+        "session.record_phase_result("
+        "'shape_reconciliation.terminal.expand_squeeze'"
     )
+    assert len(_outer_calls()) == 1
+    assert len(_pre_terminal_cleanup_calls(PRE_TERMINAL_PRE_ADD)) == 1
+    assert len(_pre_terminal_cleanup_calls(CHANNEL_SLICE_PAD_MUL_SUMMARY)) == 1
+    assert len(
+        _pre_terminal_cleanup_calls("run_pre_terminal_affine_tail_cleanup")
+    ) == 1
 
 
 def test_channel_slice_pad_mul_preserves_stable_callback_boundary() -> None:
@@ -347,60 +406,15 @@ def test_channel_slice_pad_mul_returns_and_summarizes_mutations(
 
 
 def test_lowerer_captures_channel_slice_pad_mul_mutation_evidence() -> None:
-    lowerer, helper = _lowerer_and_helper()
-    target_names = (
-        "channel_slice_pad_mul_results",
-        "_pre_terminal_channel_slice_pad_mul_stats",
+    _, helper = _lowerer_and_helper()
+    summary_calls = _pre_terminal_cleanup_calls(
+        CHANNEL_SLICE_PAD_MUL_SUMMARY
     )
-    assignment_indices: dict[str, int] = {}
-    assignments: dict[str, ast.expr] = {}
-    for index, statement in enumerate(lowerer.body):
-        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
-            continue
-        target = statement.targets[0]
-        if isinstance(target, ast.Name) and target.id in target_names:
-            assignment_indices[target.id] = index
-            assignments[target.id] = statement.value
-
-    first_index = min(assignment_indices.values())
-    assert assignment_indices == {
-        target_names[0]: first_index,
-        target_names[1]: first_index + 1,
-    }
-    result_call = assignments[target_names[0]]
-    assert isinstance(result_call, ast.Call)
-    assert isinstance(result_call.func, ast.Name)
-    assert result_call.func.id == CHANNEL_SLICE_PAD_MUL
-    assert result_call.args == []
-    assert result_call.keywords == []
-    summary_call = assignments[target_names[1]]
-    assert isinstance(summary_call, ast.Call)
-    assert isinstance(summary_call.func, ast.Name)
-    assert summary_call.func.id == "summarize_channel_slice_pad_mul_mutations"
-    assert len(summary_call.args) == 1
-    assert isinstance(summary_call.args[0], ast.Name)
-    assert summary_call.args[0].id == "channel_slice_pad_mul_results"
-
-    previous = lowerer.body[first_index - 1]
-    assert isinstance(previous, ast.Assign)
-    assert len(previous.targets) == 1
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_pre_terminal_pre_add_stats"
-    assert isinstance(previous.value, ast.Dict)
-    owner_call = previous.value.values[0]
-    assert isinstance(owner_call, ast.Call)
-    assert isinstance(owner_call.func, ast.Name)
-    assert owner_call.func.id == "_optimize_transpose_pre_add_nhwc_chains"
-    tensor_count = lowerer.body[first_index - 2]
-    assert isinstance(tensor_count, ast.Assign)
-    assert len(tensor_count.targets) == 1
-    assert isinstance(tensor_count.targets[0], ast.Name)
-    assert tensor_count.targets[0].id == "pre_terminal_pre_add_tensor_count"
-    following = lowerer.body[first_index + 2]
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_pre_terminal_affine_post_add_stats"
+    assert len(summary_calls) == 1
+    assert [ast.unparse(argument) for argument in summary_calls[0].args] == [
+        "context"
+    ]
+    assert summary_calls[0].keywords == []
 
     assert len(helper.body) == 1
     assert isinstance(helper.body[0], ast.Return)
@@ -409,82 +423,26 @@ def test_lowerer_captures_channel_slice_pad_mul_mutation_evidence() -> None:
     assert helper.body[0].value.func.id == "run_channel_slice_pad_mul"
 
 
-def test_pre_terminal_pre_add_captures_zero_rewrite_pruning_evidence() -> None:
+def test_pre_terminal_pre_add_uses_prune_aware_owner() -> None:
     lowerer, _ = _lowerer_and_helper()
-    target_names = (
-        "pre_terminal_pre_add_tensor_count",
-        "_pre_terminal_pre_add_stats",
-    )
-    assignment_indices: dict[str, int] = {}
-    assignments: dict[str, ast.expr] = {}
-    for index, statement in enumerate(lowerer.body):
-        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
-            continue
-        target = statement.targets[0]
-        if isinstance(target, ast.Name) and target.id in target_names:
-            assignment_indices[target.id] = index
-            assignments[target.id] = statement.value
-
-    first_index = min(assignment_indices.values())
-    assert assignment_indices == {
-        target_names[0]: first_index,
-        target_names[1]: first_index + 1,
-    }
-    tensor_count = assignments[target_names[0]]
-    assert isinstance(tensor_count, ast.Call)
-    assert isinstance(tensor_count.func, ast.Name)
-    assert tensor_count.func.id == "len"
-    assert len(tensor_count.args) == 1
-    assert isinstance(tensor_count.args[0], ast.Attribute)
-    assert isinstance(tensor_count.args[0].value, ast.Name)
-    assert tensor_count.args[0].value.id == "model_ir"
-    assert tensor_count.args[0].attr == "tensors"
-
-    summary = assignments[target_names[1]]
-    assert isinstance(summary, ast.Dict)
-    assert len(summary.keys) == 2
-    assert summary.keys[0] is None
-    owner_call = summary.values[0]
-    assert isinstance(owner_call, ast.Call)
-    assert isinstance(owner_call.func, ast.Name)
-    assert owner_call.func.id == "_optimize_transpose_pre_add_nhwc_chains"
-    assert len(owner_call.args) == 1
-    assert isinstance(owner_call.args[0], ast.Name)
-    assert owner_call.args[0].id == "model_ir"
-    assert len(owner_call.keywords) == 1
-    assert owner_call.keywords[0].arg == "layout_state"
-    prune_key = summary.keys[1]
-    assert isinstance(prune_key, ast.Constant)
-    assert prune_key.value == "pruned_unused_tensors"
-    prune_call = summary.values[1]
-    assert isinstance(prune_call, ast.Call)
-    assert isinstance(prune_call.func, ast.Name)
-    assert prune_call.func.id == "max"
-
-    previous = lowerer.body[first_index - 1]
-    assert isinstance(previous, ast.Assign)
-    assert len(previous.targets) == 1
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_pre_terminal_affine_stats"
-    assert isinstance(previous.value, ast.Call)
-    assert isinstance(previous.value.func, ast.Name)
-    assert previous.value.func.id == (
-        "summarize_terminal_affine_concat_split_mutations"
-    )
-    following = lowerer.body[first_index + 2]
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "channel_slice_pad_mul_results"
-
-    production_calls = [
-        node
-        for node in ast.walk(lowerer)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "_optimize_transpose_pre_add_nhwc_chains"
+    owner_calls = _pre_terminal_cleanup_calls(PRE_TERMINAL_PRE_ADD)
+    assert len(owner_calls) == 1
+    assert [ast.unparse(argument) for argument in owner_calls[0].args] == [
+        "context"
     ]
-    assert len(production_calls) == 1
+    assert owner_calls[0].keywords == []
+    assert any(
+        isinstance(statement, ast.Assign)
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == LOWERER_RESULT
+        for statement in lowerer.body
+    )
+
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id == "pre_terminal_pre_add_tensor_count"
+        for node in ast.walk(lowerer)
+    )
 
 
 def test_channel_slice_pad_mul_module_does_not_import_lowerer() -> None:

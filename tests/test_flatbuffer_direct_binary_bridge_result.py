@@ -26,7 +26,18 @@ def _lowerer() -> ast.FunctionDef:
 def _statement_call(statement: ast.stmt) -> ast.Call | None:
     if not isinstance(statement, (ast.Assign, ast.Expr)):
         return None
-    return statement.value if isinstance(statement.value, ast.Call) else None
+    call = statement.value if isinstance(statement.value, ast.Call) else None
+    if (
+        call is not None
+        and isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        return call.args[1]
+    return call
 
 
 def _call_name(statement: ast.stmt) -> str | None:
@@ -89,18 +100,17 @@ def test_binary_bridge_schema_guard_and_call_are_explicit() -> None:
     assert _single_target(layout_guard.body[guard_index - 1]) == (
         "_layout_pass_set_1_quantized_activation_binary_results"
     )
-    assert _single_target(layout_guard.body[guard_index + 1]) == (
-        "_layout_pass_set_1_duplicate_fanout_stats"
+    assert _call_name(layout_guard.body[guard_index + 1]) == (
+        "run_duplicate_fanout_cleanup"
     )
 
 
 def test_guarded_binary_bridge_result_is_retained_observation_only() -> None:
     lowerer = _lowerer()
     _, _, binary_guard = _layout_and_binary_guards()
-    assert _single_target(binary_guard.body[0]) == RESULT_TARGET
+    assert _single_target(binary_guard.body[0]) is None
     assert not any(
         isinstance(node, ast.Name)
         and node.id == RESULT_TARGET
-        and isinstance(node.ctx, ast.Load)
         for node in ast.walk(lowerer)
     )

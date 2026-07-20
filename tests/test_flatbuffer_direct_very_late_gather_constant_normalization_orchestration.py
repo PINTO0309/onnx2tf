@@ -23,11 +23,182 @@ from onnx2tf.tflite_builder.passes.very_late_gather_constant_normalization_orche
     build_very_late_gather_constant_normalization_invocations,
     run_very_late_gather_constant_normalization,
 )
+from onnx2tf.tflite_builder.passes.pre_terminal_affine_tail_orchestration import (
+    PRE_TERMINAL_AFFINE_TAIL_PASS_IDS,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 VERY_LATE = "_run_very_late_gather_constant_normalization_pass_cluster"
+ABSOLUTE_FINAL_AFFINE_INSTANCENORM_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "absolute_final_affine_instancenorm_orchestration.py"
+)
+ABSOLUTE_FINAL_AFFINE_INSTANCENORM = (
+    "run_absolute_final_affine_instancenorm_cleanup"
+)
+ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "absolute_final_normalization_attention_orchestration.py"
+)
+ABSOLUTE_FINAL_NORMALIZATION_ATTENTION = (
+    "run_absolute_final_normalization_attention_rank1_cleanup"
+)
+VERY_LATE_DYNAMIC_ADAPTER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "very_late_dynamic_adapter_orchestration.py"
+)
+VERY_LATE_DYNAMIC_ADAPTER = "run_very_late_dynamic_adapter_cleanup"
+LATE_INPUT_AFFINE_NORMALIZATION_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "late_input_affine_normalization_orchestration.py"
+)
+LATE_INPUT_AFFINE_NORMALIZATION = (
+    "run_late_input_affine_normalization_cleanup"
+)
+FINAL_INPUT_DYNAMIC_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "final_input_dynamic_orchestration.py"
+)
+FINAL_INPUT_DYNAMIC = "run_final_input_dynamic_cleanup"
+FINAL_INPUT_DYNAMIC_RESULT = "_final_input_dynamic_results"
+FINAL_INPUT_DYNAMIC_SHAPE_PHASE_ID = (
+    "shape_reconciliation.primary.very_late_final"
+)
+FINAL_INPUT_DYNAMIC_SHAPE_OWNER_EXPRESSION = (
+    "run_final_input_dynamic_shape_cleanup("
+    "shared_model_ir_pass_context, "
+    "shape_reconciler=_reconcile_static_tensor_shapes)[1]"
+)
+
+
+def _absolute_final_affine_instancenorm_call_count(
+    function_name: str,
+) -> int:
+    tree = ast.parse(
+        ABSOLUTE_FINAL_AFFINE_INSTANCENORM_PATH.read_text(encoding="utf-8")
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == ABSOLUTE_FINAL_AFFINE_INSTANCENORM
+    )
+    return sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name.removeprefix("_")
+        for node in ast.walk(owner)
+    )
+
+
+def _absolute_final_normalization_attention_call_count(
+    function_name: str,
+) -> int:
+    tree = ast.parse(
+        ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PATH.read_text(
+            encoding="utf-8"
+        )
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == ABSOLUTE_FINAL_NORMALIZATION_ATTENTION
+    )
+    return sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name.removeprefix("_")
+        for node in ast.walk(owner)
+    )
+
+
+def _very_late_dynamic_adapter_calls(function_name: str) -> list[ast.Call]:
+    tree = ast.parse(VERY_LATE_DYNAMIC_ADAPTER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == VERY_LATE_DYNAMIC_ADAPTER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name.removeprefix("_")
+    ]
+
+
+def _late_input_affine_normalization_calls(
+    function_name: str,
+) -> list[ast.Call]:
+    tree = ast.parse(
+        LATE_INPUT_AFFINE_NORMALIZATION_PATH.read_text(encoding="utf-8")
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == LATE_INPUT_AFFINE_NORMALIZATION
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name.removeprefix("_")
+    ]
+
+
+def _final_input_dynamic_calls(function_name: str) -> list[ast.Call]:
+    tree = ast.parse(FINAL_INPUT_DYNAMIC_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == FINAL_INPUT_DYNAMIC
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name
+    ]
+
+
+def _very_late_dynamic_adapter_invocation(
+    lowerer: ast.FunctionDef,
+) -> tuple[int, ast.Expr]:
+    return next(
+        (index, statement)
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Attribute)
+        and ast.unparse(statement.value.func) == "session.record_phase_result"
+        and len(statement.value.args) == 2
+        and ast.literal_eval(statement.value.args[0])
+        == FINAL_INPUT_DYNAMIC_SHAPE_PHASE_ID
+    )
 
 
 def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -350,89 +521,56 @@ def test_very_late_flatten_owner_can_prune_without_a_rewrite(
 
 def test_very_late_lowerer_stages_complete_mutation_evidence() -> None:
     lowerer, _ = _lowerer_and_helper()
-    resolve_index = next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, (ast.Expr, ast.Assign))
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == "_resolve_dynamic_reshape_shapes"
-        and any(
-            keyword.arg == "prefer_runtime_inferable_from_onnx_raw"
-            for keyword in statement.value.keywords
-        )
+    adapter_index, composite = _very_late_dynamic_adapter_invocation(lowerer)
+    assert isinstance(composite.value, ast.Call)
+    assert ast.unparse(composite.value.args[1]) == (
+        FINAL_INPUT_DYNAMIC_SHAPE_OWNER_EXPRESSION
     )
-
-    tensor_count = lowerer.body[resolve_index - 3]
-    results = lowerer.body[resolve_index - 2]
-    summary = lowerer.body[resolve_index - 1]
-    assert isinstance(tensor_count, ast.Assign)
-    assert isinstance(tensor_count.targets[0], ast.Name)
-    assert tensor_count.targets[0].id == "very_late_normalization_tensor_count"
-    assert isinstance(results, ast.Assign)
-    assert isinstance(results.targets[0], ast.Name)
-    assert results.targets[0].id == "very_late_normalization_results"
-    assert isinstance(results.value, ast.Call)
-    assert isinstance(results.value.func, ast.Name)
-    assert (
-        results.value.func.id
-        == "_run_very_late_gather_constant_normalization_pass_cluster"
+    assert ast.unparse(lowerer.body[adapter_index - 1]) == (
+        "_advance_post_progress()"
     )
-    assert isinstance(summary, ast.Assign)
-    assert isinstance(summary.targets[0], ast.Name)
-    assert summary.targets[0].id == "_very_late_normalization_stats"
-    assert isinstance(summary.value, ast.Call)
-    assert isinstance(summary.value.func, ast.Name)
-    assert summary.value.func.id == (
-        "summarize_very_late_gather_constant_normalization_mutations"
+    input_calls = _final_input_dynamic_calls(LATE_INPUT_AFFINE_NORMALIZATION)
+    assert len(input_calls) == 1
+    assert [ast.unparse(argument) for argument in input_calls[0].args] == [
+        "context"
+    ]
+    summary_calls = _late_input_affine_normalization_calls(
+        "run_very_late_gather_constant_normalization_summary"
+    )
+    assert len(summary_calls) == 1
+    assert [ast.unparse(argument) for argument in summary_calls[0].args] == [
+        "context"
+    ]
+    adapter_calls = _final_input_dynamic_calls(VERY_LATE_DYNAMIC_ADAPTER)
+    assert len(adapter_calls) == 1
+    assert [ast.unparse(argument) for argument in adapter_calls[0].args] == [
+        "context"
+    ]
+    assert adapter_calls[0].keywords == []
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id
+        in {
+            "very_late_normalization_tensor_count",
+            "very_late_normalization_results",
+        }
+        for node in ast.walk(lowerer)
     )
 
 
 def test_very_late_dynamic_reshape_captures_complete_mutation_evidence() -> None:
     lowerer, _ = _lowerer_and_helper()
-    invocation_index = next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, (ast.Expr, ast.Assign))
-        and any(
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "_resolve_dynamic_reshape_shapes"
-            and any(
-                keyword.arg == "prefer_runtime_inferable_from_onnx_raw"
-                and isinstance(keyword.value, ast.Constant)
-                and keyword.value.value is True
-                for keyword in node.keywords
-            )
-            for node in ast.walk(statement)
-        )
-    )
-    invocation = lowerer.body[invocation_index]
-    assert isinstance(invocation, ast.Assign)
-    assert len(invocation.targets) == 1
-    assert isinstance(invocation.targets[0], ast.Name)
-    assert invocation.targets[0].id == "_very_late_dynamic_reshape_stats"
-    assert isinstance(invocation.value, ast.Call)
-    assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == "_resolve_dynamic_reshape_shapes"
-    assert len(invocation.value.args) == 1
-    assert isinstance(invocation.value.args[0], ast.Name)
-    assert invocation.value.args[0].id == "model_ir"
-    assert len(invocation.value.keywords) == 1
-    prefer_runtime = invocation.value.keywords[0]
+    calls = _very_late_dynamic_adapter_calls("_resolve_dynamic_reshape_shapes")
+    assert len(calls) == 1
+    invocation = calls[0]
+    assert [ast.unparse(argument) for argument in invocation.args] == [
+        "context.model_ir"
+    ]
+    assert len(invocation.keywords) == 1
+    prefer_runtime = invocation.keywords[0]
     assert prefer_runtime.arg == "prefer_runtime_inferable_from_onnx_raw"
     assert isinstance(prefer_runtime.value, ast.Constant)
     assert prefer_runtime.value.value is True
-
-    previous = lowerer.body[invocation_index - 1]
-    assert isinstance(previous, ast.Assign)
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_very_late_normalization_stats"
-    following = lowerer.body[invocation_index + 1]
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "very_late_conv_input_tensor_count"
 
     direct_statements = [
         statement
@@ -445,54 +583,20 @@ def test_very_late_dynamic_reshape_captures_complete_mutation_evidence() -> None
             for node in ast.walk(statement)
         )
     ]
-    assert len(direct_statements) == 2
+    assert len(direct_statements) == 1
     assert isinstance(direct_statements[0], ast.Expr)
-    assert direct_statements[1] is invocation
 
 
 def test_very_late_conv_input_repairs_capture_complete_mutation_evidence() -> None:
     lowerer, _ = _lowerer_and_helper()
-    dynamic_index = next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_very_late_dynamic_reshape_stats"
+    calls = _very_late_dynamic_adapter_calls(
+        "run_indexed_conv_input_adapter_repairs_summary"
     )
-    tensor_count = lowerer.body[dynamic_index + 1]
-    stats = lowerer.body[dynamic_index + 2]
-    following = lowerer.body[dynamic_index + 3]
-
-    assert isinstance(tensor_count, ast.Assign)
-    assert len(tensor_count.targets) == 1
-    assert isinstance(tensor_count.targets[0], ast.Name)
-    assert tensor_count.targets[0].id == "very_late_conv_input_tensor_count"
-    assert isinstance(stats, ast.Assign)
-    assert len(stats.targets) == 1
-    assert isinstance(stats.targets[0], ast.Name)
-    assert stats.targets[0].id == "_very_late_conv_input_stats"
-    assert isinstance(stats.value, ast.Dict)
-    owner = stats.value.values[0]
-    assert isinstance(owner, ast.Call)
-    assert isinstance(owner.func, ast.Name)
-    assert owner.func.id == "_run_indexed_conv_input_adapter_repairs"
-    assert len(owner.args) == 1
-    assert isinstance(owner.args[0], ast.Name)
-    assert owner.args[0].id == "model_ir"
-    assert owner.keywords == []
-    assert len(stats.value.keys) == 2
-    prune_key = stats.value.keys[1]
-    assert isinstance(prune_key, ast.Constant)
-    assert prune_key.value == "pruned_unused_tensors"
-
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_very_late_stale_channel_shuffle_stats"
-    assert isinstance(following.value, ast.Call)
-    assert isinstance(following.value.func, ast.Name)
-    assert following.value.func.id == "run_stale_nchw_channel_shuffle_repair"
+    assert len(calls) == 1
+    assert [ast.unparse(argument) for argument in calls[0].args] == [
+        "context.model_ir"
+    ]
+    assert calls[0].keywords == []
 
     fallback_assignments = [
         node
@@ -504,109 +608,53 @@ def test_very_late_conv_input_repairs_capture_complete_mutation_evidence() -> No
     ]
     assert len(fallback_assignments) == 1
     fallback = fallback_assignments[0]
-    assert isinstance(fallback.value, ast.Dict)
-    fallback_owner = fallback.value.values[0]
-    assert isinstance(fallback_owner, ast.Call)
-    assert isinstance(fallback_owner.func, ast.Name)
-    assert fallback_owner.func.id == "_run_indexed_conv_input_adapter_repairs"
+    assert isinstance(fallback.value, ast.Call)
+    assert isinstance(fallback.value.func, ast.Name)
+    assert (
+        fallback.value.func.id
+        == "run_indexed_conv_input_adapter_repairs_summary"
+    )
+    assert [ast.unparse(argument) for argument in fallback.value.args] == [
+        "fallback_ir"
+    ]
 
 
 def test_very_late_stale_channel_shuffle_captures_mutation_evidence() -> None:
-    lowerer, _ = _lowerer_and_helper()
-    conv_stats_index = next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_very_late_conv_input_stats"
+    calls = _very_late_dynamic_adapter_calls(
+        "run_stale_nchw_channel_shuffle_repair"
     )
-    invocation = lowerer.body[conv_stats_index + 1]
-    assert isinstance(invocation, ast.Assign)
-    assert len(invocation.targets) == 1
-    assert isinstance(invocation.targets[0], ast.Name)
-    assert invocation.targets[0].id == (
-        "_very_late_stale_channel_shuffle_stats"
-    )
-    assert isinstance(invocation.value, ast.Call)
-    assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == "run_stale_nchw_channel_shuffle_repair"
-    assert len(invocation.value.args) == 1
-    assert isinstance(invocation.value.args[0], ast.Name)
-    assert invocation.value.args[0].id == "model_ir"
-    assert len(invocation.value.keywords) == 2
+    assert len(calls) == 1
+    invocation = calls[0]
+    assert [ast.unparse(argument) for argument in invocation.args] == [
+        "context.model_ir"
+    ]
+    assert len(invocation.keywords) == 2
     keyword_paths = {
         keyword.arg: _expression_path(keyword.value)
-        for keyword in invocation.value.keywords
+        for keyword in invocation.keywords
     }
     assert keyword_paths == {
-        "layout_state": "session.layout_state",
-        "diagnostics": "session.diagnostics",
+        "layout_state": "context.layout_state",
+        "diagnostics": "context.diagnostics",
     }
-
-    following = lowerer.body[conv_stats_index + 2]
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == (
-        "_very_late_concat_transpose_conv_axis_stats"
-    )
-    assert isinstance(following.value, ast.Call)
-    assert isinstance(following.value.func, ast.Name)
-    assert following.value.func.id == "_repair_nchw_concat_transpose_conv_axes"
-
-    occurrences = [
-        node
-        for node in ast.walk(lowerer)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "run_stale_nchw_channel_shuffle_repair"
-    ]
-    assert len(occurrences) == 1
-    assert occurrences[0] is invocation.value
 
 
 def test_very_late_concat_transpose_conv_axis_captures_mutation_evidence() -> (
     None
 ):
     lowerer, _ = _lowerer_and_helper()
-    shuffle_index = next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id
-        == "_very_late_stale_channel_shuffle_stats"
+    calls = _very_late_dynamic_adapter_calls(
+        "_repair_nchw_concat_transpose_conv_axes"
     )
-    invocation = lowerer.body[shuffle_index + 1]
-    assert isinstance(invocation, ast.Assign)
-    assert len(invocation.targets) == 1
-    assert isinstance(invocation.targets[0], ast.Name)
-    assert invocation.targets[0].id == (
-        "_very_late_concat_transpose_conv_axis_stats"
-    )
-    assert isinstance(invocation.value, ast.Call)
-    assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == "_repair_nchw_concat_transpose_conv_axes"
-    assert len(invocation.value.args) == 1
-    assert isinstance(invocation.value.args[0], ast.Name)
-    assert invocation.value.args[0].id == "model_ir"
-    assert len(invocation.value.keywords) == 1
-    layout_keyword = invocation.value.keywords[0]
+    assert len(calls) == 1
+    invocation = calls[0]
+    assert [ast.unparse(argument) for argument in invocation.args] == [
+        "context.model_ir"
+    ]
+    assert len(invocation.keywords) == 1
+    layout_keyword = invocation.keywords[0]
     assert layout_keyword.arg == "layout_state"
-    assert _expression_path(layout_keyword.value) == "session.layout_state"
-
-    following = lowerer.body[shuffle_index + 2]
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == (
-        "_very_late_concat_global_pool_conv_axis_stats"
-    )
-    assert isinstance(following.value, ast.Call)
-    assert isinstance(following.value.func, ast.Name)
-    assert following.value.func.id == "_repair_nchw_concat_global_pool_conv_axes"
+    assert _expression_path(layout_keyword.value) == "context.layout_state"
 
     existing_targets = {
         target.id
@@ -623,7 +671,6 @@ def test_very_late_concat_transpose_conv_axis_captures_mutation_evidence() -> (
         )
     }
     assert existing_targets == {
-        "_very_late_concat_transpose_conv_axis_stats",
         "fallback_concat_axis_stats",
         "final_concat_axis_stats",
     }
@@ -632,93 +679,34 @@ def test_very_late_concat_transpose_conv_axis_captures_mutation_evidence() -> (
 def test_very_late_concat_global_pool_conv_axis_captures_mutation_evidence() -> (
     None
 ):
-    lowerer, _ = _lowerer_and_helper()
-    transpose_axis_index = next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id
-        == "_very_late_concat_transpose_conv_axis_stats"
+    calls = _very_late_dynamic_adapter_calls(
+        "_repair_nchw_concat_global_pool_conv_axes"
     )
-    invocation = lowerer.body[transpose_axis_index + 1]
-    assert isinstance(invocation, ast.Assign)
-    assert len(invocation.targets) == 1
-    assert isinstance(invocation.targets[0], ast.Name)
-    assert invocation.targets[0].id == (
-        "_very_late_concat_global_pool_conv_axis_stats"
-    )
-    assert isinstance(invocation.value, ast.Call)
-    assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == "_repair_nchw_concat_global_pool_conv_axes"
-    assert len(invocation.value.args) == 1
-    assert isinstance(invocation.value.args[0], ast.Name)
-    assert invocation.value.args[0].id == "model_ir"
-    assert len(invocation.value.keywords) == 1
-    layout_keyword = invocation.value.keywords[0]
-    assert layout_keyword.arg == "layout_state"
-    assert _expression_path(layout_keyword.value) == "session.layout_state"
-
-    following = lowerer.body[transpose_axis_index + 2]
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_very_late_dynamic_rank1_reshape_stats"
-    assert isinstance(following.value, ast.Call)
-    assert isinstance(following.value.func, ast.Name)
-    assert following.value.func.id == (
-        "_rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs"
-    )
-
-    occurrences = [
-        node
-        for node in ast.walk(lowerer)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "_repair_nchw_concat_global_pool_conv_axes"
+    assert len(calls) == 1
+    invocation = calls[0]
+    assert [ast.unparse(argument) for argument in invocation.args] == [
+        "context.model_ir"
     ]
-    assert len(occurrences) == 1
-    assert occurrences[0] is invocation.value
+    assert len(invocation.keywords) == 1
+    layout_keyword = invocation.keywords[0]
+    assert layout_keyword.arg == "layout_state"
+    assert _expression_path(layout_keyword.value) == "context.layout_state"
 
 
 def test_very_late_dynamic_rank1_reshape_captures_mutation_evidence() -> None:
     lowerer, _ = _lowerer_and_helper()
-    concat_pool_index = next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id
-        == "_very_late_concat_global_pool_conv_axis_stats"
-    )
-    invocation = lowerer.body[concat_pool_index + 1]
-    assert isinstance(invocation, ast.Assign)
-    assert len(invocation.targets) == 1
-    assert isinstance(invocation.targets[0], ast.Name)
-    assert invocation.targets[0].id == "_very_late_dynamic_rank1_reshape_stats"
-    assert isinstance(invocation.value, ast.Call)
-    assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == (
+    calls = _very_late_dynamic_adapter_calls(
         "_rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs"
     )
-    assert len(invocation.value.args) == 1
-    assert isinstance(invocation.value.args[0], ast.Name)
-    assert invocation.value.args[0].id == "model_ir"
-    assert len(invocation.value.keywords) == 1
-    layout_keyword = invocation.value.keywords[0]
+    assert len(calls) == 1
+    invocation = calls[0]
+    assert [ast.unparse(argument) for argument in invocation.args] == [
+        "context.model_ir"
+    ]
+    assert len(invocation.keywords) == 1
+    layout_keyword = invocation.keywords[0]
     assert layout_keyword.arg == "layout_state"
-    assert _expression_path(layout_keyword.value) == "session.layout_state"
-
-    following = lowerer.body[concat_pool_index + 2]
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_very_late_static_shape_stats"
-    assert isinstance(following.value, ast.Call)
-    assert isinstance(following.value.func, ast.Name)
-    assert following.value.func.id == "_reconcile_static_tensor_shapes"
+    assert _expression_path(layout_keyword.value) == "context.layout_state"
 
     result_assignments = sorted(
         [
@@ -735,9 +723,7 @@ def test_very_late_dynamic_rank1_reshape_captures_mutation_evidence() -> None:
         key=lambda node: node.lineno,
     )
     assert [assignment.targets[0].id for assignment in result_assignments] == [
-        "_very_late_dynamic_rank1_reshape_stats",
         "_fallback_dynamic_rank1_stats",
-        "_absolute_final_dynamic_rank1_stats",
     ]
     assignment_inputs = []
     for assignment in result_assignments:
@@ -745,7 +731,13 @@ def test_very_late_dynamic_rank1_reshape_captures_mutation_evidence() -> None:
         argument = assignment.value.args[0]
         assert isinstance(argument, ast.Name)
         assignment_inputs.append(argument.id)
-    assert assignment_inputs == ["model_ir", "fallback_ir", "model_ir"]
+    assert assignment_inputs == ["fallback_ir"]
+    assert (
+        _absolute_final_normalization_attention_call_count(
+            "_rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs"
+        )
+        == 1
+    )
 
     remaining_expressions = [
         node
@@ -763,32 +755,18 @@ def test_very_late_static_reconciliation_captures_complete_mutation_evidence() -
     None
 ):
     lowerer, _ = _lowerer_and_helper()
-    dynamic_rank1_index = next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_very_late_dynamic_rank1_reshape_stats"
+    adapter_index, _ = _very_late_dynamic_adapter_invocation(lowerer)
+    invocation = lowerer.body[adapter_index]
+    assert isinstance(invocation, ast.Expr)
+    assert ast.unparse(invocation) == (
+        "session.record_phase_result("
+        "'shape_reconciliation.primary.very_late_final', "
+        "run_final_input_dynamic_shape_cleanup("
+        "shared_model_ir_pass_context, "
+        "shape_reconciler=_reconcile_static_tensor_shapes)[1])"
     )
-    invocation = lowerer.body[dynamic_rank1_index + 1]
-    assert isinstance(invocation, ast.Assign)
-    assert len(invocation.targets) == 1
-    assert isinstance(invocation.targets[0], ast.Name)
-    assert invocation.targets[0].id == "_very_late_static_shape_stats"
-    assert isinstance(invocation.value, ast.Call)
-    assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == "_reconcile_static_tensor_shapes"
-    assert len(invocation.value.args) == 1
-    assert isinstance(invocation.value.args[0], ast.Name)
-    assert invocation.value.args[0].id == "model_ir"
-    assert len(invocation.value.keywords) == 1
-    mutation_keyword = invocation.value.keywords[0]
-    assert mutation_keyword.arg == "include_mutation_count"
-    assert isinstance(mutation_keyword.value, ast.Constant)
-    assert mutation_keyword.value.value is True
 
-    following = lowerer.body[dynamic_rank1_index + 2]
+    following = lowerer.body[adapter_index + 1]
     assert isinstance(following, ast.Assign)
     assert isinstance(following.targets[0], ast.Name)
     assert following.targets[0].id == "split_fallback_stats"
@@ -807,149 +785,104 @@ def test_post_split_fallback_reconciliation_captures_complete_mutation_evidence(
         and statement.targets[0].id == "split_fallback_stats"
     )
 
-    default_stats = lowerer.body[split_index + 1]
-    assert isinstance(default_stats, ast.Assign)
-    assert len(default_stats.targets) == 1
-    assert isinstance(default_stats.targets[0], ast.Name)
-    assert default_stats.targets[0].id == "_post_split_fallback_static_shape_stats"
-    assert isinstance(default_stats.value, ast.Dict)
-    assert {
-        key.value: value.value
-        for key, value in zip(default_stats.value.keys, default_stats.value.values)
-        if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
-    } == {
-        "reconciled_static_tensor_shapes": 0,
-        "reconciled_static_shape_mutations": 0,
-    }
-
-    guard = lowerer.body[split_index + 2]
+    guard = lowerer.body[split_index + 1]
     assert isinstance(guard, ast.If)
     assert ast.unparse(guard.test) == (
         "int(split_fallback_stats.get('replaced_unsupported_split_with_slice', 0)) > 0"
     )
     assert len(guard.body) == 1
     invocation = guard.body[0]
-    assert isinstance(invocation, ast.Assign)
-    assert len(invocation.targets) == 1
-    assert isinstance(invocation.targets[0], ast.Name)
-    assert invocation.targets[0].id == "_post_split_fallback_static_shape_stats"
-    assert isinstance(invocation.value, ast.Call)
-    assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == "_reconcile_static_tensor_shapes"
-    assert [ast.unparse(argument) for argument in invocation.value.args] == [
-        "model_ir"
-    ]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in invocation.value.keywords
-    } == {"include_mutation_count": "True"}
+    assert isinstance(invocation, ast.Expr)
+    assert ast.unparse(invocation) == (
+        "session.record_phase_result("
+        "'shape_reconciliation.primary.post_split_fallback', "
+        "_reconcile_static_tensor_shapes(model_ir, "
+        "include_mutation_count=True))"
+    )
+
+    following = lowerer.body[split_index + 2]
+    assert isinstance(following, ast.Assign)
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "unbound_inputs"
 
 
 def test_very_late_preserves_sole_terminal_invocation_and_boundaries() -> None:
     lowerer, _ = _lowerer_and_helper()
-    invocation_indexes = [
-        index
-        for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "very_late_normalization_results"
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == VERY_LATE
-    ]
+    calls = _late_input_affine_normalization_calls(
+        "run_very_late_gather_constant_normalization_summary"
+    )
+    assert len(calls) == 1
+    assert [ast.unparse(argument) for argument in calls[0].args] == ["context"]
+    assert calls[0].keywords == []
 
-    assert len(invocation_indexes) == 1
-    invocation_index = invocation_indexes[0]
-    invocation = lowerer.body[invocation_index]
-    assert isinstance(invocation, ast.Assign)
-    assert isinstance(invocation.value, ast.Call)
-    assert invocation.value.args == []
-    assert invocation.value.keywords == []
-
+    invocation_index, invocation = _very_late_dynamic_adapter_invocation(
+        lowerer
+    )
     previous = lowerer.body[invocation_index - 1]
     following = lowerer.body[invocation_index + 1]
-    assert isinstance(previous, ast.Assign)
-    assert len(previous.targets) == 1
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "very_late_normalization_tensor_count"
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_very_late_normalization_stats"
-    assert isinstance(following.value, ast.Call)
-    assert isinstance(following.value.func, ast.Name)
-    assert following.value.func.id == (
-        "summarize_very_late_gather_constant_normalization_mutations"
+    assert isinstance(previous, ast.Expr)
+    assert ast.unparse(previous) == "_advance_post_progress()"
+    assert isinstance(invocation, ast.Expr)
+    assert isinstance(invocation.value, ast.Call)
+    assert ast.unparse(invocation.value.args[1]) == (
+        FINAL_INPUT_DYNAMIC_SHAPE_OWNER_EXPRESSION
     )
-    affine = lowerer.body[invocation_index - 2]
-    assert isinstance(affine, ast.Assign)
-    assert isinstance(affine.targets[0], ast.Name)
-    assert affine.targets[0].id == "_very_late_affine_post_add_stats"
-    resolve = lowerer.body[invocation_index + 2]
-    assert isinstance(resolve, ast.Assign)
-    assert len(resolve.targets) == 1
-    assert isinstance(resolve.targets[0], ast.Name)
-    assert resolve.targets[0].id == "_very_late_dynamic_reshape_stats"
-    assert isinstance(resolve.value, ast.Call)
-    assert isinstance(resolve.value.func, ast.Name)
-    assert resolve.value.func.id == "_resolve_dynamic_reshape_shapes"
+    assert isinstance(following, ast.Assign)
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == "split_fallback_stats"
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id == FINAL_INPUT_DYNAMIC_RESULT
+        for node in ast.walk(lowerer)
+    )
+    assert len(_final_input_dynamic_calls(LATE_INPUT_AFFINE_NORMALIZATION)) == 1
+    assert len(_final_input_dynamic_calls(VERY_LATE_DYNAMIC_ADAPTER)) == 1
 
 
 def test_very_late_affine_post_add_captures_complete_mutation_evidence() -> None:
     lowerer, _ = _lowerer_and_helper()
-    invocation_index = next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "very_late_normalization_results"
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == VERY_LATE
-    )
-    invocation = lowerer.body[invocation_index - 2]
-    assert isinstance(invocation, ast.Assign)
-    assert len(invocation.targets) == 1
-    assert isinstance(invocation.targets[0], ast.Name)
-    assert invocation.targets[0].id == "_very_late_affine_post_add_stats"
-    assert isinstance(invocation.value, ast.Call)
-    assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == (
+    affine_calls = _late_input_affine_normalization_calls(
         "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
     )
-    assert len(invocation.value.args) == 1
-    assert isinstance(invocation.value.args[0], ast.Name)
-    assert invocation.value.args[0].id == "model_ir"
-    assert len(invocation.value.keywords) == 1
-    layout_keyword = invocation.value.keywords[0]
+    assert len(affine_calls) == 1
+    invocation = affine_calls[0]
+    assert [ast.unparse(argument) for argument in invocation.args] == [
+        "context.model_ir"
+    ]
+    assert len(invocation.keywords) == 1
+    layout_keyword = invocation.keywords[0]
     assert layout_keyword.arg == "layout_state"
-    assert isinstance(layout_keyword.value, ast.Attribute)
-    assert isinstance(layout_keyword.value.value, ast.Name)
-    assert layout_keyword.value.value.id == "session"
-    assert layout_keyword.value.attr == "layout_state"
+    assert ast.unparse(layout_keyword.value) == "context.layout_state"
 
-    previous = lowerer.body[invocation_index - 3]
-    assert isinstance(previous, ast.Assign)
-    assert len(previous.targets) == 1
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_late_unbound_input_repair_stats"
-    assert isinstance(previous.value, ast.Call)
-    assert isinstance(previous.value.func, ast.Name)
-    assert (
-        previous.value.func.id
-        == "_repair_unbound_nonconstant_operator_inputs_with_layout_transpose"
+    owner_calls = sorted(
+        (
+            node
+            for node in ast.walk(
+                next(
+                    node
+                    for node in ast.parse(
+                        LATE_INPUT_AFFINE_NORMALIZATION_PATH.read_text(
+                            encoding="utf-8"
+                        )
+                    ).body
+                    if isinstance(node, ast.FunctionDef)
+                    and node.name == LATE_INPUT_AFFINE_NORMALIZATION
+                )
+            )
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        ),
+        key=lambda node: (node.lineno, node.col_offset),
     )
-    tensor_count = lowerer.body[invocation_index - 1]
-    assert isinstance(tensor_count, ast.Assign)
-    assert isinstance(tensor_count.targets[0], ast.Name)
-    assert tensor_count.targets[0].id == "very_late_normalization_tensor_count"
-    following = lowerer.body[invocation_index]
-    assert isinstance(following, ast.Assign)
-    assert isinstance(following.value, ast.Call)
-    assert isinstance(following.value.func, ast.Name)
-    assert following.value.func.id == VERY_LATE
+    owner_call_names = [call.func.id for call in owner_calls]
+    affine_index = owner_call_names.index(
+        "optimize_transpose_mul_posttranspose_add_nhwc_chains"
+    )
+    assert owner_call_names[affine_index - 1] == (
+        "repair_unbound_nonconstant_operator_inputs_with_layout_transpose"
+    )
+    assert owner_call_names[affine_index + 1] == (
+        "run_very_late_gather_constant_normalization_summary"
+    )
 
     direct_statements = [
         statement
@@ -963,16 +896,18 @@ def test_very_late_affine_post_add_captures_complete_mutation_evidence() -> None
             for node in ast.walk(statement)
         )
     ]
-    assert len(direct_statements) == 3
-    assert isinstance(direct_statements[0], ast.Assign)
-    first_target = direct_statements[0].targets[0]
-    assert isinstance(first_target, ast.Name)
-    assert first_target.id == "_pre_terminal_affine_post_add_stats"
-    assert direct_statements[1] is invocation
-    assert isinstance(direct_statements[2], ast.Assign)
-    third_target = direct_statements[2].targets[0]
-    assert isinstance(third_target, ast.Name)
-    assert third_target.id == "_absolute_final_affine_post_add_stats"
+    assert (
+        len(direct_statements)
+        + len(affine_calls)
+        + PRE_TERMINAL_AFFINE_TAIL_PASS_IDS.count(
+            "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
+        )
+        + _absolute_final_affine_instancenorm_call_count(
+            "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
+        )
+        == 3
+    )
+    assert direct_statements == []
 
 
 def test_very_late_context_is_explicit() -> None:

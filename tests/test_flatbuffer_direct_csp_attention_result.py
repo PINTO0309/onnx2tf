@@ -12,9 +12,35 @@ OWNER_PATH = (
     / "passes"
     / "attention_layout.py"
 )
+ORCHESTRATION_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "post_cleanup_sinet_csp_attention_orchestration.py"
+)
+ORCHESTRATION_OWNER = "run_post_cleanup_sinet_csp_attention_cleanup"
 CSP_ATTENTION = "_optimize_transpose_csp_attention_nhwc_chains"
 SA_PA_MIRRORPAD = (
     "_optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains"
+)
+POST_CLEANUP_RESULT_TARGETS = (
+    "_post_cleanup_csp_attention_stats",
+    "_post_cleanup_sa_pa_mirrorpad_stats",
+)
+POST_CLEANUP_PHASE_IDS = (
+    "cleanup.post_cleanup.csp_attention",
+    "cleanup.post_cleanup.sa_pa_mirrorpad",
+)
+POST_CLEANUP_OWNER_EXPRESSIONS = (
+    (
+        "run_post_cleanup_sinet_csp_attention_cleanup("
+        "shared_model_ir_pass_context)[1]"
+    ),
+    (
+        "_optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains("
+        "model_ir, layout_state=session.layout_state)"
+    ),
 )
 
 
@@ -32,7 +58,17 @@ def _statement_call(statement: ast.stmt) -> ast.Call | None:
         return None
     if not isinstance(statement.value, ast.Call):
         return None
-    return statement.value
+    call = statement.value
+    if (
+        isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        return call.args[1]
+    return call
 
 
 def _call_name(statement: ast.stmt) -> str | None:
@@ -47,6 +83,21 @@ def _single_target(statement: ast.stmt) -> str | None:
         return None
     target = statement.targets[0]
     return target.id if isinstance(target, ast.Name) else None
+
+
+def _phase_id(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
+        return None
+    call = statement.value
+    if (
+        not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != "session"
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
 
 
 def test_csp_attention_result_schema_and_cleanup_semantics_are_explicit() -> None:
@@ -106,31 +157,26 @@ def test_csp_attention_result_schema_and_cleanup_semantics_are_explicit() -> Non
     )
 
 
-def test_lowerer_retains_post_cleanup_csp_attention_result() -> None:
+def test_lowerer_records_post_cleanup_csp_attention_result() -> None:
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
     invocations = [
         statement
         for statement in lowerer.body
-        if _call_name(statement) == CSP_ATTENTION
+        if _phase_id(statement) == "cleanup.post_cleanup.csp_attention"
     ]
     assert len(invocations) == 1
     invocation = invocations[0]
-    assert _single_target(invocation) == "_post_cleanup_csp_attention_stats"
+    assert _phase_id(invocation) == "cleanup.post_cleanup.csp_attention"
 
-    call = _statement_call(invocation)
-    assert call is not None
-    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in call.keywords
-    } == {"layout_state": "session.layout_state"}
+    assert ast.unparse(invocation.value.args[1]) == (
+        POST_CLEANUP_OWNER_EXPRESSIONS[0]
+    )
 
     invocation_index = lowerer.body.index(invocation)
     previous = lowerer.body[invocation_index - 1]
     following = lowerer.body[invocation_index + 1]
-    assert _single_target(previous) == "_post_cleanup_sinet_preadd_resize_results"
-    assert _call_name(previous) == "_run_sinet_preadd_resize_recovery_sequence"
-    assert _single_target(following) == "_post_cleanup_sa_pa_mirrorpad_stats"
+    assert _phase_id(previous) == "cleanup.very_late.prune_reconcile"
+    assert _phase_id(following) == "cleanup.post_cleanup.sa_pa_mirrorpad"
     assert _call_name(following) == SA_PA_MIRRORPAD
     following_call = _statement_call(following)
     assert following_call is not None
@@ -138,3 +184,56 @@ def test_lowerer_retains_post_cleanup_csp_attention_result() -> None:
         keyword.arg: ast.unparse(keyword.value)
         for keyword in following_call.keywords
     } == {"layout_state": "session.layout_state"}
+
+    orchestration_owner = _functions(ORCHESTRATION_OWNER_PATH)[
+        ORCHESTRATION_OWNER
+    ]
+    production_calls = [
+        node
+        for node in ast.walk(orchestration_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == CSP_ATTENTION
+    ]
+    assert len(production_calls) == 1
+    assert [
+        ast.unparse(argument) for argument in production_calls[0].args
+    ] == ["context.model_ir"]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in production_calls[0].keywords
+    } == {"layout_state": "context.layout_state"}
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == CSP_ATTENTION
+        for node in ast.walk(lowerer)
+    )
+
+
+def test_post_cleanup_attention_results_use_phase_result_store() -> None:
+    lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
+    records = [
+        statement
+        for statement in lowerer.body
+        if _phase_id(statement) in POST_CLEANUP_PHASE_IDS
+    ]
+    indices = [lowerer.body.index(statement) for statement in records]
+
+    assert tuple(_phase_id(statement) for statement in records) == (
+        POST_CLEANUP_PHASE_IDS
+    )
+    assert tuple(ast.unparse(statement.value.args[1]) for statement in records) == (
+        POST_CLEANUP_OWNER_EXPRESSIONS
+    )
+    assert indices == list(range(indices[0], indices[0] + 2))
+    assert _phase_id(lowerer.body[indices[0] - 1]) == (
+        "cleanup.very_late.prune_reconcile"
+    )
+    assert _phase_id(lowerer.body[indices[-1] + 1]) == (
+        "cleanup.post_sinet.batchmatmul_affine_input"
+    )
+    assert not any(
+        isinstance(node, ast.Name) and node.id in POST_CLEANUP_RESULT_TARGETS
+        for node in ast.walk(lowerer)
+    )

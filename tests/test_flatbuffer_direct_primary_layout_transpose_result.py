@@ -19,6 +19,20 @@ LATE_BINARY_PATH = (
     / "passes"
     / "late_binary_layout_recovery.py"
 )
+LATE_CONCAT_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "late_concat_layout_orchestration.py"
+)
+VERY_LATE_LAYOUT_BROADCAST_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "very_late_layout_broadcast_orchestration.py"
+)
 OWNER = "run_layout_transpose_cleanup"
 INNER_OWNER = "_optimize_layout_transpose_chains"
 RESULT_TARGET = "_layout_pass_set_1_layout_transpose_cleanup_stats"
@@ -35,7 +49,18 @@ def _functions(path: Path) -> dict[str, ast.FunctionDef]:
 def _statement_call(statement: ast.stmt) -> ast.Call | None:
     if not isinstance(statement, (ast.Assign, ast.Expr)):
         return None
-    return statement.value if isinstance(statement.value, ast.Call) else None
+    call = statement.value if isinstance(statement.value, ast.Call) else None
+    if (
+        call is not None
+        and isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        return call.args[1]
+    return call
 
 
 def _call_name(statement: ast.stmt) -> str | None:
@@ -100,11 +125,19 @@ def test_layout_transpose_schema_and_all_owner_occurrences_are_explicit() -> Non
 
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
     direct_calls = _direct_lowerer_calls(lowerer)
-    assert len(direct_calls) == 3
+    very_late_owner = _functions(VERY_LATE_LAYOUT_BROADCAST_PATH)[
+        "run_very_late_layout_broadcast_cleanup"
+    ]
+    very_late_calls = [
+        node
+        for node in ast.walk(very_late_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OWNER
+    ]
+    assert len(direct_calls) + len(very_late_calls) == 2
     assert [_single_target(statement) for statement in direct_calls] == [
-        RESULT_TARGET,
-        "_late_concat_transpose_layout_stats",
-        "_very_late_layout_transpose_cleanup_stats",
+        None,
     ]
     assert all(
         [ast.unparse(argument) for argument in _statement_call(statement).args]
@@ -125,16 +158,42 @@ def test_layout_transpose_schema_and_all_owner_occurrences_are_explicit() -> Non
             "layout_state": "session.layout_state",
             "diagnostics": "session.diagnostics",
         },
-        {
-            "layout_state": "session.layout_state",
-            "diagnostics": "session.diagnostics",
-            "state_scope": "late_concat_layout_state_scope",
-        },
-        {
-            "layout_state": "session.layout_state",
-            "diagnostics": "session.diagnostics",
-        },
     ]
+    very_late_call = very_late_calls[0]
+    assert [ast.unparse(argument) for argument in very_late_call.args] == [
+        "context.model_ir"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in very_late_call.keywords
+    } == {
+        "layout_state": "context.layout_state",
+        "diagnostics": "context.diagnostics",
+    }
+
+    late_concat = _functions(LATE_CONCAT_PATH)[
+        "run_late_concat_layout_cleanup"
+    ]
+    late_concat_calls = [
+        node
+        for node in ast.walk(late_concat)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OWNER
+    ]
+    assert len(late_concat_calls) == 1
+    late_concat_call = late_concat_calls[0]
+    assert [ast.unparse(argument) for argument in late_concat_call.args] == [
+        "context.model_ir"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in late_concat_call.keywords
+    } == {
+        "layout_state": "context.layout_state",
+        "diagnostics": "context.diagnostics",
+        "state_scope": "state_scope",
+    }
 
     late_binary = _functions(LATE_BINARY_PATH)["run_late_binary_layout_recovery"]
     nested_calls = [
@@ -173,7 +232,7 @@ def test_primary_layout_transpose_result_is_retained_observation_only() -> None:
         if _call_name(statement) == OWNER
     )
     result = layout_guard.body[result_index]
-    assert _single_target(result) == RESULT_TARGET
+    assert _single_target(result) is None
     call = _statement_call(result)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
@@ -193,6 +252,5 @@ def test_primary_layout_transpose_result_is_retained_observation_only() -> None:
     assert not any(
         isinstance(node, ast.Name)
         and node.id == RESULT_TARGET
-        and isinstance(node.ctx, ast.Load)
         for node in ast.walk(lowerer)
     )

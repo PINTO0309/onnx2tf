@@ -12,16 +12,46 @@ OWNER_PATH = (
     / "passes"
     / "hardswish_se_layout.py"
 )
+TERMINAL_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_activation_bridge_orchestration.py"
+)
+EARLY_TERMINAL_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_singleton_clamp_sinet_hardswish_orchestration.py"
+)
+EARLY_TERMINAL_OWNER = (
+    "run_terminal_singleton_clamp_sinet_hardswish_cleanup"
+)
 HARDSWISH_SE = (
     "_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains"
 )
 OWNER_NAME = (
     "optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains"
 )
-SINET_TERMINAL_TARGET = "_terminal_sinet_layout_recovery_results"
+SINET_TERMINAL_TARGET = "_terminal_singleton_clamp_sinet_hardswish_results"
 RESULT_TARGET = "_terminal_sinet_hardswish_se_stats"
 DEQUANT_TARGET = "_terminal_dequant_hardsigmoid_bridge_stats"
 LATE_RESULT_TARGET = "_terminal_hardswish_se_stats"
+EXPECTED_PHASE_IDS = (
+    "cleanup.terminal.sinet_hardswish_se",
+    "cleanup.terminal.dequant_hardsigmoid_bridge",
+)
+EXPECTED_OWNER_EXPRESSIONS = (
+    f"{SINET_TERMINAL_TARGET}[1]",
+    "_optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)",
+)
+INDEXED_PHASE_ID = "shape_topology.terminal.indexed_convergence"
+INDEXED_OWNER_EXPRESSION = (
+    "run_terminal_sinet_singleton_reshape_convergence_cleanup("
+    "sinet_terminal_layout_recovery_context)[1]"
+)
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -44,9 +74,35 @@ def _direct_call(statement: ast.stmt) -> ast.Call | None:
     if not isinstance(statement, (ast.Assign, ast.Expr)):
         return None
     value = statement.value
-    if not isinstance(value, ast.Call) or not isinstance(value.func, ast.Name):
+    if not isinstance(value, ast.Call):
+        return None
+    if (
+        isinstance(value.func, ast.Attribute)
+        and isinstance(value.func.value, ast.Name)
+        and value.func.value.id == "session"
+        and value.func.attr == "record_phase_result"
+        and len(value.args) == 2
+        and isinstance(value.args[1], ast.Call)
+    ):
+        value = value.args[1]
+    if not isinstance(value.func, ast.Name):
         return None
     return value if value.func.id == HARDSWISH_SE else None
+
+
+def _phase_id(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
+        return None
+    call = statement.value
+    if (
+        not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != "session"
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
 
 
 def test_hardswish_se_wrapper_schema_and_cleanup_are_explicit() -> None:
@@ -82,54 +138,68 @@ def test_hardswish_se_wrapper_schema_and_cleanup_are_explicit() -> None:
 
 def test_hardswish_se_has_exactly_two_production_forms() -> None:
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
-    owner_statements = [
-        statement
-        for statement in lowerer.body
-        if any(
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == HARDSWISH_SE
-            for node in ast.walk(statement)
-        )
-    ]
-    assert len(owner_statements) == 2
-
-    first_call = next(
-        node
-        for node in ast.walk(owner_statements[0])
-        if isinstance(node, ast.Call)
+    assert not any(
+        isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == HARDSWISH_SE
+        for node in ast.walk(lowerer)
     )
-    assert [ast.unparse(argument) for argument in first_call.args] == ["model_ir"]
-    assert first_call.keywords == []
+    early_terminal_owner = _functions(EARLY_TERMINAL_OWNER_PATH)[
+        EARLY_TERMINAL_OWNER
+    ]
+    early_calls = [
+        node
+        for node in ast.walk(early_terminal_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OWNER_NAME
+    ]
+    assert len(early_calls) == 1
+    assert [ast.unparse(argument) for argument in early_calls[0].args] == [
+        "context.pass_context.model_ir"
+    ]
+    assert early_calls[0].keywords == []
 
-    late_statement = owner_statements[1]
-    assert _single_target(late_statement) == LATE_RESULT_TARGET
-    assert isinstance(late_statement, ast.Assign)
-    assert isinstance(late_statement.value, ast.Dict)
-    assert len(late_statement.value.keys) == 2
-    assert late_statement.value.keys[0] is None
-    prune_key = late_statement.value.keys[1]
-    assert isinstance(prune_key, ast.Constant)
-    assert prune_key.value == "pruned_unused_tensors"
-
-
-def test_terminal_sinet_hardswish_se_result_is_retained_observation_only() -> None:
-    lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
-    result_statement = next(
-        statement
-        for statement in lowerer.body
-        if _direct_call(statement) is not None
+    terminal_owner = _functions(TERMINAL_OWNER_PATH)[
+        "run_terminal_activation_bridge_cleanup"
+    ]
+    late_call = next(
+        node
+        for node in ast.walk(terminal_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_hardswish_se_layout_summary"
     )
-    assert _single_target(result_statement) == RESULT_TARGET
+    assert [ast.unparse(argument) for argument in late_call.args] == [
+        "context.model_ir"
+    ]
+    assert late_call.keywords == []
     assert not any(
-        isinstance(node, ast.Name)
-        and node.id == RESULT_TARGET
-        and isinstance(node.ctx, ast.Load)
+        isinstance(node, ast.Name) and node.id == LATE_RESULT_TARGET
         for node in ast.walk(lowerer)
     )
 
-    result_index = lowerer.body.index(result_statement)
-    assert _single_target(lowerer.body[result_index - 1]) == SINET_TERMINAL_TARGET
-    assert _single_target(lowerer.body[result_index + 1]) == DEQUANT_TARGET
+
+def test_terminal_hardswish_hardsigmoid_results_use_phase_result_store() -> None:
+    lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
+    records = [
+        statement
+        for statement in lowerer.body
+        if _phase_id(statement) in EXPECTED_PHASE_IDS
+    ]
+    indices = [lowerer.body.index(statement) for statement in records]
+
+    assert tuple(_phase_id(statement) for statement in records) == EXPECTED_PHASE_IDS
+    assert tuple(ast.unparse(statement.value.args[1]) for statement in records) == (
+        EXPECTED_OWNER_EXPRESSIONS
+    )
+    assert indices == [indices[0], indices[0] + 1]
+    assert _single_target(lowerer.body[indices[0] - 1]) == SINET_TERMINAL_TARGET
+    indexed_record = lowerer.body[indices[-1] + 1]
+    assert _phase_id(indexed_record) == INDEXED_PHASE_ID
+    assert ast.unparse(indexed_record.value.args[1]) == INDEXED_OWNER_EXPRESSION
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id in {RESULT_TARGET, DEQUANT_TARGET}
+        for node in ast.walk(lowerer)
+    )

@@ -19,6 +19,17 @@ ORCHESTRATION_PATH = (
     / "passes"
     / "layout_recovery_orchestration.py"
 )
+FINAL_COMPOSITE_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "final_boundary_slice_concat_orchestration.py"
+)
+FINAL_COMPOSITE_OWNER = "run_final_boundary_slice_concat_cleanup"
+FINAL_COMPOSITE_TARGET = "_final_boundary_slice_concat_results"
+OUTER_COMPOSITE_OWNER = "run_late_affine_final_shape_terminal_convpool_cleanup"
+OUTER_COMPOSITE_TARGET = "_late_affine_final_shape_terminal_convpool_results"
 SPLIT_MIXED_CONCAT = (
     "_optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains"
 )
@@ -50,7 +61,17 @@ def _statement_call(statement: ast.stmt) -> ast.Call | None:
         return None
     if not isinstance(statement.value, ast.Call):
         return None
-    return statement.value
+    call = statement.value
+    if (
+        isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        return call.args[1]
+    return call
 
 
 def _call_name(statement: ast.stmt) -> str | None:
@@ -141,7 +162,7 @@ def test_split_mixed_concat_schema_cleanup_and_orchestration_are_explicit() -> N
     )
 
 
-def test_lowerer_retains_both_split_mixed_concat_results() -> None:
+def test_lowerer_retains_guarded_split_mixed_and_terminal_composite() -> None:
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
     layout_guard = next(
         statement
@@ -158,17 +179,9 @@ def test_lowerer_retains_both_split_mixed_concat_results() -> None:
     )
     guarded_result = layout_guard.body[guarded_index]
 
-    terminal_index = next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if _call_name(statement) == SPLIT_MIXED_CONCAT
-    )
-    terminal_result = lowerer.body[terminal_index]
-    direct_results = [guarded_result, terminal_result]
-    expected_targets = [
-        "_layout_opt_split_mixed_pre_concat_stats",
-        "_terminal_split_mixed_pre_concat_stats",
-    ]
+    direct_results = [guarded_result]
+    old_guarded_target = "_layout_opt_split_mixed_pre_concat_stats"
+    expected_targets = [None]
     assert [_single_target(statement) for statement in direct_results] == (
         expected_targets
     )
@@ -178,7 +191,7 @@ def test_lowerer_retains_both_split_mixed_concat_results() -> None:
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == SPLIT_MIXED_CONCAT
-    ) == 2
+    ) == 1
     for statement in direct_results:
         call = _statement_call(statement)
         assert call is not None
@@ -187,25 +200,26 @@ def test_lowerer_retains_both_split_mixed_concat_results() -> None:
             keyword.arg: ast.unparse(keyword.value)
             for keyword in call.keywords
         } == {"layout_state": "session.layout_state"}
-    for target in expected_targets:
-        assert not any(
-            isinstance(node, ast.Name)
-            and node.id == target
-            and isinstance(node.ctx, ast.Load)
-            for node in ast.walk(lowerer)
-        )
-
+    assert not any(
+        isinstance(node, ast.Name) and node.id == old_guarded_target
+        for node in ast.walk(lowerer)
+    )
     assert _call_name(layout_guard.body[guarded_index - 1]) == (
         STRIDED_SLICE_PRE_CONCAT
     )
-    assert _single_target(layout_guard.body[guarded_index - 1]) == (
-        "_layout_opt_stridedslice_pre_concat_stats"
-    )
+    assert _single_target(layout_guard.body[guarded_index - 1]) is None
     assert _call_name(layout_guard.body[guarded_index + 1]) == INPUT_PRE_CONCAT
 
-    terminal_previous = lowerer.body[terminal_index - 1]
-    assert _single_target(terminal_previous) == (
-        "_terminal_relu_split_conv_concat_stats"
+    terminal_composite = next(
+        statement
+        for statement in lowerer.body
+        if _single_target(statement) == OUTER_COMPOSITE_TARGET
     )
-    assert _call_name(terminal_previous) == RELU_SPLIT_CONV_CONCAT
-    assert _call_name(lowerer.body[terminal_index + 1]) == INPUT_PRE_CONCAT
+    assert _call_name(terminal_composite) == OUTER_COMPOSITE_OWNER
+    owner = _functions(FINAL_COMPOSITE_PATH)[FINAL_COMPOSITE_OWNER]
+    assert sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_terminal_concat_bridge_layout_cleanup"
+        for node in ast.walk(owner)
+    ) == 1

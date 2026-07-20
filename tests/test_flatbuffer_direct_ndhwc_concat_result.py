@@ -40,10 +40,20 @@ def _direct_call(statement: ast.stmt) -> ast.Call | None:
         return None
     if not isinstance(statement.value, ast.Call):
         return None
-    function = statement.value.func
+    call = statement.value
+    if (
+        isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        call = call.args[1]
+    function = call.func
     if not isinstance(function, ast.Name) or function.id != NDHWC_CONCAT:
         return None
-    return statement.value
+    return call
 
 
 def _single_target(statement: ast.stmt) -> str | None:
@@ -112,7 +122,7 @@ def test_direct_ndhwc_concat_result_is_retained_observation_only() -> None:
     )
     assert len(direct_results) == 1
     result = direct_results[0]
-    assert _single_target(result) == RESULT_TARGET
+    assert _single_target(result) is None
     call = _direct_call(result)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
@@ -126,21 +136,23 @@ def test_direct_ndhwc_concat_result_is_retained_observation_only() -> None:
     assert not any(
         isinstance(node, ast.Name)
         and node.id == RESULT_TARGET
-        and isinstance(node.ctx, ast.Load)
         for node in ast.walk(lowerer)
     )
 
     body = _containing_body(lowerer, result)
     result_index = body.index(result)
-    assert _single_target(body[result_index - 1]) == PREVIOUS_TARGET
-    following = body[result_index + 1]
-    assert isinstance(following, ast.Assign)
-    assert _single_target(following) == (
-        "_layout_opt_stridedslice_pre_concat_stats"
+    assert ast.unparse(body[result_index - 1]) == (
+        "session.record_phase_result('cleanup.layout_pass_set_2.pre_concat', "
+        "_optimize_transpose_pre_concat_nhwc_chains(model_ir, "
+        "layout_state=session.layout_state, diagnostics=session.diagnostics))"
     )
-    assert isinstance(following.value, ast.Call)
-    assert isinstance(following.value.func, ast.Name)
-    assert following.value.func.id == FOLLOWING
+    following = body[result_index + 1]
+    assert ast.unparse(following) == (
+        "session.record_phase_result("
+        "'cleanup.layout_pass_set_2.stridedslice_pre_concat', "
+        "_optimize_transpose_stridedslice_pre_concat_nhwc_chains(model_ir, "
+        "layout_state=session.layout_state))"
+    )
 
 
 def test_layout_recovery_keeps_independent_ndhwc_concat_selection() -> None:

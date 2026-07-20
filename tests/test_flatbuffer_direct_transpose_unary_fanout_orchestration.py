@@ -38,6 +38,13 @@ POST_QDQ_PASS_IDS = (
     TRANSPOSE_UNARY_FANOUT_PASS_IDS[0],
     *TRANSPOSE_UNARY_FANOUT_PASS_IDS[2:],
 )
+LAYOUT_PASS_SET_1_FINAL_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "layout_pass_set_1_final_quantized_unary_safe_orchestration.py"
+)
 
 
 def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -53,6 +60,26 @@ def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
         if isinstance(node, ast.FunctionDef) and node.name == TRANSPOSE_UNARY_FANOUT
     )
     return lowerer, helper
+
+
+def _layout_pass_set_1_final_owner_calls(child_owner: str) -> list[ast.Call]:
+    tree = ast.parse(
+        LAYOUT_PASS_SET_1_FINAL_OWNER_PATH.read_text(encoding="utf-8")
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name
+        == "run_layout_pass_set_1_final_quantized_unary_safe_cleanup"
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == child_owner
+    ]
 
 
 def _expression_path(node: ast.expr) -> Any:
@@ -286,11 +313,18 @@ def test_transpose_unary_fanout_preserves_both_invocation_variants() -> None:
         and node.func.id == TRANSPOSE_UNARY_FANOUT
     ]
 
-    assert len(direct_invocations) == 1
-    assert direct_invocations[0].args == []
+    assert direct_invocations == []
+    final_owner_invocations = _layout_pass_set_1_final_owner_calls(
+        "run_transpose_unary_fanout"
+    )
+    assert len(final_owner_invocations) == 1
+    assert [
+        ast.unparse(argument)
+        for argument in final_owner_invocations[0].args
+    ] == ["context.pass_context"]
     assert {
         str(keyword.arg): _expression_path(keyword.value)
-        for keyword in direct_invocations[0].keywords
+        for keyword in final_owner_invocations[0].keywords
     } == {
         "include_layout_transpose": True,
         "include_unary_passthrough": False,
@@ -316,51 +350,20 @@ def test_transpose_unary_fanout_preserves_both_invocation_variants() -> None:
 
 
 def test_transpose_unary_fanout_preserves_direct_and_callback_boundaries() -> None:
-    lowerer, _ = _lowerer_and_helper()
-    parent = next(
-        statement
-        for statement in lowerer.body
-        if isinstance(statement, ast.If)
-        and isinstance(statement.test, ast.Name)
-        and statement.test.id == "optimize_layout_transpose_chains"
-        and any(
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == TRANSPOSE_UNARY_FANOUT
-            for node in ast.walk(statement)
-        )
+    owner_calls = _layout_pass_set_1_final_owner_calls(
+        "run_transpose_unary_fanout"
     )
-    direct_index = next(
-        index
-        for index, statement in enumerate(parent.body)
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == RESULT_TARGET
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == TRANSPOSE_UNARY_FANOUT
-    )
-    previous = parent.body[direct_index - 1]
-    following = parent.body[direct_index + 1]
-    assert isinstance(previous, ast.Assign)
-    assert len(previous.targets) == 1
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == (
-        "_layout_pass_set_1_final_attention_quantized_suffix_results"
-    )
-    assert isinstance(previous.value, ast.Call)
-    assert isinstance(previous.value.func, ast.Name)
-    assert previous.value.func.id == "_run_layout_attention_quantized_recovery_suffix"
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == (
-        "_layout_pass_set_1_final_safe_binary_results"
-    )
-    assert isinstance(following.value, ast.Call)
-    assert isinstance(following.value.func, ast.Name)
-    assert following.value.func.id == "_run_safe_binary_bridge_recovery_sequence"
+    assert len(owner_calls) == 1
+    assert [ast.unparse(argument) for argument in owner_calls[0].args] == [
+        "context.pass_context"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in owner_calls[0].keywords
+    } == {
+        "include_layout_transpose": "True",
+        "include_unary_passthrough": "False",
+    }
 
     callback_index = ATTENTION_GATE_QDQ_PASS_IDS.index(TRANSPOSE_UNARY_FANOUT)
     assert ATTENTION_GATE_QDQ_PASS_IDS[callback_index - 1] == (
@@ -416,37 +419,27 @@ def test_transpose_unary_fanout_returns_both_variants_and_retains_direct_result(
         for statement in ast.walk(lowerer)
         if _direct_call_name(statement) == TRANSPOSE_UNARY_FANOUT
     ]
-    assert len(direct_results) == 1
-    result = direct_results[0]
-    assert _single_target(result) == RESULT_TARGET
-    call = result.value
-    assert isinstance(call, ast.Call)
-    assert call.args == []
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in call.keywords
-    } == {
-        "include_layout_transpose": "True",
-        "include_unary_passthrough": "False",
-    }
-    parent = next(
-        statement
-        for statement in lowerer.body
-        if isinstance(statement, ast.If) and result in statement.body
-    )
-    result_index = parent.body.index(result)
-    assert _single_target(parent.body[result_index - 1]) == (
-        "_layout_pass_set_1_final_attention_quantized_suffix_results"
-    )
-    assert _single_target(parent.body[result_index + 1]) == (
-        "_layout_pass_set_1_final_safe_binary_results"
-    )
+    assert direct_results == []
     assert not any(
         isinstance(node, ast.Name)
         and node.id == RESULT_TARGET
         and isinstance(node.ctx, ast.Load)
         for node in ast.walk(lowerer)
     )
+    owner_calls = _layout_pass_set_1_final_owner_calls(
+        "run_transpose_unary_fanout"
+    )
+    assert len(owner_calls) == 1
+    assert [ast.unparse(argument) for argument in owner_calls[0].args] == [
+        "context.pass_context"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in owner_calls[0].keywords
+    } == {
+        "include_layout_transpose": "True",
+        "include_unary_passthrough": "False",
+    }
 
     attention_context = next(
         statement.value

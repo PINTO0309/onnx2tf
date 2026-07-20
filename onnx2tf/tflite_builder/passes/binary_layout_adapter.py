@@ -385,6 +385,30 @@ def run_indexed_binary_layout_adapter_cleanup(
     )
 
 
+def run_indexed_binary_layout_adapter_summary(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
+    """Run indexed binary adapters and merge prune-aware evidence."""
+
+    initial_tensor_count = len(model_ir.tensors)
+    exact_result, singleton_result = run_indexed_binary_layout_adapter_cleanup(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
+    return {
+        **exact_result,
+        **singleton_result,
+        "pruned_unused_tensors": max(
+            0,
+            int(initial_tensor_count - len(model_ir.tensors)),
+        ),
+    }
+
+
 def repair_rank4_channelwise_broadcast_constants_to_runtime_layout(
     model_ir: ModelIR,
     *,

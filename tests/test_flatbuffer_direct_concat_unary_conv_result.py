@@ -12,6 +12,17 @@ OWNER_PATH = (
     / "passes"
     / "concat_unary_conv_layout.py"
 )
+FINAL_COMPOSITE_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "final_boundary_slice_concat_orchestration.py"
+)
+FINAL_COMPOSITE_OWNER = "run_final_boundary_slice_concat_cleanup"
+FINAL_COMPOSITE_TARGET = "_final_boundary_slice_concat_results"
+OUTER_COMPOSITE_OWNER = "run_late_affine_final_shape_terminal_convpool_cleanup"
+OUTER_COMPOSITE_TARGET = "_late_affine_final_shape_terminal_convpool_results"
 RUNNER = "run_concat_unary_conv_layout_cleanup"
 OWNER = "_optimize_transpose_concat_unary_fanout_conv_nhwc_chains"
 CONCAT_INPUT_ADAPTER = (
@@ -135,36 +146,29 @@ def test_concat_unary_conv_runner_schema_and_mutation_contract_are_explicit() ->
     )
 
 
-def test_lowerer_retains_terminal_concat_unary_conv_result() -> None:
+def test_lowerer_moves_terminal_concat_unary_conv_to_composite() -> None:
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
     direct_results = [
         statement
         for statement in lowerer.body
         if _call_name(statement) == RUNNER
     ]
-    assert len(direct_results) == 1
-    result = direct_results[0]
+    assert direct_results == []
     target = "_terminal_concat_unary_conv_stats"
-    assert _single_target(result) == target
-    call = _statement_call(result)
-    assert call is not None
-    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in call.keywords
-    } == {
-        "layout_state": "session.layout_state",
-        "diagnostics": "session.diagnostics",
-    }
     assert not any(
-        isinstance(node, ast.Name)
-        and node.id == target
-        and isinstance(node.ctx, ast.Load)
+        isinstance(node, ast.Name) and node.id == target
         for node in ast.walk(lowerer)
     )
-
-    result_index = lowerer.body.index(result)
-    previous = lowerer.body[result_index - 1]
-    assert _single_target(previous) == "_terminal_concat_input_adapter_stats"
-    assert _call_name(previous) == CONCAT_INPUT_ADAPTER
-    assert _call_name(lowerer.body[result_index + 1]) == SHAPE_EXTRACT
+    composite = next(
+        statement
+        for statement in lowerer.body
+        if _single_target(statement) == OUTER_COMPOSITE_TARGET
+    )
+    assert _call_name(composite) == OUTER_COMPOSITE_OWNER
+    owner = _functions(FINAL_COMPOSITE_PATH)[FINAL_COMPOSITE_OWNER]
+    assert sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_terminal_concat_bridge_layout_cleanup"
+        for node in ast.walk(owner)
+    ) == 1

@@ -1,0 +1,81 @@
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+EXPECTED_RESULT_TARGETS = (
+    "_terminal_boundary_stridedslice_qdq_concat_stats",
+    "_terminal_swish_residual_concat_closure_stats",
+    "_terminal_dequant_logistic_mul_quantize_bridge_stats",
+    "_terminal_swish_qdq_island_stats",
+)
+EXPECTED_PHASE_IDS = (
+    "cleanup.terminal.boundary_stridedslice_qdq_concat",
+    "cleanup.terminal.swish_residual_concat_closure",
+    "cleanup.terminal.dequant_logistic_mul_quantize_bridge",
+    "cleanup.terminal.swish_qdq_island",
+)
+EXPECTED_OWNER_EXPRESSIONS = (
+    (
+        "run_terminal_slice_concat_boundary_stridedslice_cleanup("
+        "terminal_slice_concat_recovery_context)[1]"
+    ),
+    "_optimize_transpose_swish_residual_concat_closure_nhwc_chains(model_ir)",
+    "_optimize_transpose_dequant_logistic_mul_quantize_bridges(model_ir)",
+    "_optimize_transpose_swish_qdq_nhwc_islands(model_ir)",
+)
+PREDECESSOR_PHASE_ID = "cleanup.terminal.channel_slice_muladd_bridge"
+SUCCESSOR_PHASE_ID = "cleanup.terminal.instancenorm_post_bias"
+
+
+def _lowerer() -> ast.FunctionDef:
+    tree = ast.parse(LOWERER_PATH.read_text(encoding="utf-8"))
+    return next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+
+
+def _statement_call(statement: ast.stmt) -> ast.Call | None:
+    if not isinstance(statement, (ast.Assign, ast.Expr)):
+        return None
+    return statement.value if isinstance(statement.value, ast.Call) else None
+
+
+def _phase_id(statement: ast.stmt) -> str | None:
+    call = _statement_call(statement)
+    if (
+        call is None
+        or not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != "session"
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
+
+
+def test_terminal_activation_results_use_phase_result_store() -> None:
+    lowerer = _lowerer()
+    records = [
+        statement
+        for statement in lowerer.body
+        if _phase_id(statement) in EXPECTED_PHASE_IDS
+    ]
+    indices = [lowerer.body.index(statement) for statement in records]
+
+    assert tuple(_phase_id(statement) for statement in records) == EXPECTED_PHASE_IDS
+    assert tuple(
+        ast.unparse(_statement_call(statement).args[1]) for statement in records
+    ) == EXPECTED_OWNER_EXPRESSIONS
+    assert indices == list(range(indices[0], indices[0] + 4))
+    assert _phase_id(lowerer.body[indices[0] - 1]) == PREDECESSOR_PHASE_ID
+    assert _phase_id(lowerer.body[indices[-1] + 1]) == SUCCESSOR_PHASE_ID
+    assert not any(
+        isinstance(node, ast.Name) and node.id in EXPECTED_RESULT_TARGETS
+        for node in ast.walk(lowerer)
+    )

@@ -36,6 +36,15 @@ LAYOUT_TRANSPOSE_PATH = (
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "passes" / "layout_transpose.py"
 )
 TERMINAL_SLICE_CONCAT = "_run_terminal_slice_concat_layout_recovery_sequence"
+COMPOSITE_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "final_boundary_slice_concat_orchestration.py"
+)
+COMPOSITE_OWNER = "run_final_boundary_slice_concat_cleanup"
+COMPOSITE_TARGET = "_late_affine_final_shape_terminal_convpool_results"
 RESULT_TARGETS = (
     "_terminal_slice_concat_recovery_results",
     "_final_slice_concat_recovery_results",
@@ -80,6 +89,17 @@ def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
         if isinstance(node, ast.FunctionDef) and node.name == TERMINAL_SLICE_CONCAT
     )
     return lowerer, helper
+
+
+def _composite_recovery_calls() -> list[ast.Call]:
+    owner = _functions(COMPOSITE_PATH)[COMPOSITE_OWNER]
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_terminal_slice_concat_recovery"
+    ]
 
 
 def _expression_path(node: ast.expr) -> Any:
@@ -303,74 +323,68 @@ def test_terminal_slice_concat_recovery_invocations_remain_zero_argument() -> No
         and node.func.id == TERMINAL_SLICE_CONCAT
     ]
 
-    assert len(invocations) == 2
+    assert invocations == []
     assert all(call.args == [] for call in invocations)
     assert all(call.keywords == [] for call in invocations)
+    composite_calls = _composite_recovery_calls()
+    assert len(composite_calls) == 1
+    assert [ast.unparse(argument) for argument in composite_calls[0].args] == [
+        "context"
+    ]
 
 
 def test_terminal_slice_concat_recovery_preserves_outer_boundaries() -> None:
     lowerer, _ = _lowerer_and_helper()
-    invocation_indexes = [
+    record_indexes = [
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Assign)
-        and _single_target(statement) in RESULT_TARGETS
+        if isinstance(statement, ast.Expr)
         and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == TERMINAL_SLICE_CONCAT
+        and isinstance(statement.value.func, ast.Attribute)
+        and ast.unparse(statement.value.func) == "session.record_phase_result"
+        and len(statement.value.args) == 2
+        and ast.literal_eval(statement.value.args[0])
+        == "cleanup.terminal.boundary_stridedslice_qdq_concat"
     ]
-
-    assert len(invocation_indexes) == 2
-    observed: list[
-        tuple[str | None, str, tuple[str | None, ...], str | None, str]
-    ] = []
-    for index in invocation_indexes:
-        previous = lowerer.body[index - 1]
-        following = lowerer.body[index + 1]
-        assert isinstance(previous, (ast.Assign, ast.Expr))
-        previous_target: str | None = None
-        if isinstance(previous, ast.Assign):
-            assert len(previous.targets) == 1
-            assert isinstance(previous.targets[0], ast.Name)
-            previous_target = previous.targets[0].id
-        previous_call = previous.value
-        assert isinstance(previous_call, ast.Call)
-        assert isinstance(previous_call.func, ast.Name)
-        assert isinstance(following, (ast.Assign, ast.Expr))
-        following_target: str | None = None
-        if isinstance(following, ast.Assign):
-            assert len(following.targets) == 1
-            assert isinstance(following.targets[0], ast.Name)
-            following_target = following.targets[0].id
-        following_call = following.value
-        assert isinstance(following_call, ast.Call)
-        assert isinstance(following_call.func, ast.Name)
-        observed.append(
-            (
-                previous_target,
-                previous_call.func.id,
-                tuple(keyword.arg for keyword in previous_call.keywords),
-                following_target,
-                following_call.func.id,
-            )
-        )
-
-    assert observed == [
-        (
-            "_terminal_channel_slice_muladd_bridge_stats",
-            "_optimize_transpose_channel_slice_muladd_nhwc_bridge_chains",
-            ("layout_state",),
-            "_terminal_boundary_stridedslice_qdq_concat_stats",
-            "_optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks",
-        ),
-        (
-            "_final_channel_slice_muladd_bridge_stats",
-            "_optimize_transpose_channel_slice_muladd_nhwc_bridge_chains",
-            (),
-            "_final_slice_prepost_passthrough_stats",
-            "_optimize_transpose_slice_prepost_nhwc_passthrough_chains",
-        ),
-    ]
+    assert len(record_indexes) == 1
+    index = record_indexes[0]
+    record = lowerer.body[index]
+    assert isinstance(record, ast.Expr)
+    assert ast.unparse(record.value.args[1]) == (
+        "run_terminal_slice_concat_boundary_stridedslice_cleanup("
+        "terminal_slice_concat_recovery_context)[1]"
+    )
+    assert ast.unparse(lowerer.body[index - 1]) == (
+        "session.record_phase_result('cleanup.terminal.channel_slice_muladd_bridge', "
+        "_optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(model_ir, "
+        "layout_state=session.layout_state))"
+    )
+    assert ast.unparse(lowerer.body[index + 1]) == (
+        "session.record_phase_result('cleanup.terminal.swish_residual_concat_closure', "
+        "_optimize_transpose_swish_residual_concat_closure_nhwc_chains(model_ir))"
+    )
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id == "_terminal_slice_concat_recovery_results"
+        for node in ast.walk(lowerer)
+    )
+    composite = next(
+        statement
+        for statement in lowerer.body
+        if _single_target(statement) == COMPOSITE_TARGET
+    )
+    index = lowerer.body.index(composite)
+    predecessor = lowerer.body[index - 1]
+    assert isinstance(predecessor, ast.Expr)
+    assert ast.literal_eval(predecessor.value.args[0]) == (
+        "cleanup.late.ndhwc_cost_volume"
+    )
+    successor = lowerer.body[index + 1]
+    assert isinstance(successor, ast.If)
+    assert _single_target(successor.body[1]) == (
+        "_no_layout_fallback_affine_prepost_stats"
+    )
+    assert len(_composite_recovery_calls()) == 1
 
 
 def test_terminal_slice_concat_recovery_context_and_wrapper_are_explicit() -> None:
@@ -500,10 +514,8 @@ def test_terminal_slice_concat_propagates_and_retains_both_ordered_results(
         for statement in lowerer.body
         if _direct_call_name(statement) == TERMINAL_SLICE_CONCAT
     ]
-    assert len(production_results) == 2
-    assert tuple(_single_target(statement) for statement in production_results) == (
-        RESULT_TARGETS
-    )
+    assert production_results == []
+    assert len(_composite_recovery_calls()) == 1
     for target in RESULT_TARGETS:
         assert not any(
             isinstance(node, ast.Name)

@@ -34,12 +34,40 @@ PREDECESSOR_TARGETS = (
 SUCCESSORS = (
     "_advance_post_progress",
     "_advance_post_progress",
-    "_post_cleanup_sinet_preadd_resize_results",
+    "cleanup.post_cleanup.csp_attention",
+)
+POST_CLEANUP_OWNER_EXPRESSION = (
+    "run_post_cleanup_sinet_csp_attention_cleanup("
+    "shared_model_ir_pass_context)[1]"
 )
 RESULT_SCHEMA = {
     "removed_dead_operators": 0,
     "reconciled_static_tensor_shapes": 0,
 }
+VERY_LATE_RESULT_TARGETS = (
+    "_very_late_residual_affine_prelu_stats",
+    "_very_late_residual_affine_fanout_stats",
+    "_very_late_prune_reconcile_stats",
+)
+VERY_LATE_PHASE_IDS = (
+    "cleanup.very_late.residual_affine_prelu",
+    "cleanup.very_late.residual_affine_fanout",
+    "cleanup.very_late.prune_reconcile",
+)
+VERY_LATE_OWNER_EXPRESSIONS = (
+    (
+        "run_very_late_sinet_residual_affine_prelu_cleanup("
+        "sinet_terminal_layout_recovery_context)[1]"
+    ),
+    (
+        "_optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains("
+        "model_ir)"
+    ),
+    (
+        "run_indexed_prune_reconcile_cleanup("
+        "model_ir, layout_state=session.layout_state)"
+    ),
+)
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -53,7 +81,18 @@ def _functions(path: Path) -> dict[str, ast.FunctionDef]:
 def _statement_call(statement: ast.stmt) -> ast.Call | None:
     if not isinstance(statement, (ast.Assign, ast.Expr)):
         return None
-    return statement.value if isinstance(statement.value, ast.Call) else None
+    call = statement.value if isinstance(statement.value, ast.Call) else None
+    if (
+        call is not None
+        and isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        return call.args[1]
+    return call
 
 
 def _call_name(statement: ast.stmt) -> str | None:
@@ -68,6 +107,21 @@ def _single_target(statement: ast.stmt) -> str | None:
         return None
     target = statement.targets[0]
     return target.id if isinstance(target, ast.Name) else None
+
+
+def _phase_id(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
+        return None
+    call = statement.value
+    if (
+        not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != "session"
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
 
 
 def _pipeline_blocks(statements: list[ast.stmt]) -> list[list[ast.stmt]]:
@@ -192,18 +246,55 @@ def test_indexed_prune_reconcile_phase_boundaries_are_explicit() -> None:
     lowerer = _lowerer()
     locations = _owner_locations(lowerer)
     assert len(locations) == 3
-    for (
-        block,
-        index,
-    ), target, predecessor_target, successor in zip(
-        locations,
-        RESULT_TARGETS,
-        PREDECESSOR_TARGETS,
-        SUCCESSORS,
+    for occurrence, (
+        (block, index),
+        target,
+        predecessor_target,
+        successor,
+    ) in enumerate(
+        zip(
+            locations,
+            RESULT_TARGETS,
+            PREDECESSOR_TARGETS,
+            SUCCESSORS,
+        )
     ):
         invocation = block[index]
-        assert _single_target(invocation) == target
-        assert _single_target(block[index - 1]) == predecessor_target
+        if occurrence == 0:
+            assert ast.unparse(invocation) == (
+                "session.record_phase_result("
+                "'cleanup.core.prune_reconcile', "
+                "run_indexed_prune_reconcile_cleanup(model_ir, "
+                "layout_state=session.layout_state))"
+            )
+            assert ast.unparse(block[index - 1]) == (
+                "session.record_phase_result("
+                "'cleanup.core.squeeze_reshape_identity', "
+                "run_squeeze_reshape_identity_cleanup(model_ir, "
+                "include_unary_passthrough=True, "
+                "layout_state=session.layout_state, "
+                "diagnostics=session.diagnostics))"
+            )
+        elif occurrence == 1:
+            assert ast.unparse(invocation) == (
+                "session.record_phase_result("
+                "'cleanup.layout_pass_set_2.prune_reconcile', "
+                "run_indexed_prune_reconcile_cleanup(model_ir, "
+                "layout_state=session.layout_state))"
+            )
+            assert ast.unparse(block[index - 1]) == (
+                "session.record_phase_result("
+                "'cleanup.layout_pass_set_2.squeeze_reshape_identity', "
+                "run_squeeze_reshape_identity_cleanup(model_ir, "
+                "include_unary_passthrough=True, "
+                "layout_state=session.layout_state, "
+                "diagnostics=session.diagnostics))"
+            )
+        else:
+            assert _phase_id(invocation) == "cleanup.very_late.prune_reconcile"
+            assert _phase_id(block[index - 1]) == (
+                "cleanup.very_late.residual_affine_fanout"
+            )
         call = _statement_call(invocation)
         assert call is not None
         assert [ast.unparse(argument) for argument in call.args] == [
@@ -216,7 +307,10 @@ def test_indexed_prune_reconcile_phase_boundaries_are_explicit() -> None:
         if successor == "_advance_post_progress":
             assert _call_name(block[index + 1]) == successor
         else:
-            assert _single_target(block[index + 1]) == successor
+            assert _phase_id(block[index + 1]) == successor
+            assert ast.unparse(block[index + 1].value.args[1]) == (
+                POST_CLEANUP_OWNER_EXPRESSION
+            )
 
 
 def test_raw_prune_reconcile_result_schemas_are_explicit() -> None:
@@ -273,7 +367,9 @@ def test_indexed_prune_reconcile_owner_reuses_one_index_and_retains_results(
         for block, index in _owner_locations(lowerer)
     ]
     assert tuple(_single_target(statement) for statement in invocations) == (
-        RESULT_TARGETS
+        None,
+        None,
+        None,
     )
     for invocation in invocations:
         call = _statement_call(invocation)
@@ -288,5 +384,36 @@ def test_indexed_prune_reconcile_owner_reuses_one_index_and_retains_results(
         isinstance(node, ast.Name)
         and node.id in RESULT_TARGETS
         and isinstance(node.ctx, ast.Load)
+        for node in ast.walk(lowerer)
+    )
+
+
+def test_very_late_residual_cleanup_uses_phase_result_store() -> None:
+    lowerer = _lowerer()
+    records = [
+        statement
+        for statement in lowerer.body
+        if _phase_id(statement) in VERY_LATE_PHASE_IDS
+    ]
+    indices = [lowerer.body.index(statement) for statement in records]
+
+    assert tuple(_phase_id(statement) for statement in records) == (
+        VERY_LATE_PHASE_IDS
+    )
+    assert tuple(ast.unparse(statement.value.args[1]) for statement in records) == (
+        VERY_LATE_OWNER_EXPRESSIONS
+    )
+    assert indices == list(range(indices[0], indices[0] + 3))
+    assert _phase_id(lowerer.body[indices[0] - 1]) == (
+        "shape_topology.terminal.indexed_convergence"
+    )
+    assert _phase_id(lowerer.body[indices[-1] + 1]) == (
+        "cleanup.post_cleanup.csp_attention"
+    )
+    assert ast.unparse(lowerer.body[indices[-1] + 1].value.args[1]) == (
+        POST_CLEANUP_OWNER_EXPRESSION
+    )
+    assert not any(
+        isinstance(node, ast.Name) and node.id in VERY_LATE_RESULT_TARGETS
         for node in ast.walk(lowerer)
     )

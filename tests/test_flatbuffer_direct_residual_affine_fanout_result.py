@@ -48,7 +48,33 @@ def _functions(path: Path) -> dict[str, ast.FunctionDef]:
 def _statement_call(statement: ast.stmt) -> ast.Call | None:
     if not isinstance(statement, (ast.Assign, ast.Expr)):
         return None
-    return statement.value if isinstance(statement.value, ast.Call) else None
+    call = statement.value if isinstance(statement.value, ast.Call) else None
+    if (
+        call is not None
+        and isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        return call.args[1]
+    return call
+
+
+def _phase_id(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
+        return None
+    call = statement.value
+    if (
+        not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != "session"
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
 
 
 def _call_name(statement: ast.stmt) -> str | None:
@@ -143,12 +169,14 @@ def test_residual_affine_fanout_schema_cleanup_and_routes_are_explicit() -> None
 def test_residual_affine_fanout_direct_boundary_is_explicit() -> None:
     lowerer, index = _direct_location()
     invocation = lowerer.body[index]
-    assert _single_target(invocation) == RESULT_TARGET
+    assert _phase_id(invocation) == "cleanup.very_late.residual_affine_fanout"
     call = _statement_call(invocation)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
     assert call.keywords == []
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    assert _phase_id(lowerer.body[index - 1]) == (
+        "cleanup.very_late.residual_affine_prelu"
+    )
     assert _call_name(lowerer.body[index + 1]) == SUCCESSOR
     assert sum(
         isinstance(node, ast.Call)
@@ -160,10 +188,11 @@ def test_residual_affine_fanout_direct_boundary_is_explicit() -> None:
 
 def test_residual_affine_fanout_direct_result_is_retained_for_observation() -> None:
     lowerer, index = _direct_location()
-    assert _single_target(lowerer.body[index]) == RESULT_TARGET
+    assert _phase_id(lowerer.body[index]) == (
+        "cleanup.very_late.residual_affine_fanout"
+    )
     assert not any(
         isinstance(node, ast.Name)
         and node.id == RESULT_TARGET
-        and isinstance(node.ctx, ast.Load)
         for node in ast.walk(lowerer)
     )

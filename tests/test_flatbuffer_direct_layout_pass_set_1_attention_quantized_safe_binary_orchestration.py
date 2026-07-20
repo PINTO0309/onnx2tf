@@ -1,0 +1,682 @@
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
+from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import (
+    layout_pass_set_1_attention_quantized_safe_binary_orchestration,
+    layout_pass_set_1_final_quantized_unary_safe_orchestration,
+)
+from onnx2tf.tflite_builder.passes.attention_recovery_orchestration import (
+    AttentionRecoveryContext,
+    run_attention_gate_qdq_recovery,
+)
+from onnx2tf.tflite_builder.passes.duplicate_quantized_prelu_orchestration import (
+    run_duplicate_quantized_prelu,
+)
+from onnx2tf.tflite_builder.passes.gate_layout_orchestration import (
+    run_gate_layout,
+)
+from onnx2tf.tflite_builder.passes.layout_attention_quantized_suffix_orchestration import (
+    LayoutAttentionQuantizedSuffixContext,
+)
+from onnx2tf.tflite_builder.passes.mean_attention_orchestration import (
+    run_mean_attention,
+)
+from onnx2tf.tflite_builder.passes.transpose_unary_fanout_orchestration import (
+    run_transpose_unary_fanout,
+)
+REPO_ROOT = Path(__file__).resolve().parents[1]
+LOWERER_PATH = (
+    REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+)
+OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "layout_pass_set_1_attention_quantized_safe_binary_orchestration.py"
+)
+OWNER = "run_layout_pass_set_1_attention_quantized_safe_binary_cleanup"
+CHILD_OWNERS = (
+    "run_layout_attention_quantized_suffix",
+    "run_safe_binary_recovery",
+)
+CURRENT_CHILD_OWNERS = (
+    "_run_layout_attention_quantized_recovery_suffix",
+    "_run_safe_binary_bridge_recovery_sequence",
+)
+RESULT_TARGETS = (
+    "_layout_pass_set_1_attention_quantized_suffix_results",
+    "_layout_pass_set_1_safe_binary_results",
+)
+COMPOSITE_TARGET = (
+    "_layout_pass_set_1_attention_quantized_safe_binary_results"
+)
+LATER_RESULT_TARGETS = (
+    "_layout_pass_set_1_final_attention_quantized_suffix_results",
+    "_layout_pass_set_1_transpose_unary_fanout_results",
+    "_layout_pass_set_1_final_safe_binary_results",
+)
+FINAL_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "layout_pass_set_1_final_quantized_unary_safe_orchestration.py"
+)
+FINAL_OWNER = "run_layout_pass_set_1_final_quantized_unary_safe_cleanup"
+FINAL_CHILD_OWNERS = (
+    "run_layout_attention_quantized_suffix",
+    "run_transpose_unary_fanout",
+    "run_safe_binary_recovery",
+)
+FINAL_CURRENT_CHILD_OWNERS = (
+    "_run_layout_attention_quantized_recovery_suffix",
+    "_run_transpose_unary_fanout_layout_pass_cluster",
+    "_run_safe_binary_bridge_recovery_sequence",
+)
+FINAL_COMPOSITE_TARGET = "_layout_pass_set_1_final_quantized_unary_safe_results"
+FINAL_PREDECESSOR_PHASE_ID = (
+    "cleanup.layout_pass_set_1.squeeze_reshape_identity"
+)
+FINAL_SUCCESSOR = "_advance_post_progress"
+PREDECESSOR_PHASE_ID = (
+    "cleanup.layout_pass_set_1.post_binary_affine_chain_fold"
+)
+SUCCESSOR_PHASE_ID = "cleanup.layout_pass_set_1.dequant_mean_quantize"
+OPTION = "enable_duplicate_transpose_fanout_optimizations"
+GUARD = "optimize_layout_transpose_chains"
+
+MEAN_SCHEMA = (
+    ("optimized_transpose_mean_prepost_nhwc_passthrough_chains",),
+    ("optimized_transpose_mean_mul_reshape_add_conv_nhwc_chains",),
+    ("optimized_transpose_pre_unary_mean_terminal_nhwc_chains",),
+    ("optimized_transpose_se_conv_mul_prepost_nhwc_chains",),
+    ("optimized_transpose_se_fc_mul_prepost_nhwc_chains",),
+    ("optimized_transpose_conv_attention_nhwc_propagation_chains",),
+)
+ATTENTION_SCHEMA = (
+    ("optimized_transpose_sa_pa_mirrorpad_nhwc_propagation_chains",),
+    ("optimized_sinet_mix_attention_double_logistic_nhwc_chains",),
+    (
+        ("optimized_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains",),
+        (
+            "optimized_transpose_sum_logistic_muladd_prepost_nhwc_chains",
+            "optimized_transpose_weighted_add_swish_prepost_nhwc_chains",
+            "optimized_transpose_nested_weighted_add_swish_prepost_nhwc_chains",
+            "optimized_transpose_logistic_muladd_prepost_nhwc_chains",
+        ),
+        (
+            "optimized_transpose_pad_prepost_nhwc_chains",
+            "optimized_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains",
+            "optimized_transpose_norm_subgraph_pad_prepost_nhwc_chains",
+        ),
+        (
+            "optimized_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains",
+            "optimized_transpose_logistic_sub_mul_postadd_nhwc_chains",
+        ),
+        (
+            "optimized_transpose_3d_leaky_logistic_muladd_ndhwc_chains",
+            "optimized_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains",
+        ),
+        ("optimized_transpose_cost_volume_scatter_ndhwc_chains",),
+        ("optimized_transpose_add_concat_const_suffix_nhwc_chains",),
+        ("optimized_transpose_dual_mul_concat_prepost_nhwc_chains",),
+    ),
+    ("rewritten_transposeconv_output_nhwc_passthrough_chains",),
+    ("rewritten_transposeconv_output_channel1_terminal_transpose_chains",),
+    (
+        ("rewritten_transpose_unary_passthrough_chains",),
+        ("rewritten_transpose_unary_fanout_inverse_post_bridges",),
+        ("rewritten_transpose_unary_binary_full_post_fanout_bridges",),
+    ),
+    ("removed_transpose_dequant_relu_quantize_bridges",),
+    ("removed_transpose_dequant_hardsigmoid_quantize_bridges",),
+    ("rewritten_trailing_output_transpose_passthrough_chains",),
+    ("removed_transpose_dequant_mul_add_prelu_quantize_bridges",),
+)
+SAFE_BINARY_SCHEMA = (
+    (
+        "rewritten_transpose_binary_symmetric_legacy_only_bridges_safe",
+        "rewritten_transpose_binary_single_post_bridges_safe",
+        "rewritten_transpose_binary_mixed_fanout_bridges_safe",
+        "rewritten_transpose_binary_asymmetric_fanout_bridges",
+        "rewritten_transpose_binary_full_post_fanout_bridges",
+    ),
+)
+TRANSPOSE_UNARY_SCHEMA = (
+    (
+        "iterations",
+        "removed_identity_transpose",
+        "removed_inverse_transpose_pairs",
+        "removed_inverse_transpose_fanout_branches",
+        "composed_consecutive_transpose_pairs",
+    ),
+    ("rewritten_transpose_unary_fanout_inverse_post_bridges",),
+    ("rewritten_transpose_unary_binary_full_post_fanout_bridges",),
+)
+
+
+def _functions(path: Path) -> dict[str, ast.FunctionDef]:
+    return {
+        node.name: node
+        for node in ast.parse(path.read_text(encoding="utf-8")).body
+        if isinstance(node, ast.FunctionDef)
+    }
+
+
+def _lowerer() -> ast.FunctionDef:
+    return _functions(LOWERER_PATH)["lower_onnx_to_ir"]
+
+
+def _call(statement: ast.stmt) -> ast.Call | None:
+    if not isinstance(statement, (ast.Assign, ast.Expr)):
+        return None
+    return statement.value if isinstance(statement.value, ast.Call) else None
+
+
+def _call_name(statement: ast.stmt) -> str | None:
+    call = _call(statement)
+    if call is None or not isinstance(call.func, ast.Name):
+        return None
+    return call.func.id
+
+
+def _single_target(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+        return None
+    target = statement.targets[0]
+    return target.id if isinstance(target, ast.Name) else None
+
+
+def _phase_id(statement: ast.stmt) -> str | None:
+    call = _call(statement)
+    if (
+        call is None
+        or not isinstance(call.func, ast.Attribute)
+        or ast.unparse(call.func) != "session.record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
+
+
+def _guard_body() -> list[ast.stmt]:
+    lowerer = _lowerer()
+    guard = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.If)
+        and ast.unparse(statement.test) == GUARD
+        and any(
+            _single_target(candidate) in (*RESULT_TARGETS, COMPOSITE_TARGET)
+            for candidate in statement.body
+        )
+    )
+    assert guard.orelse == []
+    return guard.body
+
+
+def _schema(value: Any) -> Any:
+    if isinstance(value, dict):
+        return tuple(value)
+    if isinstance(value, tuple):
+        return tuple(_schema(item) for item in value)
+    raise AssertionError(f"unexpected result type: {type(value)!r}")
+
+
+def _expected_suffix_schema(*, include_duplicate_transpose: bool) -> tuple[Any, ...]:
+    duplicate_keys = ("removed_duplicate_reshape_fanout",)
+    if include_duplicate_transpose:
+        duplicate_keys = (
+            *duplicate_keys,
+            "removed_duplicate_transpose_fanout",
+        )
+    return (
+        ("optimized_transpose_mul_add_const_prepost_nhwc_chains",),
+        (
+            "optimized_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains",
+        ),
+        ("optimized_transpose_mean_mul_add_const_prepost_nhwc_chains",),
+        MEAN_SCHEMA,
+        ATTENTION_SCHEMA,
+        (
+            duplicate_keys,
+            (
+                "removed_transpose_dequant_prelu_quantize_bridges",
+                "removed_transpose_dequant_prelu_transpose_bridges",
+                "folded_dequant_prelu_quantize_chains",
+                "folded_dequant_prelu_depthwise_quantize_chains",
+            ),
+        ),
+        ("folded_dequant_transposeconv_quantize_chains",),
+        ("folded_dequant_reshape_quantize_chains",),
+        ("folded_dequant_hardsigmoid_quantize_chains",),
+        ("folded_dequant_maxpool_quantize_chains",),
+        ("folded_dequant_softmax_quantize_chains",),
+        ("folded_dequant_logistic_quantize_chains",),
+        ("canonicalized_softmax_transpose_chains",),
+    )
+
+
+def _context() -> LayoutAttentionQuantizedSuffixContext:
+    model_ir = ModelIR("layout_pass_set_1_attention_quantized_safe_schema")
+    pass_context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
+    attention_context = AttentionRecoveryContext(
+        pass_context=pass_context,
+        mean_attention_cluster=lambda: run_mean_attention(pass_context),
+        gate_layout_cluster=lambda: run_gate_layout(pass_context),
+        transpose_unary_fanout_cluster=lambda: run_transpose_unary_fanout(
+            pass_context
+        ),
+    )
+    return LayoutAttentionQuantizedSuffixContext(
+        pass_context=pass_context,
+        mean_attention_cluster=lambda: run_mean_attention(pass_context),
+        attention_gate_qdq_recovery=lambda: run_attention_gate_qdq_recovery(
+            attention_context
+        ),
+        duplicate_quantized_prelu_cluster=(
+            lambda *, include_transpose: run_duplicate_quantized_prelu(
+                pass_context,
+                include_transpose=include_transpose,
+            )
+        ),
+    )
+
+
+@pytest.mark.parametrize("include_duplicate_transpose", [False, True])
+def test_layout_pass_set_1_attention_quantized_safe_current_contract(
+    include_duplicate_transpose: bool,
+) -> None:
+    body = _guard_body()
+    assignment = next(
+        statement
+        for statement in body
+        if _single_target(statement) == COMPOSITE_TARGET
+    )
+    index = body.index(assignment)
+    assert _call_name(assignment) == OWNER
+    call = _call(assignment)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == [
+        "layout_attention_quantized_suffix_context"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in call.keywords
+    } == {"include_duplicate_transpose": OPTION}
+    assert _phase_id(body[index - 1]) == PREDECESSOR_PHASE_ID
+    assert _phase_id(body[index + 1]) == SUCCESSOR_PHASE_ID
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id in RESULT_TARGETS
+        for statement in body
+        for node in ast.walk(statement)
+    )
+
+    lowerer = _lowerer()
+    assignments_by_target = {
+        _single_target(statement): statement
+        for statement in lowerer.body
+        if _single_target(statement)
+        in {
+            "shared_model_ir_pass_context",
+            "quantized_recovery_context",
+            "layout_attention_quantized_suffix_context",
+        }
+    }
+    assert ast.unparse(
+        assignments_by_target["shared_model_ir_pass_context"].value
+    ) == "session.model_ir_pass_context"
+    assert ast.unparse(
+        assignments_by_target["quantized_recovery_context"].value
+    ) == "shared_model_ir_pass_context"
+    suffix_context_assignment = assignments_by_target[
+        "layout_attention_quantized_suffix_context"
+    ]
+    assert isinstance(suffix_context_assignment.value, ast.Call)
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in suffix_context_assignment.value.keywords
+    } == {
+        "pass_context": "session.model_ir_pass_context",
+        "mean_attention_cluster": "_run_mean_attention_layout_pass_cluster",
+        "attention_gate_qdq_recovery": (
+            "_run_attention_gate_qdq_recovery_sequence"
+        ),
+        "duplicate_quantized_prelu_cluster": (
+            "_run_duplicate_quantized_prelu_pass_cluster"
+        ),
+    }
+
+    context = _context()
+    results = layout_pass_set_1_attention_quantized_safe_binary_orchestration.run_layout_pass_set_1_attention_quantized_safe_binary_cleanup(
+        context,
+        include_duplicate_transpose=include_duplicate_transpose,
+    )
+    assert _schema(results) == (
+        _expected_suffix_schema(
+            include_duplicate_transpose=include_duplicate_transpose
+        ),
+        SAFE_BINARY_SCHEMA,
+    )
+
+    later_index = next(
+        later_index
+        for later_index, statement in enumerate(body)
+        if _single_target(statement) == FINAL_COMPOSITE_TARGET
+    )
+    assert later_index > index
+
+
+def test_layout_pass_set_1_attention_quantized_safe_has_one_context_owner() -> None:
+    assert OWNER_PATH.exists()
+    owner = _functions(OWNER_PATH)[OWNER]
+    calls = sorted(
+        (
+            node
+            for node in ast.walk(owner)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in CHILD_OWNERS
+        ),
+        key=lambda node: (node.lineno, node.col_offset),
+    )
+    assert [call.func.id for call in calls] == list(CHILD_OWNERS)
+    assert [ast.unparse(argument) for argument in calls[0].args] == ["context"]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in calls[0].keywords
+    } == {"include_duplicate_transpose": "include_duplicate_transpose"}
+    assert [ast.unparse(argument) for argument in calls[1].args] == [
+        "context.pass_context"
+    ]
+    assert calls[1].keywords == []
+
+    body = _guard_body()
+    assignment = next(
+        statement
+        for statement in body
+        if _single_target(statement) == COMPOSITE_TARGET
+    )
+    index = body.index(assignment)
+    assert _call_name(assignment) == OWNER
+    call = _call(assignment)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == [
+        "layout_attention_quantized_suffix_context"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
+    } == {"include_duplicate_transpose": OPTION}
+    assert _phase_id(body[index - 1]) == PREDECESSOR_PHASE_ID
+    assert _phase_id(body[index + 1]) == SUCCESSOR_PHASE_ID
+    assert not any(
+        isinstance(node, ast.Name) and node.id in RESULT_TARGETS
+        for node in ast.walk(_lowerer())
+    )
+
+    lowerer_functions = {
+        node.name: node
+        for node in _lowerer().body
+        if isinstance(node, ast.FunctionDef)
+    }
+    assert all(name in lowerer_functions for name in CURRENT_CHILD_OWNERS)
+
+
+@pytest.mark.parametrize("include_duplicate_transpose", [False, True])
+def test_layout_pass_set_1_attention_quantized_safe_runtime_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    include_duplicate_transpose: bool,
+) -> None:
+    context = _context()
+    expected_results = (
+        tuple({f"suffix_{index}": index} for index in range(13)),
+        ({"safe_binary": 13},),
+    )
+    observed: list[tuple[str, object, dict[str, object]]] = []
+
+    def suffix(active_context: object, **options: object) -> object:
+        observed.append((CHILD_OWNERS[0], active_context, options))
+        return expected_results[0]
+
+    def safe(active_context: object) -> object:
+        observed.append((CHILD_OWNERS[1], active_context, {}))
+        return expected_results[1]
+
+    monkeypatch.setattr(
+        layout_pass_set_1_attention_quantized_safe_binary_orchestration,
+        CHILD_OWNERS[0],
+        suffix,
+    )
+    monkeypatch.setattr(
+        layout_pass_set_1_attention_quantized_safe_binary_orchestration,
+        CHILD_OWNERS[1],
+        safe,
+    )
+
+    actual = layout_pass_set_1_attention_quantized_safe_binary_orchestration.run_layout_pass_set_1_attention_quantized_safe_binary_cleanup(
+        context,
+        include_duplicate_transpose=include_duplicate_transpose,
+    )
+    assert actual == expected_results
+    assert actual[0] is expected_results[0]
+    assert actual[1] is expected_results[1]
+    assert observed == [
+        (
+            CHILD_OWNERS[0],
+            context,
+            {"include_duplicate_transpose": include_duplicate_transpose},
+        ),
+        (CHILD_OWNERS[1], context.pass_context, {}),
+    ]
+
+
+@pytest.mark.parametrize("include_duplicate_transpose", [False, True])
+def test_layout_pass_set_1_final_quantized_unary_safe_current_contract(
+    include_duplicate_transpose: bool,
+) -> None:
+    body = _guard_body()
+    assignment = next(
+        statement
+        for statement in body
+        if _single_target(statement) == FINAL_COMPOSITE_TARGET
+    )
+    index = body.index(assignment)
+    assert _call_name(assignment) == FINAL_OWNER
+    call = _call(assignment)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == [
+        "layout_attention_quantized_suffix_context"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in call.keywords
+    } == {"include_duplicate_transpose": OPTION}
+    assert _phase_id(body[index - 1]) == FINAL_PREDECESSOR_PHASE_ID
+    assert _call_name(body[index + 1]) == FINAL_SUCCESSOR
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id in LATER_RESULT_TARGETS
+        for node in ast.walk(_lowerer())
+    )
+
+    lowerer = _lowerer()
+    assignments_by_target = {
+        _single_target(statement): statement
+        for statement in lowerer.body
+        if _single_target(statement)
+        in {
+            "shared_model_ir_pass_context",
+            "quantized_recovery_context",
+            "transpose_unary_fanout_context",
+        }
+    }
+    assert ast.unparse(
+        assignments_by_target["shared_model_ir_pass_context"].value
+    ) == "session.model_ir_pass_context"
+    assert ast.unparse(
+        assignments_by_target["quantized_recovery_context"].value
+    ) == "shared_model_ir_pass_context"
+    assert ast.unparse(
+        assignments_by_target["transpose_unary_fanout_context"].value
+    ) == "shared_model_ir_pass_context"
+
+    context = _context()
+    results = layout_pass_set_1_final_quantized_unary_safe_orchestration.run_layout_pass_set_1_final_quantized_unary_safe_cleanup(
+        context,
+        include_duplicate_transpose=include_duplicate_transpose,
+    )
+    assert _schema(results) == (
+        _expected_suffix_schema(
+            include_duplicate_transpose=include_duplicate_transpose
+        ),
+        TRANSPOSE_UNARY_SCHEMA,
+        SAFE_BINARY_SCHEMA,
+    )
+
+
+def test_layout_pass_set_1_final_quantized_unary_safe_has_one_context_owner() -> None:
+    assert FINAL_OWNER_PATH.exists()
+    owner = _functions(FINAL_OWNER_PATH)[FINAL_OWNER]
+    calls = sorted(
+        (
+            node
+            for node in ast.walk(owner)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in FINAL_CHILD_OWNERS
+        ),
+        key=lambda node: (node.lineno, node.col_offset),
+    )
+    assert [call.func.id for call in calls] == list(FINAL_CHILD_OWNERS)
+    assert [ast.unparse(argument) for argument in calls[0].args] == ["context"]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in calls[0].keywords
+    } == {"include_duplicate_transpose": "include_duplicate_transpose"}
+    assert [ast.unparse(argument) for argument in calls[1].args] == [
+        "context.pass_context"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in calls[1].keywords
+    } == {
+        "include_layout_transpose": "True",
+        "include_unary_passthrough": "False",
+    }
+    assert [ast.unparse(argument) for argument in calls[2].args] == [
+        "context.pass_context"
+    ]
+    assert calls[2].keywords == []
+
+    body = _guard_body()
+    assignment = next(
+        statement
+        for statement in body
+        if _single_target(statement) == FINAL_COMPOSITE_TARGET
+    )
+    index = body.index(assignment)
+    assert _call_name(assignment) == FINAL_OWNER
+    call = _call(assignment)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == [
+        "layout_attention_quantized_suffix_context"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
+    } == {"include_duplicate_transpose": OPTION}
+    assert _phase_id(body[index - 1]) == FINAL_PREDECESSOR_PHASE_ID
+    assert _call_name(body[index + 1]) == FINAL_SUCCESSOR
+    assert not any(
+        isinstance(node, ast.Name) and node.id in LATER_RESULT_TARGETS
+        for node in ast.walk(_lowerer())
+    )
+
+    lowerer_functions = {
+        node.name: node
+        for node in _lowerer().body
+        if isinstance(node, ast.FunctionDef)
+    }
+    assert all(
+        name in lowerer_functions for name in FINAL_CURRENT_CHILD_OWNERS
+    )
+
+
+@pytest.mark.parametrize("include_duplicate_transpose", [False, True])
+def test_layout_pass_set_1_final_quantized_unary_safe_runtime_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    include_duplicate_transpose: bool,
+) -> None:
+    context = _context()
+    expected_results = (
+        tuple({f"suffix_{index}": index} for index in range(13)),
+        tuple({f"transpose_{index}": index} for index in range(3)),
+        ({"safe_binary": 16},),
+    )
+    observed: list[tuple[str, object, dict[str, object]]] = []
+
+    def suffix(active_context: object, **options: object) -> object:
+        observed.append((FINAL_CHILD_OWNERS[0], active_context, options))
+        return expected_results[0]
+
+    def transpose(active_context: object, **options: object) -> object:
+        observed.append((FINAL_CHILD_OWNERS[1], active_context, options))
+        return expected_results[1]
+
+    def safe(active_context: object) -> object:
+        observed.append((FINAL_CHILD_OWNERS[2], active_context, {}))
+        return expected_results[2]
+
+    monkeypatch.setattr(
+        layout_pass_set_1_final_quantized_unary_safe_orchestration,
+        FINAL_CHILD_OWNERS[0],
+        suffix,
+    )
+    monkeypatch.setattr(
+        layout_pass_set_1_final_quantized_unary_safe_orchestration,
+        FINAL_CHILD_OWNERS[1],
+        transpose,
+    )
+    monkeypatch.setattr(
+        layout_pass_set_1_final_quantized_unary_safe_orchestration,
+        FINAL_CHILD_OWNERS[2],
+        safe,
+    )
+
+    actual = layout_pass_set_1_final_quantized_unary_safe_orchestration.run_layout_pass_set_1_final_quantized_unary_safe_cleanup(
+        context,
+        include_duplicate_transpose=include_duplicate_transpose,
+    )
+    assert actual == expected_results
+    assert actual[0] is expected_results[0]
+    assert actual[1] is expected_results[1]
+    assert actual[2] is expected_results[2]
+    assert observed == [
+        (
+            FINAL_CHILD_OWNERS[0],
+            context,
+            {"include_duplicate_transpose": include_duplicate_transpose},
+        ),
+        (
+            FINAL_CHILD_OWNERS[1],
+            context.pass_context,
+            {
+                "include_layout_transpose": True,
+                "include_unary_passthrough": False,
+            },
+        ),
+        (FINAL_CHILD_OWNERS[2], context.pass_context, {}),
+    ]

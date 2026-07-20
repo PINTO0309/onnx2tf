@@ -3,7 +3,6 @@ from __future__ import annotations
 import copy
 
 import numpy as np
-import onnx2tf.tflite_builder.lower_from_onnx2tf as lowering_module
 import pytest
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
@@ -21,6 +20,9 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
 )
 from onnx2tf.tflite_builder.passes.dynamic_reshape_resolution import (
     resolve_dynamic_reshape_shapes,
+)
+from onnx2tf.tflite_builder.passes import (
+    indexed_final_shape_activation_convergence as indexed_convergence_module,
 )
 
 
@@ -230,15 +232,19 @@ def test_indexed_shape_convergence_skips_final_reconcile_when_stable(
         graph_indexes.append(graph_index)
         return {"resolved_dynamic_reshape_shapes": 0}
 
-    monkeypatch.setattr(lowering_module, "_prune_dead_operators", prune_probe)
     monkeypatch.setattr(
-        lowering_module,
-        "_reconcile_static_tensor_shapes",
+        indexed_convergence_module,
+        "prune_dead_operators",
+        prune_probe,
+    )
+    monkeypatch.setattr(
+        indexed_convergence_module,
+        "reconcile_static_tensor_shapes",
         reconcile_probe,
     )
     monkeypatch.setattr(
-        lowering_module,
-        "_resolve_dynamic_reshape_shapes",
+        indexed_convergence_module,
+        "resolve_dynamic_reshape_shapes",
         reshape_probe,
     )
 
@@ -286,15 +292,19 @@ def test_indexed_shape_convergence_keeps_final_reconcile_after_mutation(
             "resolved_dynamic_reshape_shapes": int(changed_owner == "reshape"),
         }
 
-    monkeypatch.setattr(lowering_module, "_prune_dead_operators", prune_probe)
     monkeypatch.setattr(
-        lowering_module,
-        "_reconcile_static_tensor_shapes",
+        indexed_convergence_module,
+        "prune_dead_operators",
+        prune_probe,
+    )
+    monkeypatch.setattr(
+        indexed_convergence_module,
+        "reconcile_static_tensor_shapes",
         reconcile_probe,
     )
     monkeypatch.setattr(
-        lowering_module,
-        "_resolve_dynamic_reshape_shapes",
+        indexed_convergence_module,
+        "resolve_dynamic_reshape_shapes",
         reshape_probe,
     )
 

@@ -481,3 +481,21 @@ def optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains(
 
     _prune_unused_tensors(model_ir)
     return {"optimized_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains": int(rewritten)}
+
+
+def run_hardswish_se_layout_summary(model_ir: ModelIR) -> Dict[str, int]:
+    """Run HardSwish/SE cleanup and include prune-only mutation evidence."""
+
+    initial_tensor_count = len(model_ir.tensors)
+    result = (
+        optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains(
+            model_ir
+        )
+    )
+    return {
+        **result,
+        "pruned_unused_tensors": max(
+            0,
+            int(initial_tensor_count - len(model_ir.tensors)),
+        ),
+    }

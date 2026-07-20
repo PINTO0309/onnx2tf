@@ -28,8 +28,21 @@ ORCHESTRATION_PATH = (
 )
 QLINEAR_MEAN_CONCAT = "_run_qlinear_mean_concat_recovery_sequence"
 RESULT_TARGETS = (
-    "_layout_pass_set_1_qlinear_mean_concat_results",
     "_layout_pass_set_2_qlinear_mean_concat_results",
+)
+LAYOUT_PASS_SET_1_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "layout_pass_set_1_qlinear_attention_recovery_orchestration.py"
+)
+LAYOUT_PASS_SET_2_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "layout_pass_set_2_qlinear_layout_recovery_orchestration.py"
 )
 
 
@@ -48,6 +61,41 @@ def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
     return lowerer, helper
 
 
+def _owner_calls(
+    path: Path,
+    owner_name: str,
+    child_owner: str,
+) -> list[ast.Call]:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == owner_name
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == child_owner
+    ]
+
+
+def _all_owner_calls() -> list[ast.Call]:
+    return [
+        *_owner_calls(
+            LAYOUT_PASS_SET_1_OWNER_PATH,
+            "run_layout_pass_set_1_qlinear_attention_recovery",
+            "run_qlinear_mean_concat_recovery",
+        ),
+        *_owner_calls(
+            LAYOUT_PASS_SET_2_OWNER_PATH,
+            "run_layout_pass_set_2_qlinear_layout_recovery",
+            "run_qlinear_mean_concat_recovery",
+        ),
+    ]
+
+
 def _expression_path(node: ast.expr) -> Any:
     if isinstance(node, ast.Name):
         return node.id
@@ -58,12 +106,29 @@ def _expression_path(node: ast.expr) -> Any:
     raise AssertionError(f"unexpected call expression: {ast.dump(node)}")
 
 
-def _direct_call_name(statement: ast.stmt) -> str | None:
+def _direct_call(statement: ast.stmt) -> ast.Call | None:
     if not isinstance(statement, (ast.Assign, ast.Expr)):
         return None
     if not isinstance(statement.value, ast.Call):
         return None
-    function = statement.value.func
+    call = statement.value
+    if (
+        isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        return call.args[1]
+    return call
+
+
+def _direct_call_name(statement: ast.stmt) -> str | None:
+    call = _direct_call(statement)
+    if call is None:
+        return None
+    function = call.func
     return function.id if isinstance(function, ast.Name) else None
 
 
@@ -164,9 +229,14 @@ def test_qlinear_recovery_invocations_remain_zero_argument() -> None:
         and node.func.id == QLINEAR_MEAN_CONCAT
     ]
 
-    assert len(invocations) == 2
-    assert all(call.args == [] for call in invocations)
-    assert all(call.keywords == [] for call in invocations)
+    assert invocations == []
+    owner_calls = _all_owner_calls()
+    assert len(owner_calls) == 2
+    assert all(
+        ast.unparse(call.args[0]) == "context.pass_context"
+        for call in owner_calls
+    )
+    assert all(call.keywords == [] for call in owner_calls)
 
 
 def test_qlinear_recovery_preserves_both_outer_boundaries() -> None:
@@ -180,24 +250,27 @@ def test_qlinear_recovery_preserves_both_outer_boundaries() -> None:
                 continue
             previous = statement.body[index - 1]
             following = statement.body[index + 1]
-            assert isinstance(previous, (ast.Assign, ast.Expr))
-            assert isinstance(previous.value, ast.Call)
-            assert isinstance(previous.value.func, ast.Name)
-            assert isinstance(following, (ast.Assign, ast.Expr))
-            assert isinstance(following.value, ast.Call)
-            assert isinstance(following.value.func, ast.Name)
-            boundaries.append((previous.value.func.id, following.value.func.id))
+            previous_call = _direct_call(previous)
+            following_call = _direct_call(following)
+            assert previous_call is not None
+            assert isinstance(previous_call.func, ast.Name)
+            assert following_call is not None
+            assert isinstance(following_call.func, ast.Name)
+            boundaries.append((previous_call.func.id, following_call.func.id))
 
             assert _single_target(candidate) in RESULT_TARGETS
 
-            if previous.value.func.id == (
+            if previous_call.func.id == (
                 "_optimize_transpose_dequantize_mean_quantize_bridges"
             ):
-                assert _single_target(previous) == (
-                    "_layout_pass_set_1_dequant_mean_quantize_stats"
+                assert ast.unparse(previous) == (
+                    "session.record_phase_result("
+                    "'cleanup.layout_pass_set_1.dequant_mean_quantize', "
+                    "_optimize_transpose_dequantize_mean_quantize_bridges("
+                    "model_ir))"
                 )
 
-            if following.value.func.id == (
+            if following_call.func.id == (
                 "_run_layout_recovery_prefix_pass_sequence"
             ):
                 assert isinstance(following, ast.Assign)
@@ -207,16 +280,7 @@ def test_qlinear_recovery_preserves_both_outer_boundaries() -> None:
                     "_layout_pass_set_2_layout_recovery_prefix_results"
                 )
 
-    assert boundaries == [
-        (
-            "_optimize_transpose_dequantize_mean_quantize_bridges",
-            "_run_layout_reshape_attention_recovery_prefix",
-        ),
-        (
-            "_set_post_progress_desc",
-            "_run_layout_recovery_prefix_pass_sequence",
-        ),
-    ]
+    assert boundaries == []
 
 
 def test_qlinear_recovery_context_and_wrapper_are_explicit() -> None:
@@ -330,28 +394,7 @@ def test_qlinear_recovery_propagates_both_ordered_results(
         for index, candidate in enumerate(statement.body):
             if _direct_call_name(candidate) == QLINEAR_MEAN_CONCAT:
                 direct_results.append((statement.body, index))
-    assert len(direct_results) == 2
-    assert tuple(
-        _single_target(body[index]) for body, index in direct_results
-    ) == RESULT_TARGETS
-    assert all(
-        isinstance(body[index].value, ast.Call)
-        and body[index].value.args == []
-        and body[index].value.keywords == []
-        for body, index in direct_results
-    )
-    assert tuple(
-        _direct_call_name(body[index - 1]) for body, index in direct_results
-    ) == (
-        "_optimize_transpose_dequantize_mean_quantize_bridges",
-        "_set_post_progress_desc",
-    )
-    assert tuple(
-        _single_target(body[index + 1]) for body, index in direct_results
-    ) == (
-        "_layout_pass_set_1_final_attention_recovery_results",
-        "_layout_pass_set_2_layout_recovery_prefix_results",
-    )
+    assert direct_results == []
     for target in RESULT_TARGETS:
         assert not any(
             isinstance(node, ast.Name)
@@ -359,6 +402,14 @@ def test_qlinear_recovery_propagates_both_ordered_results(
             and isinstance(node.ctx, ast.Load)
             for node in ast.walk(lowerer)
         )
+    owner_calls = _all_owner_calls()
+    assert len(owner_calls) == 2
+    assert all(
+        [ast.unparse(argument) for argument in call.args]
+        == ["context.pass_context"]
+        for call in owner_calls
+    )
+    assert all(call.keywords == [] for call in owner_calls)
 
 
 def test_qlinear_recovery_module_does_not_import_the_lowerer() -> None:

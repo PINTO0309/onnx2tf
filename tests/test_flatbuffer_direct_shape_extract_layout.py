@@ -14,10 +14,118 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
 from onnx2tf.tflite_builder.passes.shape_extract_layout import (
     optimize_transpose_shape_extract_nhwc_to_nchw_chains,
 )
+from onnx2tf.tflite_builder.passes.terminal_concat_bridge_layout_orchestration import (
+    TERMINAL_CONCAT_BRIDGE_LAYOUT_PASS_IDS,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SHAPE_EXTRACT_OWNER = "_optimize_transpose_shape_extract_nhwc_to_nchw_chains"
+TERMINAL_QKV_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_qkv_shape_attention_orchestration.py"
+)
+TERMINAL_QKV_OWNER = "run_terminal_qkv_shape_attention_cleanup"
+TERMINAL_QKV_RESULT = "_terminal_qkv_shape_attention_results"
+OUTER_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_qkv_activation_bridge_orchestration.py"
+)
+OUTER_OWNER = "run_terminal_qkv_activation_bridge_cleanup"
+OUTER_RESULT = "_terminal_qkv_activation_bridge_results"
+TOP_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_qkv_activation_layout_shape_orchestration.py"
+)
+TOP_OWNER = "run_terminal_qkv_activation_layout_shape_cleanup"
+TOP_RESULT = "_terminal_qkv_activation_layout_shape_results"
+LOWERER_OWNER = "run_terminal_affine_qkv_layout_shape_cleanup"
+LOWERER_RESULT = "_terminal_affine_qkv_layout_shape_results"
+TERMINAL_LAYOUT_SHAPE_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_layout_shape_orchestration.py"
+)
+TERMINAL_LAYOUT_SHAPE_OWNER = "run_terminal_layout_shape_cleanup"
+
+
+def _terminal_qkv_shape_calls() -> list[ast.Call]:
+    tree = ast.parse(TERMINAL_QKV_OWNER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == TERMINAL_QKV_OWNER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == SHAPE_EXTRACT_OWNER.removeprefix("_")
+    ]
+
+
+def _outer_calls() -> list[ast.Call]:
+    tree = ast.parse(OUTER_OWNER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == OUTER_OWNER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == TERMINAL_QKV_OWNER
+    ]
+
+
+def _top_calls() -> list[ast.Call]:
+    tree = ast.parse(TOP_OWNER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == TOP_OWNER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OUTER_OWNER
+    ]
+
+
+def _terminal_layout_shape_calls() -> list[ast.Call]:
+    tree = ast.parse(
+        TERMINAL_LAYOUT_SHAPE_OWNER_PATH.read_text(encoding="utf-8")
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == TERMINAL_LAYOUT_SHAPE_OWNER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == SHAPE_EXTRACT_OWNER.removeprefix("_")
+    ]
 
 
 def _tensor(
@@ -332,33 +440,36 @@ def test_pre_qkv_terminal_shape_extract_captures_complete_mutation_evidence() ->
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_late_pre_qkv_shape_extract_stats"
+        and statement.targets[0].id == LOWERER_RESULT
     )
     invocation = lowerer.body[invocation_index]
     assert isinstance(invocation, ast.Assign)
     assert isinstance(invocation.value, ast.Call)
     assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == SHAPE_EXTRACT_OWNER
+    assert invocation.value.func.id == LOWERER_OWNER
     assert len(invocation.value.args) == 1
     assert isinstance(invocation.value.args[0], ast.Name)
-    assert invocation.value.args[0].id == "model_ir"
-    assert invocation.value.keywords == []
+    assert invocation.value.args[0].id == "shared_model_ir_pass_context"
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in invocation.value.keywords
+    } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
 
     previous = lowerer.body[invocation_index - 1]
-    assert isinstance(previous, ast.Assign)
-    assert len(previous.targets) == 1
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_late_spp_stats"
-    assert isinstance(previous.value, ast.Call)
-    assert isinstance(previous.value.func, ast.Name)
-    assert previous.value.func.id == (
-        "summarize_late_spp_concat_unary_conv_mutations"
+    assert isinstance(previous, ast.If)
+    assert ast.unparse(previous.test) == (
+        "_late_binary_layout_recovery_requires_reconciliation"
     )
     following = lowerer.body[invocation_index + 1]
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "late_qkv_tensor_count"
+    assert isinstance(following, ast.Expr)
+    assert isinstance(following.value, ast.Call)
+    assert isinstance(following.value.func, ast.Attribute)
+    assert ast.unparse(following.value.func) == "session.record_phase_result"
+    assert ast.literal_eval(following.value.args[0]) == (
+        "shape_reconciliation.terminal.expand_squeeze"
+    )
+    assert len(_top_calls()) == 1
+    assert len(_outer_calls()) == 1
 
     all_calls = [
         node
@@ -367,4 +478,20 @@ def test_pre_qkv_terminal_shape_extract_captures_complete_mutation_evidence() ->
         and isinstance(node.func, ast.Name)
         and node.func.id == SHAPE_EXTRACT_OWNER
     ]
-    assert len(all_calls) == 3
+    assert (
+        len(all_calls)
+        + len(_terminal_qkv_shape_calls())
+        + len(_terminal_layout_shape_calls())
+        + TERMINAL_CONCAT_BRIDGE_LAYOUT_PASS_IDS.count(SHAPE_EXTRACT_OWNER)
+        == 3
+    )
+    assert len(_terminal_qkv_shape_calls()) == 1
+    assert [
+        ast.unparse(argument)
+        for argument in _terminal_qkv_shape_calls()[0].args
+    ] == ["context.model_ir"]
+    assert len(_terminal_layout_shape_calls()) == 1
+    assert [
+        ast.unparse(argument)
+        for argument in _terminal_layout_shape_calls()[0].args
+    ] == ["context.model_ir"]

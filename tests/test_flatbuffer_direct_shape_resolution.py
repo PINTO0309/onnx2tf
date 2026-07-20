@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from onnx2tf.tflite_builder.core.lowering_context import LoweringContext
+from onnx2tf.tflite_builder.core.model_ir_utils import _set_operator_outputs
 from onnx2tf.tflite_builder.core.shape_resolution import (
     preserve_rewritten_output_dynamic_axes,
     shape_hint_only_adds_singleton_or_dynamic_axes,
     static_shape_vector_length,
 )
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
-from onnx2tf.tflite_builder.lower_from_onnx2tf import _set_operator_outputs
 
 
 def test_detects_hint_that_only_adds_singleton_or_dynamic_axes() -> None:

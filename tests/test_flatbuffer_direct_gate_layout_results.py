@@ -111,8 +111,10 @@ def test_gate_layout_result_policy_and_direct_boundary_are_explicit() -> None:
     assert {
         keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
     } == {"include_mixed_attention": "False"}
-    assert _single_target(body[index - 1]) == (
-        "_layout_opt_sa_pa_mirrorpad_stats"
+    assert ast.unparse(body[index - 1]) == (
+        "session.record_phase_result('cleanup.layout_pass_set_2.sa_pa_mirrorpad', "
+        "_optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains(model_ir, "
+        "layout_state=session.layout_state))"
     )
     following = body[index + 1]
     assert isinstance(following, ast.For)

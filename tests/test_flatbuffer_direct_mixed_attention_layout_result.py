@@ -28,9 +28,29 @@ OWNER_PATH = (
 OWNER = "run_mixed_attention_layout_cleanup"
 INNER_OWNER = "_optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains"
 RESULT_TARGET = "_post_sinet_mixed_attention_layout_stats"
-PREDECESSOR_TARGET = "_post_sinet_mix_attention_stats"
-SUCCESSOR_TARGET = "_post_sinet_dequant_hardsigmoid_bridge_stats"
 RESULT_KEY = "optimized_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains"
+POST_SINET_RESULT_TARGETS = (
+    "_post_sinet_mix_attention_stats",
+    "_post_sinet_mixed_attention_layout_stats",
+    "_post_sinet_dequant_hardsigmoid_bridge_stats",
+)
+POST_SINET_PHASE_IDS = (
+    "cleanup.post_sinet.mix_attention",
+    "cleanup.post_sinet.mixed_attention_layout",
+    "cleanup.post_sinet.dequant_hardsigmoid_bridge",
+)
+POST_SINET_OWNER_EXPRESSIONS = (
+    (
+        "_optimize_sinet_mix_attention_double_logistic_nhwc_chains("
+        "model_ir, layout_state=session.layout_state)"
+    ),
+    (
+        "run_mixed_attention_layout_cleanup("
+        "model_ir, layout_state=session.layout_state, "
+        "diagnostics=session.diagnostics)"
+    ),
+    "_optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)",
+)
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -44,7 +64,19 @@ def _functions(path: Path) -> dict[str, ast.FunctionDef]:
 def _statement_call(statement: ast.stmt) -> ast.Call | None:
     if not isinstance(statement, (ast.Assign, ast.Expr)):
         return None
-    return statement.value if isinstance(statement.value, ast.Call) else None
+    if not isinstance(statement.value, ast.Call):
+        return None
+    call = statement.value
+    if (
+        isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        return call.args[1]
+    return call
 
 
 def _call_name(statement: ast.stmt) -> str | None:
@@ -59,6 +91,21 @@ def _single_target(statement: ast.stmt) -> str | None:
         return None
     target = statement.targets[0]
     return target.id if isinstance(target, ast.Name) else None
+
+
+def _phase_id(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
+        return None
+    call = statement.value
+    if (
+        not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != "session"
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
 
 
 def _lowerer() -> ast.FunctionDef:
@@ -152,10 +199,10 @@ def test_mixed_attention_layout_schema_cleanup_and_routes_are_explicit() -> None
     }
 
 
-def test_mixed_attention_layout_direct_boundary_is_explicit() -> None:
+def test_mixed_attention_layout_direct_phase_boundary_is_explicit() -> None:
     lowerer, index = _direct_location()
     invocation = lowerer.body[index]
-    assert _single_target(invocation) == RESULT_TARGET
+    assert _phase_id(invocation) == "cleanup.post_sinet.mixed_attention_layout"
     call = _statement_call(invocation)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
@@ -165,8 +212,10 @@ def test_mixed_attention_layout_direct_boundary_is_explicit() -> None:
         "layout_state": "session.layout_state",
         "diagnostics": "session.diagnostics",
     }
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
-    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert _phase_id(lowerer.body[index - 1]) == "cleanup.post_sinet.mix_attention"
+    assert _phase_id(lowerer.body[index + 1]) == (
+        "cleanup.post_sinet.dequant_hardsigmoid_bridge"
+    )
     assert sum(
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
@@ -175,12 +224,41 @@ def test_mixed_attention_layout_direct_boundary_is_explicit() -> None:
     ) == 1
 
 
-def test_mixed_attention_layout_direct_result_is_retained_for_observation() -> None:
+def test_mixed_attention_layout_direct_result_uses_phase_store() -> None:
     lowerer, index = _direct_location()
-    assert _single_target(lowerer.body[index]) == RESULT_TARGET
+    assert _phase_id(lowerer.body[index]) == (
+        "cleanup.post_sinet.mixed_attention_layout"
+    )
     assert not any(
         isinstance(node, ast.Name)
         and node.id == RESULT_TARGET
+        for node in ast.walk(lowerer)
+    )
+
+
+def test_post_sinet_attention_activation_results_use_phase_store() -> None:
+    lowerer = _lowerer()
+    records = [
+        statement
+        for statement in lowerer.body
+        if _phase_id(statement) in POST_SINET_PHASE_IDS
+    ]
+    indices = [lowerer.body.index(statement) for statement in records]
+
+    assert tuple(_phase_id(statement) for statement in records) == POST_SINET_PHASE_IDS
+    assert tuple(ast.unparse(statement.value.args[1]) for statement in records) == (
+        POST_SINET_OWNER_EXPRESSIONS
+    )
+    assert indices == list(range(indices[0], indices[0] + 3))
+    assert _phase_id(lowerer.body[indices[0] - 1]) == (
+        "cleanup.post_sinet.split_conv_concat_bridge"
+    )
+    assert _phase_id(lowerer.body[indices[-1] + 1]) == (
+        "cleanup.late.ndhwc_cost_volume"
+    )
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id in POST_SINET_RESULT_TARGETS
         and isinstance(node.ctx, ast.Load)
         for node in ast.walk(lowerer)
     )

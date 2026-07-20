@@ -35,7 +35,13 @@ LAYOUT_RESULT_TARGET = "_layout_pass_set_2_layout_recovery_prefix_results"
 ATTENTION_RESULT_TARGETS = (
     "_layout_pass_set_1_initial_attention_recovery_results",
     "_layout_pass_set_1_post_binary_attention_recovery_results",
-    "_layout_pass_set_1_final_attention_recovery_results",
+)
+LAYOUT_PASS_SET_2_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "layout_pass_set_2_qlinear_layout_recovery_orchestration.py"
 )
 
 
@@ -52,6 +58,23 @@ def _lowerer_and_helper(helper_name: str) -> tuple[ast.FunctionDef, ast.Function
         if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
     return lowerer, helper
+
+
+def _layout_pass_set_2_owner_calls(child_owner: str) -> list[ast.Call]:
+    tree = ast.parse(LAYOUT_PASS_SET_2_OWNER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_layout_pass_set_2_qlinear_layout_recovery"
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == child_owner
+    ]
 
 
 def _expression_path(node: ast.expr) -> Any:
@@ -71,6 +94,28 @@ def _direct_call_name(statement: ast.stmt) -> str | None:
         return None
     function = statement.value.func
     return function.id if isinstance(function, ast.Name) else None
+
+
+def _phase_or_direct_call_name(statement: ast.stmt) -> str | None:
+    direct_name = _direct_call_name(statement)
+    if direct_name is not None:
+        return direct_name
+    if not isinstance(statement, ast.Expr) or not isinstance(
+        statement.value, ast.Call
+    ):
+        return None
+    phase_call = statement.value
+    if not (
+        isinstance(phase_call.func, ast.Attribute)
+        and isinstance(phase_call.func.value, ast.Name)
+        and phase_call.func.value.id == "session"
+        and phase_call.func.attr == "record_phase_result"
+        and len(phase_call.args) == 2
+        and isinstance(phase_call.args[1], ast.Call)
+    ):
+        return None
+    owner = phase_call.args[1].func
+    return owner.id if isinstance(owner, ast.Name) else None
 
 
 def _single_target(statement: ast.stmt) -> str | None:
@@ -470,24 +515,19 @@ def test_layout_recovery_prefix_propagates_direct_and_nested_results(
         for index, candidate in enumerate(statement.body):
             if _direct_call_name(candidate) == LAYOUT_PREFIX:
                 direct_results.append((statement.body, index))
-    assert len(direct_results) == 1
-    body, index = direct_results[0]
-    assert _single_target(body[index]) == LAYOUT_RESULT_TARGET
-    assert isinstance(body[index].value, ast.Call)
-    assert body[index].value.args == []
-    assert body[index].value.keywords == []
-    assert _direct_call_name(body[index - 1]) == (
-        "_run_qlinear_mean_concat_recovery_sequence"
-    )
-    assert _single_target(body[index + 1]) == (
-        "_layout_pass_set_2_preadd_mean_attention_results"
-    )
+    assert direct_results == []
     assert not any(
         isinstance(node, ast.Name)
         and node.id == LAYOUT_RESULT_TARGET
         and isinstance(node.ctx, ast.Load)
         for node in ast.walk(lowerer)
     )
+    owner_calls = _layout_pass_set_2_owner_calls("run_layout_recovery_prefix")
+    assert len(owner_calls) == 1
+    assert [ast.unparse(argument) for argument in owner_calls[0].args] == [
+        "context"
+    ]
+    assert owner_calls[0].keywords == []
 
 
 def test_attention_prefix_propagates_nested_layout_results_to_all_direct_calls(
@@ -555,7 +595,7 @@ def test_attention_prefix_propagates_nested_layout_results_to_all_direct_calls(
         for index, candidate in enumerate(statement.body):
             if _direct_call_name(candidate) == ATTENTION_PREFIX:
                 direct_results.append((statement.body, index))
-    assert len(direct_results) == 3
+    assert len(direct_results) == 2
     assert tuple(
         _single_target(body[index]) for body, index in direct_results
     ) == ATTENTION_RESULT_TARGETS
@@ -566,18 +606,18 @@ def test_attention_prefix_propagates_nested_layout_results_to_all_direct_calls(
         for body, index in direct_results
     )
     assert tuple(
-        _direct_call_name(body[index - 1]) for body, index in direct_results
+        _phase_or_direct_call_name(body[index - 1])
+        for body, index in direct_results
     ) == (
         "run_layout_transpose_cleanup",
         "run_duplicate_fanout_cleanup",
-        "_run_qlinear_mean_concat_recovery_sequence",
     )
     assert tuple(
-        _direct_call_name(body[index + 1]) for body, index in direct_results
+        _phase_or_direct_call_name(body[index + 1])
+        for body, index in direct_results
     ) == (
         "_optimize_fold_mul_add_mul_affine_chains",
         "_optimize_fold_mul_add_mul_affine_chains",
-        "_optimize_transpose_instancenorm_prepost_nhwc_chains",
     )
     for target in ATTENTION_RESULT_TARGETS:
         assert not any(

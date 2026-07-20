@@ -33,6 +33,48 @@ PRODUCTION_FORMS = [
     (False, False, BRIDGE_ONLY_PASS_IDS),
     (True, False, LAYOUT_BRIDGE_PASS_IDS),
 ]
+TERMINAL_QKV_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_qkv_shape_attention_orchestration.py"
+)
+TERMINAL_QKV_OWNER = "run_terminal_qkv_shape_attention_cleanup"
+TERMINAL_QKV_RESULT = "_terminal_qkv_shape_attention_results"
+POST_SINET_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "post_sinet_qkv_relu_split_all_orchestration.py"
+)
+POST_SINET_OWNER = "run_post_sinet_qkv_relu_split_all_cleanup"
+POST_SINET_PHASE_ID = "cleanup.post_sinet.relu_split_all_outputs"
+POST_SINET_OWNER_EXPRESSION = (
+    "run_post_sinet_qkv_relu_split_all_cleanup("
+    "shared_model_ir_pass_context)[1]"
+)
+OUTER_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_qkv_activation_bridge_orchestration.py"
+)
+OUTER_OWNER = "run_terminal_qkv_activation_bridge_cleanup"
+OUTER_RESULT = "_terminal_qkv_activation_bridge_results"
+TOP_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_qkv_activation_layout_shape_orchestration.py"
+)
+TOP_OWNER = "run_terminal_qkv_activation_layout_shape_cleanup"
+TOP_RESULT = "_terminal_qkv_activation_layout_shape_results"
+LOWERER_OWNER = "run_terminal_affine_qkv_layout_shape_cleanup"
+LOWERER_RESULT = "_terminal_affine_qkv_layout_shape_results"
 
 
 def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -50,6 +92,71 @@ def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
     return lowerer, helper
 
 
+def _terminal_qkv_owner_calls(function_name: str) -> list[ast.Call]:
+    tree = ast.parse(TERMINAL_QKV_OWNER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == TERMINAL_QKV_OWNER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name
+    ]
+
+
+def _post_sinet_owner_calls(function_name: str) -> list[ast.Call]:
+    tree = ast.parse(POST_SINET_OWNER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == POST_SINET_OWNER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name
+    ]
+
+
+def _outer_calls() -> list[ast.Call]:
+    tree = ast.parse(OUTER_OWNER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == OUTER_OWNER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == TERMINAL_QKV_OWNER
+    ]
+
+
+def _top_calls() -> list[ast.Call]:
+    tree = ast.parse(TOP_OWNER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == TOP_OWNER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OUTER_OWNER
+    ]
+
+
 def _expression_path(node: ast.expr) -> Any:
     if isinstance(node, ast.Name):
         return node.id
@@ -65,9 +172,46 @@ def _call_name(statement: ast.stmt) -> str | None:
         return None
     if not isinstance(statement.value, ast.Call):
         return None
-    if not isinstance(statement.value.func, ast.Name):
+    call = statement.value
+    if (
+        isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        call = call.args[1]
+    if not isinstance(call.func, ast.Name):
         return None
-    return statement.value.func.id
+    return call.func.id
+
+
+def _assert_phase_result_record(statement: ast.stmt, phase_id: str) -> None:
+    assert isinstance(statement, ast.Expr)
+    record = statement.value
+    assert isinstance(record, ast.Call)
+    assert isinstance(record.func, ast.Attribute)
+    assert isinstance(record.func.value, ast.Name)
+    assert record.func.value.id == "session"
+    assert record.func.attr == "record_phase_result"
+    assert len(record.args) == 2
+    assert ast.literal_eval(record.args[0]) == phase_id
+
+
+def _phase_id(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
+        return None
+    call = statement.value
+    if (
+        not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != "session"
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
 
 
 def _context() -> QKVAttentionContext:
@@ -350,64 +494,56 @@ def test_qkv_attention_returns_and_summarizes_all_production_forms(
 
 def test_lowerer_captures_terminal_qkv_mutation_evidence() -> None:
     lowerer, _ = _lowerer_and_helper()
-    target_names = (
-        "late_qkv_tensor_count",
-        "late_qkv_results",
-        "_late_qkv_stats",
+    summary_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == LOWERER_RESULT
     )
-    assignment_indices: dict[str, int] = {}
-    assignments: dict[str, ast.expr] = {}
-    for index, statement in enumerate(lowerer.body):
-        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
-            continue
-        target = statement.targets[0]
-        if isinstance(target, ast.Name) and target.id in target_names:
-            assignment_indices[target.id] = index
-            assignments[target.id] = statement.value
-
-    first_index = min(assignment_indices.values())
-    assert assignment_indices == {
-        target_names[0]: first_index,
-        target_names[1]: first_index + 1,
-        target_names[2]: first_index + 2,
-    }
-    result_call = assignments[target_names[1]]
-    assert isinstance(result_call, ast.Call)
-    assert isinstance(result_call.func, ast.Name)
-    assert result_call.func.id == QKV_ATTENTION
-    assert {
-        keyword.arg: _expression_path(keyword.value)
-        for keyword in result_call.keywords
-    } == {
-        "include_layout_transpose": "optimize_layout_transpose_chains",
-        "include_prefix": False,
-    }
-    summary_call = assignments[target_names[2]]
+    summary = lowerer.body[summary_index]
+    assert isinstance(summary, ast.Assign)
+    summary_call = summary.value
     assert isinstance(summary_call, ast.Call)
     assert isinstance(summary_call.func, ast.Name)
-    assert summary_call.func.id == "summarize_qkv_attention_mutations"
-    assert {keyword.arg for keyword in summary_call.keywords} == {
-        "include_layout_transpose",
-        "include_prefix",
-        "pruned_unused_tensors",
+    assert summary_call.func.id == LOWERER_OWNER
+    assert [_expression_path(argument) for argument in summary_call.args] == [
+        "shared_model_ir_pass_context"
+    ]
+    assert {
+        keyword.arg: _expression_path(keyword.value)
+        for keyword in summary_call.keywords
+    } == {
+        "include_layout_transpose": "optimize_layout_transpose_chains",
     }
 
-    previous = lowerer.body[first_index - 1]
-    assert isinstance(previous, ast.Assign)
-    assert len(previous.targets) == 1
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_late_pre_qkv_shape_extract_stats"
-    assert isinstance(previous.value, ast.Call)
-    assert isinstance(previous.value.func, ast.Name)
-    assert (
-        previous.value.func.id
-        == "_optimize_transpose_shape_extract_nhwc_to_nchw_chains"
+    previous = lowerer.body[summary_index - 1]
+    assert isinstance(previous, ast.If)
+    assert ast.unparse(previous.test) == (
+        "_late_binary_layout_recovery_requires_reconciliation"
     )
-    following = lowerer.body[first_index + 3]
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_terminal_split_conv_concat_bridge_stats"
+    _assert_phase_result_record(
+        lowerer.body[summary_index + 1],
+        "shape_reconciliation.terminal.expand_squeeze",
+    )
+    assert _call_name(lowerer.body[summary_index + 2]) == (
+        "_advance_post_progress"
+    )
+    assert len(_top_calls()) == 1
+    assert len(_outer_calls()) == 1
+    owner_calls = _terminal_qkv_owner_calls("run_qkv_attention_summary")
+    assert len(owner_calls) == 1
+    assert [_expression_path(argument) for argument in owner_calls[0].args] == [
+        "context"
+    ]
+    assert {
+        str(keyword.arg): _expression_path(keyword.value)
+        for keyword in owner_calls[0].keywords
+    } == {
+        "include_layout_transpose": "include_layout_transpose",
+        "include_prefix": False,
+    }
 
 
 def test_qkv_attention_preserves_both_invocation_forms() -> None:
@@ -420,17 +556,28 @@ def test_qkv_attention_preserves_both_invocation_forms() -> None:
         and node.func.id == QKV_ATTENTION
     ]
 
-    assert len(invocations) == 3
+    assert len(invocations) == 1
     default_invocations = [call for call in invocations if call.keywords == []]
-    assert len(default_invocations) == 2
+    assert len(default_invocations) == 1
     assert all(call.args == [] for call in default_invocations)
-    late_invocation = next(call for call in invocations if call.keywords)
-    assert late_invocation.args == []
+
+    (post_sinet_invocation,) = _post_sinet_owner_calls("run_qkv_attention")
+    assert [
+        _expression_path(argument) for argument in post_sinet_invocation.args
+    ] == ["context"]
+    assert post_sinet_invocation.keywords == []
+
+    (late_invocation,) = _terminal_qkv_owner_calls(
+        "run_qkv_attention_summary"
+    )
+    assert [_expression_path(argument) for argument in late_invocation.args] == [
+        "context"
+    ]
     assert {
         str(keyword.arg): _expression_path(keyword.value)
         for keyword in late_invocation.keywords
     } == {
-        "include_layout_transpose": "optimize_layout_transpose_chains",
+        "include_layout_transpose": "include_layout_transpose",
         "include_prefix": False,
     }
 
@@ -470,25 +617,23 @@ def test_qkv_attention_preserves_both_default_boundaries() -> None:
         == "_optimize_split_conv_concat_transpose_bridge_to_single_post_nchw"
     )
 
-    top_level_index = next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_post_sinet_qkv_attention_results"
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == QKV_ATTENTION
-        and statement.value.keywords == []
+    post_sinet_record = next(
+        statement
+        for statement in lowerer.body
+        if _phase_id(statement) == POST_SINET_PHASE_ID
     )
-    assert (
-        _call_name(lowerer.body[top_level_index - 1])
-        == "_optimize_batchmatmul_transpose_input_to_adj_flags"
+    top_level_index = lowerer.body.index(post_sinet_record)
+    assert isinstance(post_sinet_record, ast.Expr)
+    assert ast.unparse(post_sinet_record.value.args[1]) == (
+        POST_SINET_OWNER_EXPRESSION
     )
-    assert (
-        _call_name(lowerer.body[top_level_index + 1])
-        == "_optimize_transpose_relu_split_all_outputs_to_nhwc_chains"
+    _assert_phase_result_record(
+        lowerer.body[top_level_index - 1],
+        "cleanup.post_sinet.batchmatmul_adj_flags",
+    )
+    _assert_phase_result_record(
+        lowerer.body[top_level_index + 1],
+        "cleanup.post_sinet.relu_split_conv_concat",
     )
 
 
@@ -501,8 +646,9 @@ def test_qkv_attention_retains_both_default_policy_results() -> None:
         and isinstance(statement.test, ast.Name)
         and statement.test.id == "optimize_layout_transpose_chains"
         and any(
-            isinstance(node, ast.Name)
-            and node.id == "_terminal_batchmatmul_adj_flags_stats"
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == QKV_ATTENTION
             for node in ast.walk(statement)
         )
     )
@@ -520,32 +666,32 @@ def test_qkv_attention_retains_both_default_policy_results() -> None:
     assert terminal.value.args == []
     assert terminal.value.keywords == []
     predecessor = terminal_guard.body[terminal_index - 1]
-    assert isinstance(predecessor, ast.Assign)
-    assert isinstance(predecessor.targets[0], ast.Name)
-    assert predecessor.targets[0].id == "_terminal_batchmatmul_adj_flags_stats"
+    _assert_phase_result_record(
+        predecessor,
+        "cleanup.terminal.batchmatmul_adj_flags",
+    )
     assert _call_name(terminal_guard.body[terminal_index + 1]) == (
         "_optimize_split_conv_concat_transpose_bridge_to_single_post_nchw"
     )
 
-    post_sinet_index = next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if _call_name(statement) == QKV_ATTENTION
+    post_sinet = next(
+        statement
+        for statement in lowerer.body
+        if _phase_id(statement) == POST_SINET_PHASE_ID
     )
-    post_sinet = lowerer.body[post_sinet_index]
-    assert isinstance(post_sinet, ast.Assign)
-    assert len(post_sinet.targets) == 1
-    assert isinstance(post_sinet.targets[0], ast.Name)
-    assert post_sinet.targets[0].id == "_post_sinet_qkv_attention_results"
-    assert isinstance(post_sinet.value, ast.Call)
-    assert post_sinet.value.args == []
-    assert post_sinet.value.keywords == []
+    post_sinet_index = lowerer.body.index(post_sinet)
+    assert isinstance(post_sinet, ast.Expr)
+    assert ast.unparse(post_sinet.value.args[1]) == (
+        POST_SINET_OWNER_EXPRESSION
+    )
     predecessor = lowerer.body[post_sinet_index - 1]
-    assert isinstance(predecessor, ast.Assign)
-    assert isinstance(predecessor.targets[0], ast.Name)
-    assert predecessor.targets[0].id == "_post_sinet_batchmatmul_adj_flags_stats"
-    assert _call_name(lowerer.body[post_sinet_index + 1]) == (
-        "_optimize_transpose_relu_split_all_outputs_to_nhwc_chains"
+    _assert_phase_result_record(
+        predecessor,
+        "cleanup.post_sinet.batchmatmul_adj_flags",
+    )
+    _assert_phase_result_record(
+        lowerer.body[post_sinet_index + 1],
+        "cleanup.post_sinet.relu_split_conv_concat",
     )
 
     all_calls = [
@@ -555,22 +701,35 @@ def test_qkv_attention_retains_both_default_policy_results() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == QKV_ATTENTION
     ]
-    assert len(all_calls) == 3
+    assert len(all_calls) == 1
+    post_sinet_calls = _post_sinet_owner_calls("run_qkv_attention")
+    assert len(post_sinet_calls) == 1
+    assert [
+        _expression_path(argument) for argument in post_sinet_calls[0].args
+    ] == ["context"]
+    assert post_sinet_calls[0].keywords == []
     late_result = next(
         statement
         for statement in lowerer.body
         if isinstance(statement, ast.Assign)
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "late_qkv_results"
+        and statement.targets[0].id == LOWERER_RESULT
     )
     assert isinstance(late_result.value, ast.Call)
+    assert isinstance(late_result.value.func, ast.Name)
+    assert late_result.value.func.id == LOWERER_OWNER
+    assert [ast.unparse(argument) for argument in late_result.value.args] == [
+        "shared_model_ir_pass_context"
+    ]
     assert {
         keyword.arg: ast.unparse(keyword.value)
         for keyword in late_result.value.keywords
     } == {
         "include_layout_transpose": "optimize_layout_transpose_chains",
-        "include_prefix": "False",
     }
+    assert len(_terminal_qkv_owner_calls("run_qkv_attention_summary")) == 1
+    assert len(_top_calls()) == 1
+    assert len(_outer_calls()) == 1
 
 
 def test_qkv_attention_preserves_late_bridge_boundaries() -> None:
@@ -581,35 +740,25 @@ def test_qkv_attention_preserves_late_bridge_boundaries() -> None:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "late_qkv_results"
+        and statement.targets[0].id == LOWERER_RESULT
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == QKV_ATTENTION
+        and statement.value.func.id == LOWERER_OWNER
     )
 
-    previous_boundary = lowerer.body[late_index - 2]
-    assert isinstance(previous_boundary, ast.Assign)
-    assert len(previous_boundary.targets) == 1
-    assert isinstance(previous_boundary.targets[0], ast.Name)
-    assert previous_boundary.targets[0].id == "_late_pre_qkv_shape_extract_stats"
-    assert isinstance(previous_boundary.value, ast.Call)
-    assert isinstance(previous_boundary.value.func, ast.Name)
-    assert (
-        previous_boundary.value.func.id
-        == "_optimize_transpose_shape_extract_nhwc_to_nchw_chains"
+    previous_boundary = lowerer.body[late_index - 1]
+    assert isinstance(previous_boundary, ast.If)
+    assert ast.unparse(previous_boundary.test) == (
+        "_late_binary_layout_recovery_requires_reconciliation"
     )
-    next_boundary = lowerer.body[late_index + 2]
-    assert isinstance(next_boundary, ast.Assign)
-    assert len(next_boundary.targets) == 1
-    assert isinstance(next_boundary.targets[0], ast.Name)
-    assert next_boundary.targets[0].id == (
-        "_terminal_split_conv_concat_bridge_stats"
+    _assert_phase_result_record(
+        lowerer.body[late_index + 1],
+        "shape_reconciliation.terminal.expand_squeeze",
     )
-    assert isinstance(next_boundary.value, ast.Call)
-    assert isinstance(next_boundary.value.func, ast.Name)
-    assert next_boundary.value.func.id == (
-        "_optimize_split_conv_concat_transpose_bridge_to_single_post_nchw"
-    )
+    assert _call_name(lowerer.body[late_index + 2]) == "_advance_post_progress"
+    assert len(_terminal_qkv_owner_calls("run_qkv_attention_summary")) == 1
+    assert len(_top_calls()) == 1
+    assert len(_outer_calls()) == 1
 
 
 def test_qkv_attention_context_is_explicit() -> None:

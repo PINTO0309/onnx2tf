@@ -27,8 +27,13 @@ ORCHESTRATION_SELECTIONS = {
     ),
 }
 LATE_BINARY_PATH = PASSES_PATH / "late_binary_layout_recovery.py"
+NO_LAYOUT_FINAL_PATH = (
+    PASSES_PATH / "no_layout_final_cleanup_orchestration.py"
+)
 OWNER = "_optimize_transpose_mul_add_const_prepost_nhwc_chains"
 NESTED_OWNER = "optimize_transpose_mul_add_const_prepost_nhwc_chains"
+NO_LAYOUT_FINAL_OWNER = "run_no_layout_final_cleanup"
+NO_LAYOUT_FINAL_TARGET = "_no_layout_final_cleanup_results"
 RESULT_TARGETS = (
     "_layout_pass_set_1_affine_prepost_stats",
     "_no_layout_fallback_affine_prepost_stats",
@@ -47,7 +52,18 @@ def _functions(path: Path) -> dict[str, ast.FunctionDef]:
 def _statement_call(statement: ast.stmt) -> ast.Call | None:
     if not isinstance(statement, (ast.Assign, ast.Expr)):
         return None
-    return statement.value if isinstance(statement.value, ast.Call) else None
+    call = statement.value if isinstance(statement.value, ast.Call) else None
+    if (
+        call is not None
+        and isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        return call.args[1]
+    return call
 
 
 def _call_name(statement: ast.stmt) -> str | None:
@@ -92,7 +108,7 @@ def test_affine_prepost_schema_and_all_selections_are_explicit() -> None:
 
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
     locations = _direct_locations(lowerer.body)
-    assert len(locations) == 3
+    assert len(locations) == 2
     for body, index in locations:
         call = _statement_call(body[index])
         assert call is not None
@@ -101,6 +117,23 @@ def test_affine_prepost_schema_and_all_selections_are_explicit() -> None:
             keyword.arg: ast.unparse(keyword.value)
             for keyword in call.keywords
         } == {"layout_state": "session.layout_state"}
+
+    no_layout_owner = _functions(NO_LAYOUT_FINAL_PATH)[NO_LAYOUT_FINAL_OWNER]
+    no_layout_calls = [
+        node
+        for node in ast.walk(no_layout_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == NESTED_OWNER
+    ]
+    assert len(no_layout_calls) == 1
+    assert [
+        ast.unparse(argument) for argument in no_layout_calls[0].args
+    ] == ["context.model_ir"]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in no_layout_calls[0].keywords
+    } == {"layout_state": "context.layout_state"}
 
     for filename, (expected_pass_id, expected_context) in (
         ORCHESTRATION_SELECTIONS.items()
@@ -151,14 +184,14 @@ def test_affine_prepost_schema_and_all_selections_are_explicit() -> None:
 def test_all_direct_affine_prepost_results_are_retained_observation_only() -> None:
     lowerer = _functions(LOWERER_PATH)["lower_onnx_to_ir"]
     locations = _direct_locations(lowerer.body)
-    assert len(locations) == 3
+    assert len(locations) == 2
     assert tuple(
         _single_target(body[index]) for body, index in locations
-    ) == RESULT_TARGETS
+    ) == (None, RESULT_TARGETS[1])
 
     initial_body, initial_index = locations[0]
-    assert _single_target(initial_body[initial_index - 1]) == (
-        "_layout_pass_set_1_initial_affine_chain_fold_stats"
+    assert _call_name(initial_body[initial_index - 1]) == (
+        "_optimize_fold_mul_add_mul_affine_chains"
     )
     assert _call_name(initial_body[initial_index + 1]) == (
         "_optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains"
@@ -170,18 +203,23 @@ def test_all_direct_affine_prepost_results_are_retained_observation_only() -> No
         "_apply_safe_transpose_reduction_lite"
     )
 
-    final_body, final_index = locations[2]
-    assert _single_target(final_body[final_index - 1]) == (
-        "_no_layout_final_se_fc_stats"
+    assert not any(
+        isinstance(node, ast.Name) and node.id == RESULT_TARGETS[0]
+        for node in ast.walk(lowerer)
     )
-    assert _call_name(final_body[final_index + 1]) == (
-        "_topologically_sort_operators"
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id == RESULT_TARGETS[1]
+        and isinstance(node.ctx, ast.Load)
+        for node in ast.walk(lowerer)
     )
-
-    for target in RESULT_TARGETS[:2]:
-        assert not any(
-            isinstance(node, ast.Name)
-            and node.id == target
-            and isinstance(node.ctx, ast.Load)
-            for node in ast.walk(lowerer)
-        )
+    assert not any(
+        isinstance(node, ast.Name) and node.id == RESULT_TARGETS[2]
+        for node in ast.walk(lowerer)
+    )
+    assert any(
+        isinstance(node, ast.Name)
+        and node.id == NO_LAYOUT_FINAL_TARGET
+        and isinstance(node.ctx, ast.Store)
+        for node in ast.walk(lowerer)
+    )

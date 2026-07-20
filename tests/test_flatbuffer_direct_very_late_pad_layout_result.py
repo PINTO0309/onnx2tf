@@ -23,8 +23,13 @@ LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py
 OWNER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "passes" / "pad_layout.py"
 OWNER = "run_pad_layout_cleanup"
 RESULT_TARGET = "_very_late_pad_layout_stats"
-PREDECESSOR = "_optimize_transpose_squeeze_mean_squeeze_terminal_nhwc_chains"
-SUCCESSOR_TARGET = "_very_late_instancenorm_post_bias_stats"
+COMPOSITE_TARGET = "_late_dequant_swish_layout_tail_results"
+COMPOSITE_OWNER = "run_late_dequant_swish_layout_tail_cleanup"
+PREDECESSOR_GUARD = (
+    "not optimize_layout_transpose_chains and "
+    "apply_safe_transpose_reduction_lite_on_no_layout_opt"
+)
+SUCCESSOR_PHASE_ID = "shape_reconciliation.primary.very_late_broadcast"
 RESULT_SCHEMA = {
     "optimized_transpose_pad_prepost_nhwc_chains": 0,
     "optimized_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains": 0,
@@ -60,17 +65,20 @@ def _single_target(statement: ast.stmt) -> str | None:
     return target.id if isinstance(target, ast.Name) else None
 
 
+def _phase_id(statement: ast.stmt) -> str | None:
+    call = _statement_call(statement)
+    if (
+        call is None
+        or not isinstance(call.func, ast.Attribute)
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
+
+
 def _lowerer() -> ast.FunctionDef:
     return _functions(LOWERER_PATH)["lower_onnx_to_ir"]
-
-
-def _direct_location() -> tuple[ast.FunctionDef, int]:
-    lowerer = _lowerer()
-    return lowerer, next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if _call_name(statement) == OWNER
-    )
 
 
 def _context(name: str) -> ModelIRPassContext:
@@ -166,21 +174,19 @@ def test_very_late_pad_schema_cleanup_and_routes_are_explicit() -> None:
         }
 
 
-def test_very_late_pad_direct_and_consumed_fallback_are_explicit() -> None:
-    lowerer, index = _direct_location()
-    invocation = lowerer.body[index]
-    assert _single_target(invocation) == RESULT_TARGET
-    call = _statement_call(invocation)
-    assert call is not None
-    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-    assert {
-        keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
-    } == {
-        "layout_state": "session.layout_state",
-        "diagnostics": "session.diagnostics",
-    }
-    assert _call_name(lowerer.body[index - 1]) == PREDECESSOR
-    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+def test_very_late_pad_moves_to_composite_and_keeps_consumed_fallback() -> None:
+    lowerer = _lowerer()
+    composite = next(
+        statement
+        for statement in lowerer.body
+        if _single_target(statement) == COMPOSITE_TARGET
+    )
+    index = lowerer.body.index(composite)
+    assert _call_name(composite) == COMPOSITE_OWNER
+    predecessor = lowerer.body[index - 1]
+    assert isinstance(predecessor, ast.If)
+    assert ast.unparse(predecessor.test) == PREDECESSOR_GUARD
+    assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
 
     owner_calls = [
         node
@@ -189,18 +195,18 @@ def test_very_late_pad_direct_and_consumed_fallback_are_explicit() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == OWNER
     ]
-    assert len(owner_calls) == 2
+    assert owner_calls == []
+    summary_owner = "run_norm_subgraph_pad_layout_summary"
     fallback = next(
-        call
-        for call in owner_calls
-        if [ast.unparse(argument) for argument in call.args] == ["fallback_ir"]
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == summary_owner
     )
     assert {
         keyword.arg: ast.unparse(keyword.value) for keyword in fallback.keywords
     } == {
-        "include_pad": "False",
-        "include_unary": "False",
-        "include_norm": "True",
         "diagnostics": "session.diagnostics",
     }
     fallback_parent = next(
@@ -209,16 +215,13 @@ def test_very_late_pad_direct_and_consumed_fallback_are_explicit() -> None:
         if isinstance(node, ast.Assign)
         and _single_target(node) == "fallback_norm_stats"
     )
-    assert isinstance(fallback_parent.value, ast.Dict)
+    assert isinstance(fallback_parent.value, ast.Call)
     assert fallback in list(ast.walk(fallback_parent.value))
 
 
-def test_very_late_pad_direct_result_is_retained_for_observation() -> None:
-    lowerer, index = _direct_location()
-    assert _single_target(lowerer.body[index]) == RESULT_TARGET
+def test_very_late_pad_old_result_local_is_removed() -> None:
+    lowerer = _lowerer()
     assert not any(
-        isinstance(node, ast.Name)
-        and node.id == RESULT_TARGET
-        and isinstance(node.ctx, ast.Load)
+        isinstance(node, ast.Name) and node.id == RESULT_TARGET
         for node in ast.walk(lowerer)
     )

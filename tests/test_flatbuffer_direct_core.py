@@ -9,6 +9,11 @@ from onnx import TensorProto, helper, numpy_helper
 import onnx2tf.tflite_builder.core.validation as validation_module
 import onnx2tf.tflite_builder.core.shape_readiness as shape_readiness_module
 import onnx2tf.tflite_builder.lower_from_onnx2tf as lowering_module
+from onnx2tf.tflite_builder.passes import (
+    binary_layout_adapter as binary_layout_adapter_module,
+    optional_late_binary_layout_recovery_orchestration as optional_recovery_module,
+    se_fc_gather_channel_fanout_orchestration as se_fc_gather_module,
+)
 
 from onnx2tf.tflite_builder.core import (
     ConversionRequest,
@@ -1628,7 +1633,6 @@ def test_final_consecutive_reshape_counters_gate_shape_reconciliation(
 
 def test_final_prelu_reconciles_after_rewrite_or_prune(monkeypatch) -> None:
     counter_name = "rewritten_prelu_transpose_passthrough_chains"
-    probe_name = "unused_final_prelu_probe"
     original_reconcile = lowering_module._reconcile_static_tensor_shapes
     reconcile_count = 0
     recovery_invocations = 0
@@ -1636,14 +1640,7 @@ def test_final_prelu_reconciles_after_rewrite_or_prune(monkeypatch) -> None:
     def counted_reconcile(model_ir, *args, **kwargs):
         nonlocal reconcile_count
         reconcile_count += 1
-        result = original_reconcile(model_ir, *args, **kwargs)
-        model_ir.tensors[probe_name] = TensorIR(
-            name=probe_name,
-            dtype="FLOAT32",
-            shape=[1],
-            shape_signature=[1],
-        )
-        return result
+        return original_reconcile(model_ir, *args, **kwargs)
 
     monkeypatch.setattr(
         lowering_module,
@@ -1659,15 +1656,13 @@ def test_final_prelu_reconciles_after_rewrite_or_prune(monkeypatch) -> None:
         def pass_result(model_ir, *args, **kwargs):
             nonlocal recovery_invocations
             recovery_invocations += 1
-            if outcome == "prune":
-                assert model_ir.tensors.pop(probe_name, None) is not None
             return {
                 counter_name: int(outcome == "rewrite"),
                 "pruned_unused_tensors": int(outcome == "prune"),
             }
 
         monkeypatch.setattr(
-            lowering_module,
+            optional_recovery_module,
             "run_late_binary_layout_recovery",
             pass_result,
         )
@@ -1729,12 +1724,12 @@ def test_final_se_fc_gather_reconciles_after_rewrite_or_prune(monkeypatch) -> No
             )
 
         monkeypatch.setattr(
-            lowering_module,
-            "_optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains",
+            se_fc_gather_module,
+            "optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains",
             sinet_result,
         )
         monkeypatch.setattr(
-            lowering_module,
+            se_fc_gather_module,
             "run_se_fc_gather_channel_fanout",
             cluster_result,
         )
@@ -1749,29 +1744,16 @@ def test_final_se_fc_gather_reconciles_after_rewrite_or_prune(monkeypatch) -> No
         assert run_with_outcome(outcome) == unchanged_count + 1
 
 
-def test_late_binary_repair_reconciles_after_change_or_prune(monkeypatch) -> None:
-    signature_counter = "sanitized_static_shape_signature_consistency"
-    exact_counter = "inserted_rank4_binary_layout_fix_transpose"
-    singleton_counter = (
-        "repaired_rank4_binary_singleton_broadcast_layout_mismatch"
-    )
-    probe_name = "unused_late_binary_repair_probe"
+def test_late_binary_repair_boolean_controls_reconciliation_record(
+    monkeypatch,
+) -> None:
     original_reconcile = lowering_module._reconcile_static_tensor_shapes
     reconcile_count = 0
-    signature_invocations = 0
-    adapter_invocations = 0
 
     def counted_reconcile(model_ir, *args, **kwargs):
         nonlocal reconcile_count
         reconcile_count += 1
-        result = original_reconcile(model_ir, *args, **kwargs)
-        model_ir.tensors[probe_name] = TensorIR(
-            name=probe_name,
-            dtype="FLOAT32",
-            shape=[1],
-            shape_signature=[1],
-        )
-        return result
+        return original_reconcile(model_ir, *args, **kwargs)
 
     monkeypatch.setattr(
         lowering_module,
@@ -1779,62 +1761,32 @@ def test_late_binary_repair_reconciles_after_change_or_prune(monkeypatch) -> Non
         counted_reconcile,
     )
 
-    def run_with_outcome(outcome: str) -> int:
+    def run_with_outcome(needs_reconciliation: bool) -> int:
         nonlocal reconcile_count
-        nonlocal signature_invocations, adapter_invocations
         reconcile_count = 0
-        signature_invocations = 0
-        adapter_invocations = 0
+        owner_invocations = 0
 
-        def signature_result(*args, **kwargs):
-            nonlocal signature_invocations
-            signature_invocations += 1
-            return {
-                signature_counter: int(
-                    signature_invocations == 1 and outcome == "signature"
-                )
-            }
-
-        def adapter_result(model_ir, *args, **kwargs):
-            nonlocal adapter_invocations
-            adapter_invocations += 1
-            is_late_boundary = adapter_invocations == 2
-            if is_late_boundary and outcome == "prune":
-                assert model_ir.tensors.pop(probe_name, None) is not None
-            return (
-                {
-                    exact_counter: int(
-                        is_late_boundary and outcome == "exact"
-                    )
-                },
-                {
-                    singleton_counter: int(
-                        is_late_boundary and outcome == "singleton"
-                    )
-                },
-            )
+        def decision_result(*args, **kwargs):
+            nonlocal owner_invocations
+            owner_invocations += 1
+            return needs_reconciliation
 
         monkeypatch.setattr(
             lowering_module,
-            "_sanitize_static_shape_signature_consistency",
-            signature_result,
-        )
-        monkeypatch.setattr(
-            lowering_module,
-            "run_indexed_binary_layout_adapter_cleanup",
-            adapter_result,
+            "run_late_binary_repair_cleanup",
+            decision_result,
         )
         lower_onnx_to_ir(
             _add_onnx_model(),
-            output_file_name=f"late_binary_reconcile_{outcome}",
+            output_file_name=(
+                f"late_binary_reconcile_{needs_reconciliation}"
+            ),
         )
-        assert signature_invocations == 2
-        assert adapter_invocations >= 2
+        assert owner_invocations == 1
         return reconcile_count
 
-    unchanged_count = run_with_outcome("unchanged")
-    for outcome in ("signature", "exact", "singleton", "prune"):
-        assert run_with_outcome(outcome) == unchanged_count + 1
+    unchanged_count = run_with_outcome(False)
+    assert run_with_outcome(True) == unchanged_count + 1
 
 
 def test_placeholder_matmul_repairs_reconcile_after_change_or_prune(
@@ -1909,7 +1861,7 @@ def test_placeholder_matmul_repairs_reconcile_after_change_or_prune(
             reconcile_result,
         )
         monkeypatch.setattr(
-            lowering_module,
+            binary_layout_adapter_module,
             "run_indexed_binary_layout_adapter_cleanup",
             adapter_result,
         )
@@ -1940,24 +1892,14 @@ def test_stats_have_positive_count_accepts_only_positive_mutations() -> None:
     ) is True
 
 
-def test_shared_late_reconciliation_uses_all_results_and_pruning(
-    monkeypatch,
-) -> None:
-    probe_name = "unused_shared_late_reconcile_probe"
+def test_shared_late_boolean_controls_reconciliation_record(monkeypatch) -> None:
     original_reconcile = lowering_module._reconcile_static_tensor_shapes
     reconcile_count = 0
 
     def counted_reconcile(model_ir, *args, **kwargs):
         nonlocal reconcile_count
         reconcile_count += 1
-        result = original_reconcile(model_ir, *args, **kwargs)
-        model_ir.tensors[probe_name] = TensorIR(
-            name=probe_name,
-            dtype="FLOAT32",
-            shape=[1],
-            shape_signature=[1],
-        )
-        return result
+        return original_reconcile(model_ir, *args, **kwargs)
 
     monkeypatch.setattr(
         lowering_module,
@@ -1965,99 +1907,32 @@ def test_shared_late_reconciliation_uses_all_results_and_pruning(
         counted_reconcile,
     )
 
-    def run_with_outcome(outcome: str) -> int:
+    def run_with_outcome(needs_reconciliation: bool) -> int:
         nonlocal reconcile_count
         reconcile_count = 0
-        invocations = {
-            "boundary": 0,
-            "hardswish": 0,
-            "squeeze": 0,
-            "wrongway": 0,
-            "adapter": 0,
-            "cluster": 0,
-        }
+        owner_invocations = 0
 
-        def direct_result(name: str, counter: str, *, target: int = 1):
-            def result(model_ir, *args, **kwargs):
-                invocations[name] += 1
-                is_target = invocations[name] == target
-                if name == "exact" and is_target and outcome == "prune":
-                    assert model_ir.tensors.pop(probe_name, None) is not None
-                return {counter: int(is_target and outcome == name)}
-
-            return result
-
-        def cluster_result(*args, **kwargs):
-            invocations["cluster"] += 1
-            is_target = invocations["cluster"] == 2
-            return (
-                {"singleton_channel": int(is_target and outcome == "cluster_1")},
-                {"duplicate_fanout": int(is_target and outcome == "cluster_2")},
-                {"consecutive_reshape": int(is_target and outcome == "cluster_3")},
-            )
-
-        def adapter_result(model_ir, *args, **kwargs):
-            invocations["adapter"] += 1
-            is_target = invocations["adapter"] == 1
-            if is_target and outcome == "prune":
-                assert model_ir.tensors.pop(probe_name, None) is not None
-            return (
-                {"exact": int(is_target and outcome == "exact")},
-                {"singleton": int(is_target and outcome == "singleton")},
-            )
+        def decision_result(*args, **kwargs):
+            nonlocal owner_invocations
+            owner_invocations += 1
+            return needs_reconciliation
 
         monkeypatch.setattr(
             lowering_module,
-            "_realign_dynamic_boundary_shape_signature_map",
-            direct_result("boundary", "boundary_signature"),
-        )
-        monkeypatch.setattr(
-            lowering_module,
-            "_sanitize_hardswish_tensor_shapes",
-            direct_result("hardswish", "hardswish", target=2),
-        )
-        monkeypatch.setattr(
-            lowering_module,
-            "_sanitize_squeeze_axes_with_static_input_shapes",
-            direct_result("squeeze", "squeeze"),
-        )
-        monkeypatch.setattr(
-            lowering_module,
-            "_sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv",
-            direct_result("wrongway", "wrongway"),
-        )
-        monkeypatch.setattr(
-            lowering_module,
-            "run_indexed_binary_layout_adapter_cleanup",
-            adapter_result,
-        )
-        monkeypatch.setattr(
-            lowering_module,
-            "run_singleton_consecutive_reshape",
-            cluster_result,
+            "run_shared_late_reconciliation_cleanup",
+            decision_result,
         )
         lower_onnx_to_ir(
             _add_onnx_model(),
-            output_file_name=f"shared_late_reconcile_{outcome}",
+            output_file_name=(
+                f"shared_late_reconcile_{needs_reconciliation}"
+            ),
         )
-        assert invocations["boundary"] >= 1
-        assert invocations["cluster"] >= 2
+        assert owner_invocations == 1
         return reconcile_count
 
-    unchanged_count = run_with_outcome("unchanged")
-    for outcome in (
-        "boundary",
-        "hardswish",
-        "squeeze",
-        "wrongway",
-        "exact",
-        "singleton",
-        "cluster_1",
-        "cluster_2",
-        "cluster_3",
-        "prune",
-    ):
-        assert run_with_outcome(outcome) == unchanged_count + 1
+    unchanged_count = run_with_outcome(False)
+    assert run_with_outcome(True) == unchanged_count + 1
 
 
 def test_dispatcher_records_onnx_provenance() -> None:
@@ -2124,18 +1999,12 @@ def test_late_binary_layout_recovery_reconciles_only_after_mutation(
         def runner_result(*args, **kwargs):
             nonlocal runner_invocations
             runner_invocations += 1
-            return {
-                "rewritten_prelu_transpose_passthrough_chains": int(
-                    outcome == "rewrite"
-                ),
-                "pruned_unused_tensors": int(outcome == "prune"),
-            }
+            return outcome != "unchanged"
 
         monkeypatch.setattr(
             lowering_module,
-            "run_late_binary_layout_recovery",
+            "run_optional_late_binary_layout_recovery_cleanup",
             runner_result,
-            raising=False,
         )
         lower_onnx_to_ir(
             _add_onnx_model(),

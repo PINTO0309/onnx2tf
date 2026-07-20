@@ -84,7 +84,6 @@ SHARED_CONTEXT_TYPES = (
     ),
 )
 MAIN_SHARED_CONTEXT_NAMES = (
-    "absolute_final_normalization_attention_context",
     "boundary_batchmatmul_unary_context",
     "channel_shuffle_gather_context",
     "channel_slice_pad_mul_context",
@@ -191,15 +190,32 @@ def test_main_and_target_context_wiring_preserves_identity_boundaries() -> None:
         name: "shared_model_ir_pass_context" for name in MAIN_SHARED_CONTEXT_NAMES
     }
 
-    target_constructions = [
-        node
-        for node in ast.walk(lowerer)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "ModelIRPassContext"
-    ]
-    assert len(target_constructions) == 2
-    for call in target_constructions:
+    target_constructions_by_helper = {
+        helper.name: calls
+        for helper in lowerer.body
+        if isinstance(helper, ast.FunctionDef)
+        and (
+            calls := [
+                node
+                for node in ast.walk(helper)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "ModelIRPassContext"
+            ]
+        )
+    }
+    assert set(target_constructions_by_helper) == {
+        "_run_se_fc_gather_channel_fanout_pass_cluster",
+        "_run_sinet_se_fc_gather_summary",
+        "_run_precision_cleanup_sequence",
+        "_run_singleton_consecutive_reshape_pass_cluster",
+    }
+    assert all(
+        len(calls) == 1
+        for calls in target_constructions_by_helper.values()
+    )
+    for calls in target_constructions_by_helper.values():
+        call = calls[0]
         assert call.args == []
         assert [keyword.arg for keyword in call.keywords] == [
             "model_ir",

@@ -1,0 +1,2301 @@
+# Make `flatbuffer_direct` phase evidence bounded, explicit, and reusable
+
+## Summary
+
+This branch continues the staged, characterize-first refactoring of the
+TensorFlow-free `flatbuffer_direct` backend. It does not change conversion
+policy, public interfaces, artifacts, pass order, or numerical behavior.
+Instead, it makes several important post-lowering boundaries explicit and
+consolidates their small observation results in a bounded conversion-session
+store.
+
+The branch improves the pipeline in four related ways:
+
+1. previously discarded pass results are retained under stable phase IDs;
+2. repeated shape/topology and topology/layout sequences have focused owners;
+3. terminal topology/layout validation has one shared invariant boundary;
+4. unconsumed lowerer-local result dictionaries are replaced by bounded,
+   conversion-local phase evidence.
+
+These changes reduce implicit state in the central lowerer and provide a safe
+foundation for future scan-elimination work. This branch deliberately does
+not use the new counters to skip any graph traversal; that requires separate
+differential characterization.
+
+## Motivation
+
+The direct FlatBuffer lowerer contains many interacting shape, layout,
+topology, fallback, and compatibility passes. Several calls returned useful
+mutation or validation evidence that was either discarded or stored in local
+variables with no consumer. Other boundaries repeated the same adjacent
+operations directly in the lowerer.
+
+That structure made later optimization risky:
+
+- a discarded result could not show whether a phase actually changed the
+  graph;
+- an unconsumed local increased lowerer state without establishing a durable
+  phase identity;
+- guard-skipped work could be confused with work that ran and returned zero;
+- duplicated adjacent operations could drift apart during maintenance;
+- terminal invariants were harder to review because ownership was spread
+  across the lowerer.
+
+`fb-refactor8` addresses these issues without adding scans, changing guards,
+or altering ModelIR mutations.
+
+## Detailed changes
+
+### Complete observation at existing boundaries
+
+The branch first characterized and retained results from three independent
+single-call boundaries:
+
+- core Dynamic Reshape resolution;
+- safe Transpose reduction in the no-layout path;
+- terminal Expand/Squeeze static-shape reconciliation.
+
+It also characterized the fallback norm reconciliation boundary. The complete
+static-shape mutation schema is used where needed, so option, constant, and
+tensor-metadata updates remain observable rather than relying only on a legacy
+shape counter.
+
+These calls remain at the same locations with the same arguments and guards.
+No result is used as a control-flow input in this branch.
+
+### Shared topology/layout refresh owner
+
+`run_topology_layout_refresh(model_ir)` owns the repeated sequence that:
+
+1. topologically sorts ModelIR operators;
+2. refreshes logical layout annotations;
+3. releases the full temporary layout map;
+4. returns only bounded integer counters.
+
+Six fallback and primary boundaries use this owner. The extracted function
+preserves cycle behavior, operator order, layout updates, and temporary-map
+lifetime while removing duplicated orchestration from the lowerer.
+
+### Shared static-shape/topology reconciliation owner
+
+`run_static_shape_topology_reconciliation(model_ir)` owns the repeated
+sequence that performs complete static-shape reconciliation and then restores
+producer-before-consumer order. It returns four integer counters:
+
+- `reconciled_static_tensor_shapes`;
+- `reconciled_static_shape_mutations`;
+- `reordered_operators`;
+- `cycle_detected`.
+
+Eight fallback and primary repair boundaries use this owner. Their existing
+guards and phase ordering are unchanged.
+
+### Shared terminal topology/layout validation owner
+
+`run_topology_layout_validation(model_ir)` now owns the fallback and primary
+terminal invariant boundary:
+
+1. topologically sort operators;
+2. validate logical-layout annotations;
+3. set or clear `logical_layout_validation_errors` in ModelIR metadata;
+4. return compact validation counters.
+
+Full validation strings remain only in ModelIR metadata. The returned mapping
+contains bounded integer evidence, avoiding duplicate retention of diagnostic
+text. Cycle behavior and stale-error removal are covered explicitly.
+
+### Late composite orchestration owners
+
+Forty-one late lowerer clusters now have focused orchestration owners. The
+first combines adjacent NDHWC gate and cost-volume ScatterND cleanup into the final
+bounded phase result while sharing one short-lived pass state. The second runs
+four late Concat/layout owners with one internal state scope and returns their
+independent mappings as an ordered composite tuple outside the full phase
+store.
+
+The third runs the adjacent ExpandDims-compatible, Flatten-HW-compatible, and
+NHWC-collapse reshape repairs and returns their independent mappings as an
+ordered tuple outside the store. It preserves the shared layout argument for
+the first two repairs and the model-only contract of the third.
+
+The fourth runs the adjacent QKV reshape, attention-Gather cleanup, axis-0
+Gather reshape, and pre-projection rank-lift repairs. It preserves their
+layout/model/layout/model argument policy and returns the four mappings as an
+ordered tuple outside the store.
+
+The fifth runs the adjacent window-partition and window-reverse repairs with
+the same conversion-local layout state and returns their two mappings as an
+ordered tuple outside the store.
+
+The sixth runs final boundary-input normalization, internal channel-slice
+propagation, and the channel-slice Mul/Add bridge. It preserves the final-only
+model-only policy for the latter two calls and returns all three mappings as an
+ordered tuple outside the store.
+
+The seventh runs the adjacent all-output ReLU/Split,
+ReLU/Split/Conv/Concat, mixed Split/Concat, Concat-input adapter,
+Concat-unary-Conv, and Shape-extract repairs. It preserves the exact
+layout/layout/layout/layout/(layout+diagnostics)/model-only argument policy and
+returns all six mappings as an ordered tuple outside the store.
+
+The eighth runs final Slice/pre-post passthrough followed by final pre-ConCat
+NHWC cleanup. It preserves the model-only/(layout+diagnostics) argument policy
+and returns both independent mappings as an ordered tuple outside the store.
+
+The ninth runs eight adjacent late Conv1D and decoder-tail repairs with one
+shared ModelIR/LayoutState context. It returns every independent counter
+mapping in source order while preserving all indexed pass owners and public
+compatibility wrappers.
+
+The tenth runs very-late Pad cleanup followed by the post-bias,
+residual-Mul/Concat, and dual-stat InstanceNorm layout repairs. It preserves
+Pad's layout-and-diagnostics contract, the three InstanceNorm owners'
+layout-only contracts, and the singleton/consecutive-Reshape successor. Its
+four independent mappings remain an ordered composite outside the full phase
+store.
+
+The eleventh preserves the normalized option guard around very-late
+layout-Transpose cleanup and then runs rank-four channelwise
+broadcast-constant repair unconditionally. It returns `None` for the skipped
+optional result, retains the broadcast mapping on every path, and leaves the
+unconditional broadcast shape reconciliation immediately afterward.
+
+The twelfth runs four shared-late sanitizers, the indexed binary adapter pair,
+and singleton/consecutive-Reshape triple, then reduces all nine mutation
+mappings plus prune-only tensor-count change to one boolean. The lowerer keeps
+the conditional reconciliation record itself, preserving its direct owner
+call and invoked-phase-only store semantics.
+
+The thirteenth runs static-signature sanitization followed by the indexed
+binary adapter pair, then reduces their three exact mutation counters plus
+prune-only tensor-count change to one boolean. The lowerer again retains the
+conditional reconciliation record, and both guards around the following
+optional late-binary layout recovery remain unchanged.
+
+The fourteenth preserves the normalized enablement predicate around aggregate
+late-binary layout recovery and reduces the aggregate mapping to one boolean.
+Disabled recovery is still skipped completely; enabled recovery receives the
+same ModelIR, LayoutState, diagnostics, and independent layout-Transpose flag.
+The lowerer retains the direct conditional reconciliation record.
+
+The fifteenth runs the pre-terminal post-bias, residual-Mul/Concat, and
+dual-stat InstanceNorm layout repairs with one shared ModelIR/LayoutState
+context. It returns all three independent mappings in source order outside the
+full store and leaves both neighboring decision boundaries untouched.
+
+The sixteenth owns the prune-aware summary around terminal-affine recovery at
+both late call sites. It snapshots tensor count, invokes the existing raw
+eleven-pass owner, and reuses the strict summary schema. The raw lowerer wrapper
+remains available as a compatibility boundary.
+
+The seventeenth owns the immediately following pre-terminal pre-add cleanup.
+It snapshots tensor count, invokes the existing pre-add NHWC-chain pass once,
+and returns the original mapping extended with the same non-negative
+`pruned_unused_tensors` delta. The lowerer result target and both neighboring
+boundaries remain unchanged, while the lowerer-local snapshot and inline
+mapping construction are removed.
+
+The eighteenth composes the adjacent channel Slice/Pad/Mul raw cluster with
+its strict normalized summary at the direct late site. The raw lowerer wrapper
+remains available to terminal recovery callback composition, while one
+consumed raw-result local is removed.
+
+The nineteenth runs affine post-Add cleanup followed by strict
+StridedSlice/Pad/Concat cleanup as one ordered pre-terminal tail. It preserves
+the layout-aware/model-only argument policy and returns both mappings outside
+the full store.
+
+The twentieth composes the direct late SPP/Concat/Unary raw pair with its
+strict two-counter summary. It preserves the raw wrapper and shared pass-state
+scope while removing one consumed raw-result local.
+
+The twenty-first owns the late QKV prune-aware summary. It snapshots tensor
+count inside the pass module, invokes the existing QKV owner with the runtime
+layout-Transpose flag and prefix cleanup disabled, and returns the unchanged
+strict summary schema. The two default-policy raw-wrapper uses and the raw
+lowerer compatibility wrapper remain unchanged.
+
+The twenty-second owns terminal HardSwish/SE prune-aware evidence. It snapshots
+tensor count inside the pass module, invokes the existing raw layout owner, and
+extends the unchanged one-key mapping with a non-negative prune delta. The raw
+lowerer wrapper and its earlier phase-store call remain unchanged.
+
+The twenty-third composes late hard-activation/layout cleanup with its strict
+prune-aware summary. It preserves the runtime layout-Transpose policy, shared
+ModelIR/LayoutState/diagnostics context, raw wrapper, and normalized schema
+while removing the consumed raw tuple from lowerer scope.
+
+The twenty-fourth composes the late
+layout/Mean/SPP/Gather/constant-fold/Cast cluster with its strict prune-aware
+summary. It preserves the runtime layout-Transpose policy, shared pass-state
+scope, child constant-fold/Cast builder, raw wrapper, and normalized schema.
+
+The twenty-fifth composes very-late
+Gather/constant-fold/Cast/normalization cleanup with its strict four-result
+prune-aware summary. It preserves the shared pass-state scope, child
+constant-fold/Cast builder, normalization policy, raw wrapper, and normalized
+schema.
+
+The twenty-sixth provides one reusable prune-aware summary for the compatible
+very-late and fallback indexed Conv-input sites. It preserves the shared
+single-index pair, exact two-key raw schema, fallback reconciliation guard, and
+raw wrapper while explicitly leaving the different final one-key site intact.
+
+The twenty-seventh provides one reusable prune-aware summary for the fallback
+and final-primary stale channelwise-binary adapter sites. It preserves their
+exact raw schema and mutation-positive reconciliation guards, keeps the raw
+wrapper and optional graph-index forwarding available, and explicitly leaves
+the iterative indexed convergence owner unchanged.
+
+The twenty-eighth provides a dedicated prune-aware summary for the
+final-primary one-repair stale Conv-input site. It preserves the distinct
+one-key raw schema, raw wrapper and optional graph-index forwarding, final-Pad
+predecessor, reconciliation guard, and mixed-Concat successor while leaving
+the indexed two-repair summary sites unchanged.
+
+The twenty-ninth provides a dedicated prune-aware summary for absolute-final
+PRELU passthrough cleanup. It preserves exact layout-state forwarding, the raw
+wrapper and both other raw PRELU paths, rewrite-or-prune reconciliation
+semantics, and both neighboring cleanup boundaries.
+
+The thirtieth provides a dedicated prune-aware summary for the safety-fallback
+norm-subgraph Pad cleanup. It preserves the norm-only fixed flags, diagnostics
+forwarding, raw Pad compatibility re-export, rewrite-only reconciliation guard,
+all other Pad-family routes, and neighboring fallback boundaries.
+
+The thirty-first provides a merged prune-aware summary for the final
+placeholder-MatMul indexed binary-adapter pair. It preserves pair order,
+optional graph-index/layout-state forwarding, all other raw pair callers, the
+preceding placeholder reconciliation mapping, and following topology checkpoint.
+
+The thirty-second provides one shared prune-aware summary for the fallback and
+absolute-final SiNet/SE-FC/Gather sequences. It preserves path-specific
+ModelIR/LayoutState forwarding, SiNet-before-pair ordering, diagnostics and
+shared pair state, all three rewrite counters, prune-only reconciliation, raw
+compatibility wrappers, and neighboring boundaries.
+
+The thirty-third owns both duplicated three-stage precision-cleanup sequences.
+It preserves DIV-to-reciprocal → consecutive-MUL → sensitive-DIV restore
+ordering, keeps all three raw mappings independent, omits layout state for
+fallback, forwards it for primary-final, and limits diagnostics to the
+transactional middle stage.
+
+The thirty-fourth owns the absolute-final dynamic-boundary realignment and
+static-signature sanitizer pair. It preserves both raw schemas, exact mutation
+order, every other signature caller, wrapper compatibility, and the following
+affine cleanup.
+
+The thirty-fifth owns the guarded no-layout final SE-FC and affine pre/post
+cleanup pair. It preserves shared ModelIR/LayoutState identity, SE-FC-only
+diagnostics, raw mapping schemas and order, the option guard, both topology
+boundaries, every other raw caller, compatibility symbols, and the following
+boundary-signature cleanup.
+
+The thirty-sixth owns the adjacent absolute-final affine post-ADD and
+decomposed-InstanceNorm post-bias cleanups. It preserves shared
+ModelIR/LayoutState identity, affine-before-InstanceNorm order, both raw
+schemas, all independent callers, compatibility wrappers, and both neighboring
+orchestration boundaries.
+
+The thirty-seventh composes the existing absolute-final normalization/pad and
+mixed-attention owner with dynamic rank-one Unsqueeze/Reshape repair. It
+preserves the existing inner tuple plus raw rank-one mapping as a nested pair,
+shared context identity, callback order, all independent rank-one callers, and
+both neighboring boundaries while removing a lowerer-only closure and alias.
+
+The thirty-eighth owns indexed binary-layout convergence. It constructs one
+graph index, shares it across broadcast-constant repair, stale binary-adapter
+repair, and static-shape reconciliation, preserves that exact order, retains
+the three-round cap and stable-stop rule, and returns the unchanged ordered
+three-counter mapping. The lowerer compatibility wrapper and both fallback and
+primary behaviors remain intact; the fallback still uses the wrapper and the
+primary use is composed by the following terminal owner.
+
+The thirty-ninth composes final-primary indexed binary-layout convergence,
+static high-rank binary coalescing, and dynamic boundary-signature realignment.
+It preserves model/layout argument policy, exact callback order, every raw
+mapping object, both raw lowerer compatibility wrappers, the fallback
+convergence path, and terminal validation/finalization successors while
+replacing three lowerer results with one ordered context-owned tuple.
+
+The fortieth composes the absolute-final boundary-signature,
+affine/InstanceNorm, and normalization/attention/rank-one owners. It preserves
+the shared context object, exact three-stage order, every nested result object,
+all sub-owner and raw-wrapper contracts, the guarded no-layout predecessor,
+and topology/layout refresh successor while replacing three lowerer targets
+with one ordered outer tuple.
+
+The forty-first composes very-late dynamic Reshape, indexed Conv-input, stale
+channel-shuffle, two Concat-axis, and dynamic rank-one repairs. It preserves
+the runtime-inferable flag, exact ModelIR/LayoutState/diagnostics policy,
+callback order, every raw mapping object, compatibility wrappers, fallback and
+independent callers, mandatory reconciliation, and split fallback while
+replacing six lowerer results with one context-owned tuple.
+
+These extractions preserve callback order, model/layout/diagnostics identity,
+and result schemas while removing seventy-one former unconsumed locals and three
+lowerer scope locals. They also replace twenty-nine consumed mutation-evidence
+or aggregate-result locals and twenty tensor-count snapshots with three
+explicit boolean decisions, nineteen reusable summary calls, and one prune-aware
+cleanup call.
+Focused runtime tests verify shared scope identity, exact argument policy,
+ordered results, every positive-evidence path, and prune-only cleanup.
+
+### Shared pre-Concat NHWC composite owner
+
+The three-stage pre-ConCat NHWC composite now lives in
+`passes/pre_concat_nhwc_layout.py`. It runs indexed cleanup, quantized indexed
+cleanup, and the legacy fallback in the original order, forwards layout state
+and diagnostics only to the first two stages, and produces the same bounded
+aggregate counter from the same recognized detail keys.
+
+The existing lowerer function remains as a one-return compatibility wrapper,
+so its three direct production uses, recovery-orchestration callback, public
+test imports, arguments, and result schema are unchanged. The legacy wrapper
+also remains available. The pass module imports existing owners directly and
+does not depend on the lowerer or callback injection.
+
+### Explicit topology checkpoints
+
+Five existing direct topological-sort calls now have stable phase identities:
+
+- fallback after placeholder restoration;
+- fallback after late layout repair;
+- primary post-lowering baseline;
+- primary no-layout post-reduction;
+- primary final placeholder restoration.
+
+The calls remain distinct because intervening repair families can mutate
+topology. This branch does not merge, guard, or remove any of them.
+
+### Bounded `ConversionSession` phase-result store
+
+`ConversionSession` now provides two internal methods:
+
+- `record_phase_result(phase_id, counters)`;
+- `phase_results_snapshot()`.
+
+The store is intentionally small and defensive:
+
+- at most 128 phase IDs;
+- at most 32 counters per phase;
+- integer values only, normalized to built-in `int`;
+- copied input mappings;
+- isolated snapshots;
+- conversion-session lifetime only.
+
+This store is separate from `session.diagnostics`. The diagnostics stream has
+an existing private metrics contract in which events represent ModelIR pass
+execution. Mixing observation counters into that stream would change event
+numbering and report semantics.
+
+The phase store is not written to ModelIR metadata and is not exposed through
+the public API, conversion result, reports, or generated artifacts.
+
+### 128 stable phase IDs
+
+The lowerer now records 128 bounded observations covering:
+
+- nine unconditional core cleanup results covering pseudo-LeakyReLU, YOLO
+  decode, consecutive Mul, terminal Dequantize/QDQ, Conv affine/activation,
+  Squeeze/Reshape, and indexed prune/reconcile cleanup;
+- four unconditional terminal cleanup results covering terminal Dequantize/QDQ
+  and Conv affine/activation cleanup;
+- guarded layout pass-set 2 Squeeze/Reshape and indexed prune/reconcile cleanup;
+- guarded layout pass-set 1 InstanceNorm pre/post and Squeeze/Reshape cleanup;
+- guarded layout pass-set 1 quantized PReLU, TransposeConv, and Reshape cleanup;
+- guarded layout pass-set 1 affine-chain fold, affine pre/post, pre-unary
+  affine fan-out, and mean-affine pre/post cleanup;
+- guarded layout pass-set 1 layout-Transpose, Transpose/binary bridge,
+  duplicate fan-out, and Dequantize→Mean→Quantize cleanup;
+- guarded layout pass-set 2 quantized TransposeConv cleanup;
+- guarded layout pass-set 2 elementwise/Concat/SPP, input-adapter,
+  Slice/Logistic-tail, and SA/PA MirrorPad cleanup;
+- unconditional terminal ArgMax, Gather fan-out, Softmax, boundary-input,
+  channel-slice, and channel-slice Mul/Add bridge cleanup;
+- unconditional terminal boundary StridedSlice/QDQ/Concat, Swish
+  residual/Concat, Dequantize/Logistic/Mul/Quantize, and Swish QDQ-island
+  cleanup;
+- unconditional terminal InstanceNorm post-bias, normalization Pad,
+  InstanceNorm residual Add, InstanceNorm residual Mul/Concat, and
+  InstanceNorm dual-stat cleanup;
+- guarded terminal BatchMatMul affine-input, Reshape/SE, and adjoint-flag
+  cleanup between the retained Mean- and QKV-attention composites;
+- guarded terminal QKV Split/Conv/Concat bridge cleanup between the retained
+  QKV-attention and singleton-reshape composites;
+- unconditional terminal SiNet HardSwish-SE and
+  Dequantize/HardSigmoid/Quantize bridge cleanup between retained SiNet
+  recovery composites;
+- post-terminal indexed shape/topology convergence between the singleton and
+  very-late SiNet composites;
+- very-late residual affine PReLU, residual Transpose fan-out, and indexed
+  prune/reconcile cleanup between retained SiNet composites;
+- post-cleanup CSP attention and SA/PA MirrorPad cleanup between the retained
+  SiNet pre-Add/Resize composite and post-SiNet BatchMatMul observations;
+- post-SiNet BatchMatMul affine-input, Reshape/SE, and adjoint-flag cleanup
+  before the retained QKV-attention composite;
+- post-SiNet all-output ReLU/Split, Split/Conv/ReLU/Concat, and
+  Split/Conv/Concat bridge cleanup after the retained QKV composite;
+- post-SiNet mix-attention, mixed-attention layout, and
+  Dequantize/HardSigmoid bridge cleanup before shared late pass-state scopes;
+- one aggregated late NDHWC gate/cost-volume ScatterND phase whose internal
+  owner shares a short-lived pass state and returns three integer counters;
+- core shape resolution;
+- safe no-layout Transpose reduction;
+- terminal static-shape reconciliation;
+- fallback and primary topology checkpoints;
+- fallback and primary topology/layout refresh;
+- primary final ConvInteger, InstanceNorm, and broadcast reconciliation before
+  their matching topology/layout refresh;
+- primary final PReLU and consecutive-Reshape reconciliation;
+- primary final mixed-singleton Concat, nested placeholder/binary, and
+  SE/FC/Gather reconciliation;
+- the ordered six-boundary primary final SiNet reconciliation chain;
+- two unconditional very-late reconciliation boundaries;
+- guarded shared-late reconciliation over nine mutation-evidence sources and
+  cleanup-only pruning;
+- guarded late binary repair and nested layout-recovery reconciliation;
+- guarded post-split fallback reconciliation before the unbound-input safety
+  check;
+- fallback and primary terminal layout validation;
+- fallback broadcast, SE/FC/Gather, placeholder-MatMul, Conv-input,
+  mixed-Concat, Concat-axis, and binary-layout static-shape reconciliation;
+- fallback norm and high-rank BatchMatMul shape/topology reconciliation;
+- primary final high-rank BatchMatMul, Pad, Conv-input, mixed-Concat,
+  Concat-axis, and binary-layout shape/topology reconciliation.
+
+The guarded shape-reconciliation and shape/topology phases use
+invoked-phase-only semantics. A phase omitted by its guard is absent from the
+snapshot. An invoked phase is recorded even when all counters are zero. This
+preserves the distinction between "not invoked" and "invoked but stable" and
+allowed 30 unconsumed all-zero default dictionaries to be removed.
+
+## Safety and compatibility
+
+- Public CLI and Python APIs are unchanged.
+- `flatbuffer_direct` remains the default backend.
+- Artifact names, report formats, return behavior, and exceptions are
+  unchanged.
+- All affected owner calls keep their original arguments, guards, evaluation
+  count, predecessors, and successors.
+- No graph traversal, reconciliation, sort, validation, or layout inference
+  was added or removed.
+- No stored counter is used to change control flow.
+- Normal direct TFLite conversion and `-cotof` remain independent of
+  TensorFlow.
+- Optional TensorFlow exporters remain behind the existing optional boundary.
+- No dependency was added.
+- No multiprocessing or parallel inference behavior was introduced.
+
+## Characterize-first implementation strategy
+
+Each owner extraction and observation migration was preceded by a focused
+contract that fixed the relevant schema, graph effects, cycle behavior,
+metadata behavior, phase position, arguments, and no-op behavior. Production
+changes were then limited to the characterized boundary.
+
+The latest thirty-one records cover terminal boundary StridedSlice/QDQ/Concat,
+activation bridge, InstanceNorm, normalization, and guarded BatchMatMul
+and QKV bridge plus SiNet HardSwish/HardSigmoid and indexed convergence
+and very-late residual, post-cleanup attention, plus post-SiNet BatchMatMul
+and ReLU/Split plus attention/activation observations. They retain
+deterministic order and original boundaries.
+
+Structural tests also ensure that:
+
+- raw duplicated operation pairs no longer remain at migrated sites;
+- all 128 phase IDs and owners appear in deterministic source order;
+- old unconsumed result targets are absent from the lowerer;
+- the bounded store does not alias caller mappings or snapshots;
+- diagnostics and public output contracts remain independent of the store.
+
+## Validation
+
+All validation was executed sequentially under `uv`.
+
+Final checkpoint results:
+
+- fallback static-shape family and safety-fallback contracts:
+  **20 passed**;
+- direct primary final-layout family, terminal, refresh, and store contracts:
+  **71 passed**;
+- direct PReLU/consecutive-Reshape, terminal, and store contracts:
+  **67 passed**;
+- direct generic-final, terminal, SE/FC/Gather, and store contracts:
+  **79 passed**;
+- direct final-SiNet, terminal, and store contracts: **67 passed**;
+- direct unconditional, terminal, very-late, and store contracts:
+  **90 passed**;
+- focused late-binary, terminal, and bounded-store contracts:
+  **72 passed**;
+- focused shared-late, late-binary, terminal, runtime, and bounded-store
+  contracts: **75 passed**;
+- focused post-split, very-late, Split fallback, terminal, and bounded-store
+  contracts: **96 passed**;
+- direct core-cleanup, phase-store, dynamic-Reshape, Squeeze/Reshape, indexed
+  prune/reconcile, terminal, and architecture-boundary contracts:
+  **76 passed**;
+- synthetic core runtime contracts: **55 passed**;
+- direct terminal-cleanup, phase-store, terminal orchestration, and indexed-
+  owner architecture-boundary contracts: **68 passed**;
+- direct layout pass-set 2 cleanup and owner contracts: **9 passed**;
+- direct layout pass-set 1 cleanup and owner contracts: **9 passed**;
+- direct layout pass-set 1 quantized cleanup and owner contracts:
+  **10 passed**;
+- direct layout pass-set 2 quantized cleanup and owner contracts:
+  **8 passed**;
+- direct layout pass-set 1 affine cleanup and owner contracts:
+  **13 passed**;
+- direct residual layout pass-set 1 cleanup and owner contracts:
+  **14 passed**;
+- expanded residual layout pass-set 2 and orchestration contracts:
+  **64 passed**;
+- terminal boundary, owner, phase-store, and runtime contracts:
+  **156 passed**;
+- QLinear and terminal-layout orchestration contracts: **71 passed**;
+- terminal activation, phase-store, owner, and Slice/Concat contracts:
+  **75 passed**;
+- terminal normalization, phase-store, owner, and boundary contracts:
+  **100 passed**;
+- terminal BatchMatMul, QKV, and phase-store contracts: **26 passed**;
+- indexed QKV bridge, QKV, singleton, and phase-store contracts:
+  **106 passed**;
+- terminal HardSwish, HardSigmoid, SiNet, and phase-store contracts:
+  **23 passed**;
+- indexed convergence, SiNet, and phase-store contracts: **12 passed**;
+- very-late residual, prune/reconcile, SiNet, and phase-store contracts:
+  **20 passed**;
+- post-cleanup CSP/MirrorPad boundary and phase-store contracts:
+  **17 passed**;
+- focused CSP/MirrorPad runtime and orchestration contracts: **68 passed**;
+- post-SiNet BatchMatMul/QKV/attention/store contracts: **31 passed**;
+- post-SiNet ReLU/Split/QKV/mix-attention/store contracts: **75 passed**;
+- post-SiNet attention/activation/state-scope/store contracts: **17 passed**;
+- late NDHWC/cost-volume pair, gate, store, and architecture contracts:
+  **20 passed**;
+- late Concat composite, owner, terminal-layout, and architecture contracts:
+  **76 passed**;
+- late reshape-layout composite and affected owner contracts:
+  **95 passed**;
+- late attention-layout composite and affected owner contracts:
+  **238 passed**;
+- late window-layout composite and affected owner contracts:
+  **110 passed**;
+- final boundary-channel composite and affected owner contracts:
+  **79 passed**;
+- terminal Concat-bridge composite and affected result contracts:
+  **17 passed**;
+- final Slice/pre-ConCat composite and affected boundary contracts:
+  **20 passed**;
+- Slice/pre-post mutation contracts: **9 passed**;
+- late Conv1D/decoder composite contracts: **3 passed**;
+- indexed Conv1D/decoder and affected result contracts: **431 passed**;
+- very-late Pad/InstanceNorm composite and affected boundary contracts:
+  **424 passed**;
+- very-late layout/broadcast composite and affected boundary contracts:
+  **97 passed**;
+- shared-late reconciliation decision and affected boundary contracts:
+  **150 passed**;
+- late-binary repair decision and affected boundary contracts:
+  **132 passed**;
+- optional late-binary layout-recovery decision and affected contracts:
+  **138 passed**;
+- pre-terminal InstanceNorm composite and affected contracts:
+  **151 passed**;
+- terminal-affine prune-aware summary and affected contracts:
+  **182 passed**;
+- pre-terminal pre-add prune-aware owner and boundary contracts:
+  **4 passed**;
+- affected pre-add, channel Slice/Pad/Mul, terminal-affine, and related
+  contracts: **186 passed**;
+- channel Slice/Pad/Mul direct-summary owner contracts: **3 passed**;
+- affected channel Slice/Pad/Mul, pre-add, terminal recovery, and related
+  contracts: **195 passed**;
+- pre-terminal affine-tail owner contracts: **3 passed**;
+- affected affine-tail, terminal recovery, very-late, and related contracts:
+  **237 passed**;
+- late SPP/Concat/Unary direct-summary owner contracts: **3 passed**;
+- affected late SPP, shape-extract, terminal recovery, and related contracts:
+  **187 passed**;
+- late QKV prune-aware summary owner and boundary contracts: **5 passed**;
+- affected late QKV, neighboring owners, core, phase-store, and architecture
+  contracts: **405 passed**;
+- terminal HardSwish/SE prune-aware summary characterization and related
+  contracts: **76 passed, 1 intentional strict xfail**;
+- terminal HardSwish/SE prune-aware summary owner contracts: **4 passed**;
+- affected terminal HardSwish/SE, late hard-activation, indexed bridge, store,
+  and architecture contracts: **337 passed**;
+- late hard-activation prune-aware summary characterization and related
+  contracts: **22 passed, 1 intentional strict xfail**;
+- late hard-activation prune-aware summary owner contracts: **5 passed**;
+- affected late hard-activation, HardSwish/SE, pre-ConCat, store, and
+  architecture contracts: **294 passed**;
+- late layout-cluster prune-aware summary characterization and related
+  contracts: **21 passed, 1 intentional strict xfail**;
+- late layout-cluster prune-aware summary owner contracts: **5 passed**;
+- affected late layout-cluster, shape-extract, store, and architecture
+  contracts: **283 passed**;
+- very-late normalization prune-aware summary characterization and related
+  contracts: **40 passed, 1 intentional strict xfail**;
+- very-late normalization prune-aware summary owner contracts: **4 passed**;
+- affected very-late normalization, adjacent repair, store, and architecture
+  contracts: **301 passed**;
+- indexed Conv-input prune-aware summary family characterization and related
+  contracts: **115 passed, 1 intentional strict xfail**;
+- indexed Conv-input shared prune-aware summary owner contracts: **4 passed**;
+- affected indexed Conv-input, very-late, fallback, terminal-layout, store, and
+  architecture contracts: **376 passed**;
+- stale channelwise-binary adapter summary family characterization and related
+  contracts: **93 passed, 1 intentional strict xfail**;
+- stale channelwise-binary adapter shared-summary contracts: **4 passed**;
+- affected stale binary-adapter, fallback, terminal-layout, indexed
+  convergence, store, and architecture contracts: **354 passed**;
+- final stale Conv-input dedicated-summary characterization and related
+  contracts: **336 passed, 1 intentional strict xfail**;
+- final stale Conv-input dedicated-summary contracts: **4 passed**;
+- affected indexed Conv-input, terminal-layout, store, and architecture
+  contracts: **339 passed**;
+- final PRELU dedicated-summary characterization and related contracts:
+  **389 passed, 1 intentional strict xfail**;
+- final PRELU dedicated-summary contracts: **4 passed**;
+- affected terminal-layout, SE-FC/Gather, core runtime, store, and architecture
+  contracts: **392 passed**;
+- fallback norm-subgraph Pad summary characterization and related contracts:
+  **300 passed, 1 intentional strict xfail**;
+- fallback norm-subgraph Pad dedicated-summary contracts: **4 passed**;
+- affected fallback, Pad, norm, singleton-Reshape, store, and architecture
+  contracts: **303 passed**;
+- final placeholder binary-adapter summary characterization and related
+  contracts: **380 passed, 1 intentional strict xfail**;
+- final placeholder binary-adapter merged-summary contracts: **4 passed**;
+- affected indexed adapter, terminal-layout, core runtime, store, and
+  architecture contracts: **383 passed**;
+- TensorFlow/tf-keras import blocker, default/direct conversion, and `-cotof`
+  contracts: **11 passed**;
+- pre-Concat NHWC pass-owner and compatibility contracts: **3 passed**;
+- indexed, quantized, and legacy NHWC Concat family contracts:
+  **285 passed**;
+- broader result and phase-result contracts: **196 passed**;
+- broader phase-store, owner, fallback, terminal, shape, and topology suite:
+  **275 passed**;
+- lowerer architecture suite: **258 passed**;
+- targeted Ruff checks: **passed**;
+- Python bytecode compilation: **passed**;
+- whitespace validation: **passed**.
+
+Earlier checkpoints also ran larger focused gates that covered core contracts,
+pass efficiency, architecture constraints, and TensorFlow-import blocking.
+Their exact commands and results are recorded in
+`docs/fb_refactor8_improvements.md` and
+`docs/flatbuffer_direct_handoff_fb_refactor8.md`.
+
+No real-model corpus conversion was repeated for these checkpoints because
+the implementation only extracts previously adjacent operations or changes
+the destination of already-computed bounded dictionaries. The owner-effect
+tests and structural gates verify that ModelIR mutations and serialization
+inputs remain unchanged.
+
+## Scope intentionally deferred
+
+This branch does not attempt to remove redundant graph scans based on the new
+evidence. A future change may consume phase counters only after a separate
+differential test proves identical operator order, layout state, cycle
+handling, ModelIR digest, and downstream artifacts for both mutation-positive
+and stable paths.
+
+The broader multi-phase `flatbuffer_direct` refactor remains ongoing. This
+checkpoint supplies more explicit ownership and bounded evidence for that
+work without changing current converter behavior.
+
+The latest checkpoint implements the characterized pre-terminal pre-add owner.
+The existing pass call, tensor-count delta, source order, ModelIR/LayoutState
+identity, and unconsumed result remain intact; only their orchestration moves
+behind a focused pass-module boundary. Runtime tests cover both stable and
+prune-only paths, and the already-full 128/128 phase-result store is unchanged.
+
+The following checkpoint implements the adjacent direct channel Slice/Pad/Mul
+raw-to-summary owner. It removes only the consumed direct raw-result local and
+explicitly preserves the existing raw wrapper for terminal recovery callback
+composition.
+
+The latest checkpoint implements the adjacent affine post-Add and strict
+StridedSlice/Pad/Concat pair as one ordered owner. It preserves the
+layout-aware/model-only argument policy, all other call sites, and the full
+128/128 store.
+
+The latest checkpoint implements the adjacent late SPP/Concat/Unary raw tuple
+and normalized summary owner while explicitly retaining the existing raw
+wrapper and shared pass-state scope.
+
+The latest checkpoint implements the late QKV prune-aware summary owner. It
+moves the tensor snapshot and raw-to-summary composition behind one pass-module
+boundary while retaining both default-policy raw-wrapper uses, the raw lowerer
+wrapper, runtime flag forwarding, exact summary schema, and the full 128/128
+phase-result store.
+
+The next characterization fixes the terminal HardSwish/SE tensor snapshot,
+raw mapping, prune delta, and neighboring pass boundaries. It intentionally
+leaves production unchanged until the generic prune-aware summary owner is
+implemented in a separate checkpoint.
+
+The latest checkpoint implements that terminal HardSwish/SE summary owner. It
+moves only the tensor snapshot and mapping extension into the pass module,
+retaining the raw wrapper, earlier phase-store raw call, pass order, exact
+mapping schema, neighboring boundaries, and the full 128/128 phase-result
+store.
+
+The next characterization fixes the late hard-activation tensor snapshot,
+flagged raw ordered result, strict prune-aware summary, and neighboring pass
+boundaries. Production remains unchanged until the direct summary owner is
+implemented separately.
+
+The latest checkpoint implements the late hard-activation prune-aware summary
+owner. It removes the lowerer-local tensor snapshot and consumed raw tuple
+while retaining runtime option forwarding, raw wrapper dispatch, strict schema,
+neighboring boundaries, and the full 128/128 phase-result store.
+
+The next characterization fixes the late layout-cluster tensor snapshot,
+flagged raw ordered result, strict prune-aware summary, and neighboring pass
+boundaries. Production remains unchanged until its direct summary owner is
+implemented separately.
+
+The latest checkpoint implements that late layout-cluster summary owner. It
+removes the lowerer-local tensor snapshot and consumed raw tuple while
+retaining runtime option forwarding, raw wrapper dispatch, child-builder and
+shared-scope behavior, strict schema, neighboring boundaries, and the full
+128/128 phase-result store.
+
+The next characterization fixes the very-late normalization tensor snapshot,
+four-result raw tuple, strict prune-aware summary, and neighboring pass
+boundaries. Production remains unchanged until its direct summary owner is
+implemented separately.
+
+The latest checkpoint implements that very-late normalization summary owner.
+It removes the lowerer-local tensor snapshot and consumed raw tuple while
+retaining raw wrapper dispatch, child-builder and shared-scope behavior, strict
+schema, neighboring repair boundaries, and the full 128/128 phase-result store.
+
+The next characterization fixes the two compatible indexed Conv-input
+count-plus-mapping sites and explicitly excludes the final one-key repair site.
+Production remains unchanged until the shared prune-aware summary owner is
+implemented separately.
+
+The latest checkpoint implements that shared indexed Conv-input summary owner.
+It removes both compatible tensor snapshots and inline mapping extensions while
+retaining the indexed repair pair, fallback guard, raw wrapper, final one-key
+site, and the full 128/128 phase-result store.
+
+The next characterization fixes the two compatible stale channelwise-binary
+adapter count-plus-mapping sites. It preserves their concat-axis predecessors,
+mutation-positive reconciliation guards, fallback topology successor, final
+progress successor, and raw wrapper, while explicitly excluding the iterative
+indexed convergence owner. Production remains unchanged until the shared
+prune-aware summary owner is implemented separately.
+
+The latest checkpoint implements that shared stale binary-adapter summary
+owner. It removes both compatible tensor snapshots and inline mapping
+extensions while retaining the raw wrapper, optional graph-index forwarding,
+indexed convergence loop, both reconciliation guards, neighboring boundaries,
+and the full 128/128 phase-result store.
+
+The next characterization fixes the dedicated final-primary stale Conv-input
+count-plus-mapping boundary. It preserves its one-repair schema, final-Pad
+predecessor, mutation-positive reconciliation guard, mixed-Concat successor,
+and raw wrapper with optional graph-index forwarding. It remains separate from
+the indexed two-repair family, and production is unchanged until its dedicated
+summary owner is implemented separately.
+
+The latest checkpoint implements that dedicated final stale Conv-input summary
+owner. It removes the final tensor snapshot and inline mapping extension while
+retaining the raw wrapper, optional graph-index forwarding, both indexed
+summary sites, neighboring boundaries, and the full 128/128 phase-result store.
+
+The next characterization fixes the absolute-final PRELU count-plus-result
+boundary. It preserves ModelIR/LayoutState forwarding, the preceding
+SE-FC/Gather guard, rewrite-or-prune reconciliation semantics, the following
+consecutive-Reshape cleanup, and the raw wrapper. Production remains unchanged
+until its dedicated prune-aware summary owner is implemented separately.
+
+The latest checkpoint implements that dedicated final PRELU summary owner. It
+removes the tensor snapshot, adds bounded prune evidence to the raw mapping,
+and uses the existing positive-count predicate while retaining the raw wrapper,
+both other PRELU paths, neighboring boundaries, and the full 128/128 store.
+
+The next characterization fixes the safety-fallback norm-only Pad cleanup
+count-plus-mapping boundary. It preserves the fixed stage flags, diagnostics
+forwarding, conditional norm reconciliation, recursive fallback predecessor,
+dynamic rank-one successor, and every other Pad-family caller. Production
+remains unchanged until its dedicated prune-aware summary owner is implemented
+separately.
+
+The latest checkpoint implements that dedicated fallback norm-subgraph Pad
+summary owner. It removes the tensor snapshot and inline mapping extension
+while retaining the fixed flags, diagnostics, raw compatibility re-export,
+rewrite-only guard, every other Pad route, neighboring boundaries, and the full
+128/128 store.
+
+The next characterization fixes the final placeholder-MatMul indexed
+binary-adapter count-plus-pair boundary. It preserves pair order, both disjoint
+counter schemas, the preceding placeholder reconciliation mapping,
+rewrite-or-prune guard, following topology checkpoint, and every other raw pair
+caller. Production remains unchanged until its merged prune-aware summary owner
+is implemented separately.
+
+The latest checkpoint implements that merged final placeholder binary-adapter
+summary owner. It removes the tensor snapshot and two raw-result locals while
+retaining optional context forwarding, all other raw pair callers, the
+preceding reconciliation mapping, rewrite-or-prune guard, topology successor,
+and the full 128/128 store.
+
+The next characterization fixes both compatible SiNet/SE-FC/Gather
+count-plus-result sequences. It preserves path-specific ModelIR/LayoutState
+forwarding, SiNet-before-pair ordering, rewrite-or-prune reconciliation,
+fallback and final neighboring boundaries, the raw pair helper, and the full
+128/128 store. Production remains unchanged until a shared pass-module summary
+owner is implemented and validated in a separate checkpoint.
+
+The latest checkpoint implements the shared SiNet/SE-FC/Gather summary owner.
+It removes two tensor snapshots and six consumed result locals from the two
+compatible production sites while preserving path-specific context, ordered
+mutations, all rewrite and prune-only reconciliation paths, compatibility
+wrappers, neighboring boundaries, and the full 128/128 store.
+
+The next characterization fixes both compatible three-stage precision-cleanup
+sequences. It preserves DIV-to-reciprocal → consecutive-MUL → sensitive-DIV
+restore ordering, path-specific layout policy, diagnostics forwarding only to
+the transactional middle stage, independent result schemas, neighboring
+fallback/final boundaries, and the full 128/128 store. Production remains
+unchanged until a shared pass-module sequence owner is implemented separately.
+
+The latest checkpoint implements that shared precision-cleanup sequence owner.
+It replaces six individual unconsumed result locals with two ordered tuples
+while preserving exact raw schemas, callback order, path-specific layout and
+diagnostics policy, the independent core consecutive-MUL caller, compatibility
+re-exports, neighboring boundaries, and the full 128/128 store.
+
+An inherited shared-late structural test now follows the already-established
+late-binary boolean successor instead of the removed tensor-count snapshot.
+This is a test-only contract repair with no production change.
+
+The next characterization fixes the adjacent absolute-final dynamic-boundary
+realignment and static-signature sanitizer pair. It preserves independent raw
+schemas, realign-before-sanitize order, the following affine boundary, all
+other signature-owner callers, compatibility wrappers, and the full 128/128
+store. Production remains unchanged until an ordered pair owner is implemented
+separately.
+
+The latest checkpoint implements that ordered boundary-signature pair owner.
+It replaces two individual unconsumed result locals with one ordered tuple
+while preserving metadata/tensor mutation order, all other realign/sanitize
+routes, lowerer wrappers, the following affine boundary, and the full 128/128
+store.
+
+The next characterization fixes the guarded no-layout final SE-FC and affine
+pre/post pair. It preserves shared ModelIR/LayoutState identity, SE-FC-only
+diagnostics, raw result schemas and order, both topology boundaries, the
+following signature owner, compatibility symbols, and the full 128/128 store.
+Production remains unchanged until a shared context owner is implemented
+separately.
+
+The latest checkpoint implements that shared no-layout final cleanup owner. It
+replaces the two individual unconsumed result locals with one ordered tuple
+while preserving the option guard, shared ModelIR/LayoutState identity,
+SE-FC-only diagnostics, raw order and schemas, both topology boundaries, every
+other caller, compatibility symbols, the signature successor, and the full
+128/128 store.
+
+An inherited late-binary structural test now follows the already-established
+pre-terminal InstanceNorm orchestration owner instead of the removed direct
+post-bias result target. This is a test-only contract repair with no production
+change.
+
+The next characterization fixes the adjacent absolute-final affine post-ADD
+and decomposed-InstanceNorm post-bias cleanup pair. It preserves shared
+ModelIR/LayoutState identity, affine-before-InstanceNorm order, both raw result
+schemas, the boundary-signature predecessor, normalization/attention
+successor, compatibility wrappers, and the full 128/128 store. Production
+remains unchanged until a shared context owner is implemented separately.
+
+The latest checkpoint implements that shared absolute-final
+affine/InstanceNorm owner. It replaces two unconsumed result locals with one
+ordered tuple while preserving shared context identity, raw schemas and order,
+both neighboring owners, every independent raw caller, compatibility wrappers,
+and the full 128/128 store.
+
+An inherited shared-context test now identifies all four existing
+target-specific context-building helpers instead of relying on the stale count
+of two. This is a test-only contract repair with no production change.
+
+The next characterization fixes the existing absolute-final
+normalization/attention owner plus the following dynamic rank-one
+Unsqueeze/Reshape repair. It preserves the nested raw result schemas, shared
+ModelIR/LayoutState identity, exact callback order, affine/InstanceNorm
+predecessor, topology/layout successor, dynamic-rank-one compatibility wrapper,
+and the full 128/128 store. Production remains unchanged until the composite
+context owner is implemented separately.
+
+The latest checkpoint implements that composite normalization/attention plus
+rank-one owner. It replaces two unconsumed locals with one nested result,
+removes a lowerer-only closure and context alias, and preserves the existing
+inner tuple, raw rank-one mapping, callback order, every independent caller,
+both neighboring boundaries, compatibility wrapper, and full 128/128 store.
+
+The next characterization fixes the lowerer-local indexed binary-layout
+convergence loop. It preserves one shared graph index, broadcast → stale-
+adapter → shape-reconciliation order, the three-round cap and stable-stop rule,
+three-counter schema, fallback and primary callers, and the full 128/128 store.
+Production remains unchanged until the pass-module owner is implemented
+separately.
+
+The latest checkpoint implements the indexed binary-layout convergence owner.
+The full loop moves mechanically to `passes/binary_layout_convergence.py`,
+while the private lowerer function becomes a one-return compatibility adapter
+and both production call sites remain unchanged. Runtime and structural tests
+fix single-index identity, callback order and forwarding, the stable-stop rule,
+three-round cap, ordered result schema, and fallback/primary arguments. The
+already-full phase-result store remains exactly 128 IDs and 128 owners.
+
+The next characterization fixes the final-primary stabilization triple before
+terminal topology/layout validation: indexed binary-layout convergence,
+static high-rank binary coalescing, and dynamic boundary-signature realignment.
+It preserves raw mapping identities and order, model/layout argument policy,
+the validation and finalizer successors, shared context identity, and the full
+128/128 store. Production remains unchanged until the composite context owner
+is implemented separately.
+
+The latest checkpoint implements that terminal stabilization context owner.
+It replaces the three final-primary locals with one ordered composite, removes
+the direct high-rank-binary import from the lowerer, and preserves exact pass
+order, ModelIR/LayoutState identity, all raw mappings, both compatibility
+wrappers, fallback behavior, terminal validation, finalization, and the full
+128/128 store. Runtime injection and owner-aware structural tests cover the
+new boundary directly.
+
+The next characterization fixes the adjacent absolute-final boundary-signature,
+affine/InstanceNorm, and normalization/attention/rank-one composite sequence
+immediately before topology/layout refresh. It preserves exact model/context
+arguments, shared identity, nested raw result schemas and order, the refresh
+successor, and the full 128/128 store. Production remains unchanged until the
+top-level context owner is implemented separately.
+
+The latest checkpoint implements that absolute-final context owner. It keeps
+all nested results unchanged inside one outer tuple, removes the lowerer's
+three direct sub-owner calls and imports, and preserves context identity, pass
+order, guarded predecessor, topology/layout refresh successor, compatibility
+wrappers, and the full 128/128 store. Runtime injection proves the complete
+identity and nesting contract directly.
+
+The next characterization fixes the six-stage very-late dynamic/adapter
+sequence immediately before mandatory static-shape reconciliation: dynamic
+Reshape, indexed Conv-input, stale channel shuffle, two Concat-axis repairs,
+and dynamic rank-one repair. It preserves exact model/layout/diagnostics
+arguments, runtime-inferable flag, raw result schemas and order,
+reconciliation and split-fallback successors, and the full 128/128 store.
+Production remains unchanged until the context owner is implemented
+separately.
+
+The latest checkpoint implements that very-late dynamic/adapter context owner.
+It moves the six callbacks without changing flags or argument policy, retains
+all wrappers and independent callers, removes one now-unused lowerer import,
+and preserves mandatory reconciliation, split fallback, raw result identity,
+and the full 128/128 store. Runtime injection proves all six stages directly.
+
+The next characterization fixes the remaining lowerer-local unbound-input
+repair mapping contract. It preserves indexed repair, mutation-positive static
+shape reconciliation with the returned graph index, the exact one-key result
+schema, and both primary/fallback callers. One strict expected failure requires
+a pass-module owner and one-return compatibility wrapper; production and the
+full 128-ID/128-owner store remain unchanged. Sequential affected validation
+completed with `392 passed, 1 xfailed`, and no model conversion was run.
+
+The latest checkpoint implements that unbound-input repair owner. The lowerer
+keeps a one-return compatibility adapter and both production callers, while
+the pass module now owns raw indexed repair, mutation-positive reconciliation,
+returned-GraphIndex forwarding, and the unchanged one-key result mapping.
+Runtime injection and owner-aware structural coverage prove exact order and
+identity. Sequential focused/affected/standard gates passed, no phase entry
+was added, and the bounded store remains exactly 128 IDs and 128 owners.
+
+The next characterization identifies the final owner-boundary prerequisite in
+the late orphan/unbound/affine/normalization region: recurrent-alias mutation
+is already indexed and pass-module-owned, while direct-TFLite result mapping
+still resides in the lowerer. The new strict contract preserves raw arguments,
+GraphIndex forwarding, exact mapping schema, the sole primary caller, the
+independent PyTorch path, and the full 128-ID/128-owner store. Production is
+unchanged pending the separate mapping-owner extraction.
+
+The latest checkpoint implements that recurrent-alias mapping owner. The raw
+indexed graph mutation remains uniquely shared by direct TFLite and PyTorch,
+while a small orchestration module now owns only direct-TFLite's existing
+one-key integer result. The lowerer keeps its compatibility wrapper and sole
+caller; PyTorch behavior, GraphIndex identity, result schemas, pass order, and
+the 128-ID/128-owner store are unchanged. Focused, affected, and standard
+sequential gates all pass.
+
+The next characterization fixes the fully pass-module-owned late prefix:
+recurrent-alias summary, unbound-input repair summary, affine post-Add cleanup,
+and prune-aware gather/constant/normalization cleanup. It preserves exact raw
+schemas and order, shared ModelIR/LayoutState/context identity, the progress
+predecessor, the dynamic-adapter successor, and the full 128-ID/128-owner
+store. Production remains unchanged until the separate context-owner
+implementation.
+
+The latest checkpoint implements that late input/affine/normalization context
+owner. Four unconsumed lowerer locals become one ordered tuple while exact
+repair, affine, and normalization callbacks remain unchanged. The owner
+preserves shared ModelIR/LayoutState/context identity and raw mapping identity;
+all compatibility, fallback, and independent routes remain available. The
+progress predecessor, dynamic-adapter successor, TensorFlow isolation, public
+behavior, and full 128-ID/128-owner store are unchanged. Focused, affected,
+and standard sequential gates all pass.
+
+The next characterization fixes the existing five-stage pre-terminal cleanup:
+InstanceNorm layout, affine/Concat/Split recovery, pre-Add, channel
+Slice/Pad/Mul, and affine-tail cleanup. It preserves nested raw schemas, exact
+shared-context identity, source order, the optional late-binary guard
+predecessor, the separate terminal-affine successor, and the full
+128-ID/128-owner store. Production remains unchanged pending a separate
+context-owner implementation.
+
+The latest checkpoint implements that pre-terminal cleanup context owner. One
+small orchestration module now owns the exact five-child order and forwards the
+same `ModelIRPassContext` object to every child. It returns the original nested
+tuples and mappings unchanged inside one ordered outer tuple, allowing the
+lowerer to replace five unconsumed locals with one composite result. The
+optional late-binary reconciliation guard remains the predecessor, while the
+separate terminal affine recovery rerun remains the successor and is not
+absorbed into the composite. Existing wrappers, specialized owners, callbacks,
+pass IDs, phase results, public APIs, artifacts, dependency boundaries, and
+TensorFlow-free direct/`-cotof` behavior are preserved. Runtime identity tests,
+340 affected contracts, and the complete sequential standard gate set all
+pass; the phase-result store remains exactly 128 IDs and 128 owners.
+
+The next characterization fixes four adjacent late-layout composites:
+reshape, base-only channel shuffle/Gather, attention, and window cleanup. It
+preserves exact shared-context identity, the channel policy flags, all nested
+raw tuple schemas and order, the optional elementwise-fanout predecessor, the
+indexed final-shape successor, independent full-policy and callback routes,
+and the full 128-ID/128-owner store. Production remains unchanged pending a
+separate context-owner implementation.
+
+The latest checkpoint implements that final boundary/Slice/Concat context
+owner. It accepts the existing callback-bearing recovery context, passes its
+exact nested shared context to the three layout children, passes the complete
+context to terminal Slice/Concat recovery, and returns every raw tuple
+unchanged in source order. The lowerer replaces four observation-only locals
+with one composite result while retaining its compatibility wrapper and the
+earlier independent recovery call. Outer boundaries, specialized owners, pass
+IDs, phase results, public behavior, artifacts, dependency boundaries, and
+TensorFlow-free direct/`-cotof` behavior remain unchanged. Runtime identity
+tests, 400 affected contracts, and the full sequential standard gate set pass;
+the phase-result store remains exactly 128 IDs and 128 owners.
+
+The next characterization fixes four adjacent very-late layout composites:
+Conv1D/decoder, Pad/InstanceNorm, singleton/consecutive Reshape, and optional
+layout-Transpose/broadcast cleanup. It preserves shared state identity, the
+option-dependent broadcast schema, the independent fallback singleton route,
+all raw tuple schemas and order, the late-Swish predecessor, the recorded
+broadcast-reconciliation successor, and the full 128-ID/128-owner store.
+Production remains unchanged pending a separate context-owner implementation.
+
+The latest checkpoint implements that late reshape/shuffle/attention/window
+context owner. One orchestration module now forwards the same
+`ModelIRPassContext` to all four children, preserves the base-only channel
+flags, and returns every raw nested tuple unchanged in source order. The
+lowerer replaces four observation-only locals with one composite result while
+retaining the generic channel wrapper for its guarded full-policy and callback
+routes. The optional elementwise-fanout predecessor, indexed final-shape
+successor, child owners, pass IDs, phase results, public behavior, artifacts,
+dependency boundaries, and TensorFlow-free direct/`-cotof` behavior remain
+unchanged. Runtime identity tests, 405 affected contracts, and the full
+sequential standard gate set pass; the phase-result store remains exactly 128
+IDs and 128 owners.
+
+The next characterization fixes four adjacent final-layout composites:
+boundary channel cleanup, terminal Slice/Concat recovery, final
+Slice/pre-Concat cleanup, and terminal Concat bridge cleanup. It preserves the
+shared pass context nested in the existing callback-bearing recovery context,
+the independent earlier wrapper route, all raw tuple schemas and order, the
+indexed final-shape predecessor, the optional elementwise-fanout successor,
+and the full 128-ID/128-owner store. Production remains unchanged pending a
+separate context-owner implementation.
+
+The latest checkpoints implement both the final boundary/Slice/Concat owner
+and the very-late layout-tail owner. The former forwards the callback-bearing
+terminal recovery context and its exact nested shared pass context across four
+final-boundary children while retaining the earlier independent recovery
+route. The latter runs Conv1D/decoder, Pad/InstanceNorm,
+singleton/consecutive Reshape, and optional layout-Transpose/broadcast cleanup
+with one shared `ModelIRPassContext`, forwards the layout option unchanged,
+and preserves the independent no-LayoutState singleton fallback. In both
+cases, the lowerer replaces only unconsumed observation locals, every child
+raw result is returned unchanged, and the original outer boundaries remain
+fixed.
+
+Owner-aware AST contracts and runtime callback injection verify exact call
+order, context identity, option policy, fallback independence, raw-result
+identity, and nested schemas. The current very-late checkpoint passes 437
+affected tests and the complete sequential standard gates: 92
+terminal-layout/efficiency, 55 core, 196 result-contract, 2 phase-store, and 11
+TensorFlow-isolation/default-direct/`-cotof` tests. Public APIs, artifacts,
+dependency boundaries, graph-rewrite behavior, and the exactly 128-ID/
+128-owner phase-result store remain unchanged.
+
+The next characterization selects three adjacent terminal observations after
+pre-terminal cleanup: the terminal affine/Concat/Split summary, strict
+StridedSlice/Pad/Concat bridge, and late SPP/Concat/Unary summary. It fixes the
+shared context and model argument policy, complete raw mapping schemas and
+order, pre-terminal and QKV shape-extract boundaries, and the full
+128-ID/128-owner store. Production remains unchanged pending a separate
+three-stage context-owner implementation. Focused and affected sequential
+validation report `2 passed, 1 xfailed` and `518 passed, 1 xfailed`; the sole
+expected failure is the intentionally absent owner.
+
+The latest checkpoint implements that three-stage terminal owner. The lowerer
+now replaces three unconsumed locals with one ordered result while preserving
+the pre-terminal and QKV shape-extract boundaries. The exact shared context is
+forwarded to both summary owners, its model is forwarded to the strict Slice
+bridge, and every raw mapping object is returned unchanged. Independent raw
+wrappers and context aliases remain available. Runtime identity coverage and
+520 affected tests pass, as do the full standard sequential gates; public
+behavior, mutation schemas, dependency isolation, and the 128-ID/128-owner
+phase store are unchanged.
+
+The next characterization selects the adjacent terminal QKV shape-extract and
+QKV summary results. It preserves shared-context/model identity, the existing
+layout option and `include_prefix=False` policy, both raw schemas and source
+order, the independent later shape-extract route, raw QKV wrappers, terminal
+affine predecessor, indexed Split/Conv/Concat successor, and the full
+128-ID/128-owner store. Production remains unchanged pending a separate
+two-stage owner implementation. Focused and affected validation report
+`3 passed, 1 xfailed` and `443 passed, 1 xfailed`.
+
+The latest checkpoint implements that terminal QKV pair. One owner now
+forwards the shared model to shape extraction and the shared context to the
+QKV summary, preserving the layout option, fixed prefix policy, raw mapping
+identity, and outer boundaries. The later shape-extract call and raw QKV
+wrappers remain independent. Runtime identity coverage, 445 affected tests,
+and all standard sequential gates pass; public behavior, dependency isolation,
+and the 128-ID/128-owner store remain unchanged.
+
+The next characterization selects the adjacent indexed Split/Conv/Concat,
+HardSwish-SE, and late hard-activation terminal results. It preserves shared
+model/LayoutState/context identity, the existing layout option, complete raw
+schemas and order, terminal QKV and absolute-final pre-ConCat boundaries, and
+the 128-ID/128-owner store. Production remains unchanged pending a separate
+three-stage context owner. Focused and affected validation report
+`3 passed, 1 xfailed` and `443 passed, 1 xfailed`.
+
+The latest checkpoint implements that terminal activation-bridge owner. The
+indexed Split/Conv/Concat bridge receives the shared model and LayoutState,
+the prune-aware HardSwish-SE summary receives the same model, and the late
+hard-activation summary receives the exact shared context and unchanged
+layout-Transpose option. The lowerer replaces only three unconsumed result
+locals with one ordered tuple, and the owner returns every child mapping
+without copying or normalization.
+
+The terminal QKV predecessor, absolute-final pre-ConCat successor, raw
+compatibility wrappers, and all earlier independent routes remain fixed.
+Owner-aware structural tests and runtime injection verify exact order,
+argument identity, option forwarding, result identity, schemas, and outer
+boundaries. This checkpoint passes 445 affected tests and the complete
+sequential standard gates: 92 terminal-layout/efficiency, 55 core, 196 result
+contracts, 2 phase-store, and 11 TensorFlow-isolation/default-direct/`-cotof`
+tests. Public behavior, conversion policy, graph rewrites, artifacts,
+dependencies, TensorFlow isolation, and the exactly 128-ID/128-owner store are
+unchanged.
+
+The latest checkpoint implements the terminal affine/QKV/layout-shape owner.
+It passes the exact shared context to the pre-terminal affine/Slice/SPP and
+terminal QKV/activation/layout/shape composites, forwards the unchanged
+layout-Transpose option only to the second child, and returns both complete
+nested tuples unchanged and in source order.
+
+The lowerer replaces only the two observation-only child locals with one outer
+result. The optional late-binary-layout reconciliation branch remains the
+immediate predecessor; the terminal Expand/Squeeze phase record and progress
+callback remain immediate successors. Nested owners, wrappers, independent
+routes, graph mutations, guards, public behavior, artifacts, dependencies, and
+TensorFlow isolation remain unchanged.
+
+Runtime identity coverage, 1143 expanded affected tests, and all standard
+sequential gates pass: 92 terminal-layout/efficiency, 55 core, 196 result
+contracts, 2 phase-store, and 11 TensorFlow-isolation/default-direct/`-cotof`
+tests. The exactly 128-ID/128-owner store is unchanged, while the characterized
+unconsumed lowerer-result inventory decreases from 56 to 55.
+
+The next characterization selects terminal Clamp/unary/ReLU followed by SiNet
+terminal-layout recovery. The existing SiNet context embeds the same shared
+pass context used by the Clamp child and retains the exact pre-add/resize
+callback. The new owner must preserve both calls, their order, the embedded
+context and callback, and both complete raw results. The terminal layout
+conditional remains the predecessor and the phase-recorded SiNet hard-swish/SE
+cleanup remains the successor. Production is unchanged pending one
+straight-line owner, and both lowerer wrappers remain compatibility routes.
+
+Focused and affected sequential characterization report
+`1 passed, 1 xfailed` and `462 passed, 1 xfailed`; the sole expected failure is
+the intentionally absent owner. Production behavior, dependencies, TensorFlow
+isolation, and the exactly 128-ID/128-owner phase store remain unchanged.
+
+The latest checkpoint implements the terminal Clamp/SiNet layout owner. It
+passes the embedded shared pass context to terminal Clamp/unary/ReLU and the
+exact original SiNet context, including its pre-add/resize callback, to SiNet
+terminal-layout recovery. Both complete results are returned unchanged and in
+source order.
+
+The lowerer replaces only the two observation-only child locals with one outer
+result. The terminal layout conditional and phase-recorded SiNet hard-swish/SE
+cleanup remain immediate outer boundaries. Both zero-argument wrappers and the
+independent very-late SiNet recovery route remain intact. Graph mutations,
+callbacks, guards, public behavior, artifacts, dependencies, and TensorFlow
+isolation are unchanged.
+
+Runtime identity coverage, 464 affected tests, and all standard sequential
+gates pass: 92 terminal-layout/efficiency, 55 core, 196 result contracts, 2
+phase-store, and 11 TensorFlow-isolation/default-direct/`-cotof` tests. The
+exactly 128-ID/128-owner store is unchanged, while the characterized unconsumed
+lowerer-result inventory decreases from 55 to 54.
+
+The next characterization selects the terminal layout/shape tail immediately
+after the activation bridge: absolute pre-ConCat cleanup, late Shape-extract,
+the prune-aware late layout/Mean/SPP/Gather/constant-fold/Cast summary, and
+terminal Expand/Squeeze-to-Reshape cleanup. It fixes the exact shared
+ModelIR/LayoutState/diagnostics identity, layout-option policy, complete raw
+schemas and order, terminal-activation predecessor, and the separate recorded
+static-shape-reconciliation successor. Production remains unchanged pending a
+four-stage shared-context owner. Focused and affected validation report
+`3 passed, 1 xfailed` and `404 passed, 1 xfailed`.
+
+The latest checkpoint implements that terminal layout/shape owner. It
+forwards the exact shared ModelIR, LayoutState, diagnostics, context, and
+layout-Transpose option across the four children and returns every raw mapping
+unchanged in source order. The lowerer replaces only the four unconsumed
+locals; the recorded complete static-shape reconciliation and progress update
+remain separate immediate successors, while all compatibility wrappers and
+independent routes remain available. Runtime identity coverage, 406 affected
+tests, and all standard sequential gates pass; public behavior, graph
+rewrites, TensorFlow isolation, and the exactly 128-ID/128-owner store are
+unchanged.
+
+The next characterization selects the adjacent late
+input/affine/normalization and very-late dynamic-adapter composites. It fixes
+their exact shared-context identity, nested raw tuple schemas and order,
+progress predecessor, phase-recorded final static-shape reconciliation
+successor, and following Split fallback. Production remains unchanged pending
+a two-stage owner. Focused and affected validation report
+`1 passed, 1 xfailed` and `399 passed, 1 xfailed`.
+
+The latest checkpoint implements that final input/dynamic owner. The exact
+shared context is forwarded through both existing child composites, and their
+nested raw tuples are returned unchanged in source order. The lowerer replaces
+only the two unconsumed locals; progress, phase-recorded final static-shape
+reconciliation, Split fallback, and all specialized child contracts remain
+fixed. Runtime identity coverage, 401 affected tests, and every standard
+sequential gate pass; public behavior, TensorFlow isolation, and the exactly
+128-ID/128-owner store are unchanged.
+
+The next characterization selects indexed late Conv affine folding followed
+by the existing late Concat/layout composite. It fixes the affine-only policy,
+shared ModelIR/LayoutState/context identity, raw schemas and order,
+phase-recorded NDHWC cost-volume predecessor, and optional elementwise-fanout
+successor. Production remains unchanged pending a two-stage owner. Focused and
+affected validation report `1 passed, 1 xfailed` and
+`376 passed, 1 xfailed`.
+
+The latest checkpoint implements that late affine/Concat owner. The indexed
+affine child receives the shared ModelIR and LayoutState with the original
+`enable_conv_add_only_fold=True` policy; the existing four-stage late
+Concat/layout child receives the exact same shared context. Both raw results,
+including the nested Concat tuple, are returned unchanged and in source
+order. The lowerer replaces only the two unconsumed locals. The phase-recorded
+NDHWC cost-volume predecessor and optional elementwise-fanout successor remain
+outside the owner, while compatibility wrappers and independent affine routes
+remain intact. Runtime identity coverage, 378 affected tests, and all standard
+sequential gates pass; public behavior, graph rewrites, TensorFlow isolation,
+and the exactly 128-ID/128-owner store are unchanged.
+
+The next characterization selects the adjacent pre-terminal cleanup and
+terminal affine/Slice/SPP composites. Both receive the exact shared
+`ModelIRPassContext`; their nested five-result and three-result tuples have
+fixed schemas and order. The optional late-binary layout-recovery
+reconciliation guard remains the predecessor, and terminal QKV
+shape/attention remains the successor. Production is unchanged pending one
+straight-line two-child owner. Focused and affected sequential validation
+report `1 passed, 1 xfailed` and `512 passed, 1 xfailed`; the sole expected
+failure is the intentionally absent owner.
+
+The latest checkpoint implements that pre-terminal affine/Slice/SPP owner.
+It forwards the exact shared context through both existing child composites
+and returns their complete nested five-result and three-result tuples
+unchanged in source order. The lowerer replaces only the two observation-only
+locals. The optional late-binary reconciliation predecessor, terminal QKV
+successor, specialized child owners, raw wrappers, callbacks, and independent
+routes remain fixed. Runtime identity coverage, 514 affected tests, and every
+standard sequential gate pass; public behavior, graph rewrites, TensorFlow
+isolation, and the exactly 128-ID/128-owner store are unchanged.
+
+The next characterization selects terminal QKV shape/attention followed by
+the terminal activation bridge. Both receive the exact shared context and the
+same layout-Transpose option; their nested two-result and three-result tuples
+have fixed schemas and order. Pre-terminal affine/Slice/SPP remains the
+predecessor, and terminal layout/shape remains the successor. Production is
+unchanged pending one straight-line two-child owner. Focused and affected
+sequential validation report `2 passed, 1 xfailed` and
+`532 passed, 1 xfailed`; the sole expected failure is the intentionally absent
+owner.
+
+The latest checkpoint implements that terminal QKV/activation-bridge owner.
+It forwards the exact shared `ModelIRPassContext` and unchanged
+layout-Transpose option through both existing child composites in their
+original order. Their complete two-result and three-result tuples are returned
+without copying, flattening, or normalization, preserving both raw identities
+and all nested result schemas.
+
+The lowerer replaces only the two observation-only locals with one outer
+result. Pre-terminal affine/Slice/SPP and terminal layout/shape remain the
+immediate outer boundaries, while specialized child owners, raw wrappers,
+callbacks, independent routes, guards, and graph behavior remain intact.
+Runtime identity coverage, 535 affected tests, and all standard sequential
+gates pass: 92 terminal-layout/efficiency, 55 core, 196 result contracts, 2
+phase-store, and 11 TensorFlow-isolation/default-direct/`-cotof` tests. Public
+behavior, artifacts, dependencies, TensorFlow isolation, and the exactly
+128-ID/128-owner phase-result store are unchanged; the unconsumed lowerer
+assignment inventory decreases from 60 to 59.
+
+The next characterization selects the terminal QKV/activation composite
+followed by terminal layout/shape. Both receive the exact shared context and
+the same layout-Transpose option; their complete nested results have fixed
+schemas and order. Pre-terminal affine/Slice/SPP remains the predecessor,
+while the recorded terminal Expand/Squeeze reconciliation and progress update
+remain successors outside the proposed owner. Production is unchanged pending
+one straight-line two-child owner. Focused and affected sequential validation
+report `2 passed, 1 xfailed` and `507 passed, 1 xfailed`; the sole expected
+failure is the intentionally absent owner.
+
+The latest checkpoint implements that terminal
+QKV/activation/layout/shape owner. It forwards the exact shared
+`ModelIRPassContext` and unchanged layout-Transpose option through both
+existing child composites in their original order. Their complete nested
+tuples are returned without copying, flattening, or normalization, preserving
+both raw identities and every result schema.
+
+The lowerer replaces only the two observation-only locals with one outer
+result. Pre-terminal affine/Slice/SPP remains the immediate predecessor; the
+recorded terminal Expand/Squeeze reconciliation and progress update remain
+separate immediate successors. Specialized child owners, raw wrappers,
+callbacks, independent routes, guards, graph behavior, and progress behavior
+remain intact. Runtime identity coverage, 510 affected tests, and all standard
+sequential gates pass: 92 terminal-layout/efficiency, 55 core, 196 result
+contracts, 2 phase-store, and 11 TensorFlow-isolation/default-direct/`-cotof`
+tests. Public behavior, artifacts, dependencies, TensorFlow isolation, and the
+exactly 128-ID/128-owner phase-result store are unchanged; the unconsumed
+lowerer assignment inventory decreases from 59 to 58.
+
+The next characterization selects late transpose/dequant/hard-sigmoid/
+quantize bridge cleanup followed by the existing late dequant/unary/fan-out
+composite. The new owner must pass `context.model_ir` to the public bridge
+owner, pass the exact same context to the three-stage child, and preserve both
+complete raw results and their order. The preceding layout/no-layout guard and
+following swish passthrough remain outside the owner, while both lowerer
+wrappers remain compatibility routes. Production is unchanged pending one
+straight-line two-child owner. Focused and affected sequential validation
+report `1 passed, 1 xfailed` and `374 passed, 1 xfailed`; the sole expected
+failure is the intentionally absent owner.
+
+The latest checkpoint implements that late dequant hard-sigmoid/unary owner.
+It passes `context.model_ir` to the public bridge owner and the exact shared
+context to the existing three-stage dequant/unary/fan-out composite, returning
+both raw results unchanged in their original order. The lowerer replaces only
+the two observation-only locals. The preceding layout/no-layout conditional
+and following swish passthrough remain immediate outer boundaries, while both
+lowerer compatibility wrappers and all independent routes remain intact.
+
+Runtime identity coverage, 376 affected tests, and all standard sequential
+gates pass: 92 terminal-layout/efficiency, 55 core, 196 result contracts, 2
+phase-store, and 11 TensorFlow-isolation/default-direct/`-cotof` tests. Public
+behavior, graph rewrites, artifacts, dependencies, TensorFlow isolation, and
+the exactly 128-ID/128-owner phase-result store are unchanged; the unconsumed
+lowerer assignment inventory decreases from 58 to 57.
+
+The next characterization selects late swish transpose-passthrough cleanup
+followed by the existing four-stage very-late layout-tail composite. The new
+owner must pass the context model and LayoutState to the public swish owner,
+then forward the exact shared context and unchanged layout-Transpose option to
+the tail. It must preserve the swish mapping and complete nested tail result.
+The preceding late dequant hard-sigmoid/unary composite and following
+phase-recorded very-late broadcast reconciliation remain outside the owner,
+while the swish lowerer wrapper remains a compatibility route. Production is
+unchanged pending one straight-line owner. Focused and affected sequential
+validation report `2 passed, 1 xfailed` and `476 passed, 1 xfailed`; the sole
+expected failure is the intentionally absent owner.
+
+The latest checkpoint implements that late swish/very-late layout-tail owner.
+It passes the context model and shared LayoutState to the public swish cleanup,
+then forwards the exact shared context and unchanged layout-Transpose option
+to the existing four-stage tail. The swish mapping and complete nested tail
+tuple are returned unchanged, in fixed source order, with both raw identities
+preserved.
+
+The lowerer replaces only the two observation-only child locals with one outer
+result. The late dequant hard-sigmoid/unary composite remains the immediate
+predecessor, and the phase-recorded very-late broadcast reconciliation remains
+the immediate successor. The swish compatibility wrapper, nested owner
+boundaries, independent routes, graph mutations, guards, public behavior,
+artifacts, dependencies, and TensorFlow isolation remain unchanged.
+
+Runtime identity coverage, 479 affected tests, and all standard sequential
+gates pass: 92 terminal-layout/efficiency, 55 core, 196 result contracts, 2
+phase-store, and 11 TensorFlow-isolation/default-direct/`-cotof` tests. The
+phase-result store remains exactly 128 IDs and 128 owners, while the
+characterized unconsumed lowerer-result inventory decreases from 57 to 56.
+
+The next characterization selects the adjacent pre-terminal
+affine/Slice/SPP and terminal QKV/activation/layout/shape composites. Both use
+the exact shared context; the terminal child also receives the unchanged
+layout-Transpose option. The new owner must preserve their order, complete
+nested results, and raw identities. The optional late-binary-layout
+reconciliation branch remains the predecessor, while the phase-recorded
+terminal Expand/Squeeze reconciliation and post-progress callback remain
+successors outside the owner. Production is unchanged pending one
+straight-line two-child owner.
+
+The expanded characterization suite also corrected 24 stale structural tests
+that still named the already-replaced terminal QKV/shape/attention boundary.
+They now resolve the current terminal QKV/activation/layout/shape owner while
+continuing to verify nested owners. Focused and expanded sequential validation
+report `2 passed, 1 xfailed` and `1140 passed, 1 xfailed`; the sole expected
+failure is the intentionally absent owner. Production behavior, dependencies,
+TensorFlow isolation, and the exactly 128-ID/128-owner phase store remain
+unchanged.
+
+The next characterization selects the adjacent absolute-end SiNet
+terminal-layout recovery and its context-owned pre-add/resize callback. The
+new owner must pass the exact `SINetTerminalLayoutRecoveryContext` to the first
+child, invoke its unchanged callback second, and preserve both complete raw
+tuples and their identities. Recorded terminal indexed-shape convergence and
+very-late residual affine/PRELU cleanup remain the immediate outer phase
+boundaries. Both lowerer wrappers and every independent recovery route remain
+unchanged; production is unchanged pending one straight-line owner.
+
+Focused and affected sequential characterization report
+`1 passed, 1 xfailed` and `456 passed, 1 xfailed`; the sole expected failure is
+the intentionally absent owner. Production behavior, dependencies, TensorFlow
+isolation, and the exactly 128-ID/128-owner phase store remain unchanged.
+
+The latest checkpoint implements the very-late SiNet recovery-tail owner. It
+passes the exact `SINetTerminalLayoutRecoveryContext` to terminal-layout
+recovery and then invokes that context's unchanged pre-add/resize callback.
+Both complete results are returned unchanged and in source order, preserving
+their object identities and the frozen context's callback identity.
+
+The lowerer replaces only the two observation-only child locals with one outer
+result. Recorded terminal indexed-shape convergence and very-late residual
+affine/PRELU cleanup remain the immediate phase boundaries. Both lowerer
+wrappers, all independent recovery routes, nested owners, graph mutations,
+public behavior, artifacts, dependencies, and TensorFlow isolation remain
+unchanged.
+
+Runtime identity coverage, 458 affected tests, and all standard sequential
+gates pass: 92 terminal-layout/efficiency, 55 core, 196 result contracts, 2
+phase-store, and 11 TensorFlow-isolation/default-direct/`-cotof` tests. The
+phase-result store remains exactly 128 IDs and 128 owners, while the
+characterized unconsumed lowerer-result inventory decreases from 54 to 53.
+
+The next characterization selects terminal SiNet pre-add/resize recovery
+followed immediately by post-terminal singleton-Reshape recovery. Both
+existing aliases resolve to the exact shared `ModelIRPassContext`; only the
+singleton child receives the fixed duplicate-fanout/spatial-Concat policy.
+The new owner must preserve context identity, source order, complete raw
+six-result and eight-result tuples, and both result identities. Recorded
+terminal dequant/hard-sigmoid cleanup and terminal indexed-shape convergence
+remain the immediate outer phase boundaries. Both lowerer wrappers and every
+independent route remain unchanged; production is unchanged pending one
+straight-line owner.
+
+Focused and affected sequential characterization report
+`1 passed, 1 xfailed` and `455 passed, 1 xfailed`; the sole expected failure is
+the intentionally absent owner. Production behavior, dependencies, TensorFlow
+isolation, and the exactly 128-ID/128-owner phase store remain unchanged.
+
+The latest checkpoint implements the terminal SiNet/singleton-Reshape owner.
+It forwards the exact shared `ModelIRPassContext` through both children in
+source order and applies the unchanged duplicate-fanout/spatial-ConCat policy
+only to singleton recovery. Both complete raw tuples and their object
+identities are preserved.
+
+The lowerer replaces only the two observation-only child locals with one outer
+result. Recorded terminal dequant/hard-sigmoid cleanup and terminal
+indexed-shape convergence remain the immediate phase boundaries. Both lowerer
+wrappers, every independent route, nested pass owners, graph mutations, public
+behavior, artifacts, dependencies, and TensorFlow isolation remain unchanged.
+
+Runtime identity coverage, 457 affected tests, and all standard sequential
+gates pass: 92 terminal-layout/efficiency, 55 core, 196 result contracts, 2
+phase-store, and 11 TensorFlow-isolation/default-direct/`-cotof` tests. The
+phase-result store remains exactly 128 IDs and 128 owners, while the
+characterized unconsumed lowerer-result inventory decreases from 53 to 52.
+
+The next characterization selects the adjacent late
+dequant/hard-sigmoid/unary and late swish/very-late-layout-tail composites.
+Both receive the exact shared `ModelIRPassContext`; only the second receives
+the normalized layout-Transpose option. The new owner must preserve source
+order, exact context and option policy, both complete nested results, and both
+raw identities. The layout/no-layout conditional and phase-recorded very-late
+broadcast reconciliation remain the immediate outer boundaries. Nested
+owners, wrappers, and independent routes remain unchanged; production is
+unchanged pending one straight-line owner.
+
+Focused and affected sequential characterization report
+`2 passed, 1 xfailed` and `432 passed, 1 xfailed`; the sole expected failure is
+the intentionally absent owner. Production behavior, dependencies, TensorFlow
+isolation, and the exactly 128-ID/128-owner phase store remain unchanged.
+
+The latest checkpoint implements the late dequant/swish-layout-tail owner. It
+forwards the exact shared `ModelIRPassContext` through both existing child
+composites in source order and forwards the normalized layout-Transpose option
+only to the second. Both complete nested results and their object identities
+are preserved.
+
+The lowerer replaces only the two observation-only child locals with one outer
+result. The layout/no-layout branch and phase-recorded very-late broadcast
+reconciliation remain the immediate boundaries. Nested owners, compatibility
+wrappers, independent routes, graph mutations, public behavior, artifacts,
+dependencies, and TensorFlow isolation remain unchanged.
+
+Runtime identity coverage, 435 affected tests, and all standard sequential
+gates pass: 92 terminal-layout/efficiency, 55 core, 196 result contracts, 2
+phase-store, and 11 TensorFlow-isolation/default-direct/`-cotof` tests. The
+phase-result store remains exactly 128 IDs and 128 owners, while the
+characterized unconsumed lowerer-result inventory decreases from 52 to 51.
+
+The next characterization selects the adjacent late
+reshape/shuffle/attention/window composite, indexed final shape/activation
+convergence, and final boundary Slice/Concat composite. It fixes their exact
+order, the shared ModelIR/LayoutState identity, the callback-bearing terminal
+recovery context, every raw nested schema, the eleven-key convergence mapping,
+and the optional layout guards on both sides. Production remains unchanged
+pending a dedicated convergence pass owner and one straight-line three-stage
+composite owner. The existing convergence contract continues to require one
+differentially updated `ModelIRGraphIndex` across all internal cleanup stages.
+Focused and complete affected sequential characterization report
+`1 passed, 1 xfailed` and `402 passed, 1 xfailed`; the sole expected failure is
+the intentionally absent owner.
+
+The latest checkpoint implements the late final shape/boundary extraction.
+Indexed shape convergence and final shape/activation convergence now live in a
+dedicated pass module, while their lowerer names remain thin compatibility
+wrappers. The implementation preserves one differentially updated
+`ModelIRGraphIndex`, every conditional reconciliation, fusion prune detection,
+and the exact three-key and eleven-key mappings.
+
+A frozen composite context then carries the shared `ModelIRPassContext` and
+the original callback-bearing terminal Slice/Concat recovery context through
+the three existing stages. ModelIR, LayoutState, diagnostics, callback, call
+order, nested tuples, and all raw result identities are preserved. The lowerer
+replaces only the three observation-only assignments with one outer result;
+the optional elementwise-fanout guards remain the immediate boundaries.
+
+Runtime identity and legacy-equivalence coverage, 404 affected tests, and all
+standard sequential gates pass: 92 terminal-layout/efficiency, 55 core, 196
+result contracts, 2 phase-store, and 11 TensorFlow-isolation/default-direct/
+`-cotof` tests. Public behavior, graph mutations, artifacts, dependencies,
+TensorFlow isolation, and the exactly 128-ID/128-owner phase-result store are
+unchanged. The characterized unconsumed lowerer-result inventory decreases
+from 51 to 49.
+
+The next characterization selects adjacent safety-fallback precision cleanup
+and unbound-input repair. It fixes exact fallback ModelIR identity, the
+no-LayoutState precision policy, session diagnostics, child order, all raw
+schemas, observation-only results, the preceding topology checkpoint, and the
+following indexed Conv-input summary. Production remains unchanged pending a
+straight-line context-owned extraction. Focused and complete affected
+characterization report `1 passed, 1 xfailed` and `29 passed, 1 xfailed`; the
+sole expected failure is the intentionally absent owner.
+
+The latest checkpoint extracts fallback precision and unbound-input cleanup
+into one context-owned stage. The frozen no-layout pass context retains the
+recursively rebuilt fallback ModelIR and active diagnostics object; the owner
+then calls precision cleanup before model-only unbound repair and returns both
+raw results unchanged and by identity.
+
+Only the two observation-only lowerer assignments are replaced. The fallback
+post-placeholder topology checkpoint and indexed Conv-input summary remain the
+immediate boundaries, while both compatibility wrappers and the independent
+final-primary precision route remain intact. Focused `3`, affected `31`, and
+standard `92 / 55 / 196 / 2 / 11` sequential tests pass. TensorFlow isolation,
+default direct conversion, `-cotof`, and the exactly 128-ID/128-owner phase
+store are unchanged; the unconsumed-result inventory decreases from 49 to 48.
+
+The next characterization selects the adjacent layout-pass-set-1
+mean/attention and attention/gate/QDQ observations. It freezes their exact
+order, LayerNorm-enabled/default-Conv policy, shared pass-context identity,
+gate and transpose-unary callback identities, complete nested schemas, and
+the recorded mean-affine and quantized-PRELU outer phase boundaries.
+Production remains unchanged pending one straight-line context owner.
+
+The expanded reference-based suite also updates six stale structural
+assertions to follow the already-extracted fallback precision/unbound owner
+and bounded phase records. Focused and affected sequential validation report
+`1 passed, 1 xfailed` and `373 passed, 1 xfailed`; the sole expected failure is
+the intentionally absent owner.
+
+The latest checkpoint adds a dedicated layout-pass-set-1 mean/attention and
+gate/QDQ owner. It forwards the exact embedded pass context to mean/attention,
+enables LayerNorm while retaining the default enabled Conv-attention policy,
+then forwards the original callback-bearing recovery context to the gate/QDQ
+child. Both complete nested tuples and their identities are preserved.
+
+Only the two observation-only lowerer locals are replaced. The recorded
+mean-affine and quantized-PRELU phases remain immediate boundaries; wrappers,
+callbacks, suffix and layout-pass-set-2 routes, graph behavior, public APIs,
+artifacts, and TensorFlow isolation are unchanged. Focused `3`, affected
+`375`, and standard `92 / 55 / 196 / 2 / 11` sequential tests pass. The phase
+store remains exactly 128 IDs and 128 owners, and the unconsumed-result
+inventory decreases from 48 to 47.
+
+The next characterization selects the first post-binary
+layout/attention/quantized suffix and immediately following safe-binary
+recovery. It freezes both duplicate-Transpose policies, exact embedded
+pass-context and callback identities, every nested schema, the recorded affine
+and dequant-Mean outer phases, and the separate later suffix/transpose-unary/
+safe-binary route. Production remains unchanged. Focused and affected
+sequential validation report `2 passed, 1 xfailed` and
+`426 passed, 1 xfailed`; the sole expected failure is the absent owner.
+
+The latest checkpoint implements that boundary as one context-owned stage. It
+forwards the unchanged suffix context and duplicate-Transpose policy first,
+then passes the exact embedded pass context to safe-binary recovery. Both raw
+results and their identities are preserved. Only the first two observation
+locals are replaced; phase neighbors, wrappers, quantized-activation recovery,
+and the later final three-stage route are unchanged.
+
+Focused `5`, affected `429`, and standard `92 / 55 / 196 / 2 / 11` sequential
+tests pass. TensorFlow isolation and the exactly 128-ID/128-owner phase store
+remain unchanged, while the unconsumed-result inventory decreases from 47 to
+46.
+
+The latest characterization fixes the next layout-pass-set-1 ownership
+boundary before any production edit. QLinear/Mean/Concat recovery must run
+before final layout/reshape/attention recovery through the exact shared session
+pass context. The callback-bearing layout context, complete nested result
+schemas, recorded dequant-Mean and InstanceNorm phase neighbors, and all
+independent wrapper routes are now protected by structural and runtime schema
+checks.
+
+Production behavior is unchanged at this checkpoint. Focused sequential
+validation reports `1 passed, 1 xfailed`, where the strict expected failure is
+the deliberately absent future composite owner. Ruff, bytecode compilation,
+and whitespace checks pass. The unconsumed-result inventory remains 46 and the
+phase-result store remains exactly 128 IDs and 128 owners.
+
+The latest implementation adds one dedicated layout-pass-set-1
+QLinear/attention owner. It calls the existing QLinear/Mean/Concat recovery
+through the exact session pass context and then calls the existing final
+layout/reshape/attention recovery through the original callback-bearing layout
+context. The complete child results, their order, and their object identities
+are preserved.
+
+Only two observation-only lowerer assignments are replaced by one composite
+result. Recorded phase boundaries, compatibility wrappers, independent
+layout-pass-set-2 routes, graph behavior, public APIs, artifacts, dependencies,
+and TensorFlow isolation remain unchanged. Focused `3`, affected `394`, and
+standard `92 / 55 / 196 / 2 / 11` sequential tests pass. The phase store
+remains exactly 128 IDs and 128 owners, and the unconsumed-result inventory
+decreases from 46 to 45.
+
+The next characterization fixes the remaining layout-pass-set-1 tail before
+any production edit. Final layout/attention/quantized suffix recovery must be
+followed by transpose/unary fan-out recovery with its fixed layout-enabled and
+unary-passthrough-disabled policy, then final safe-binary recovery. All three
+stages share the exact session pass context; the suffix retains its original
+callbacks and duplicate-Transpose policy.
+
+Recorded squeeze/reshape cleanup and the existing progress advance remain the
+outer boundaries. Focused and reference-based affected sequential validation
+report `7 passed, 1 xfailed` and `479 passed, 1 xfailed`; the sole expected
+failure is the deliberately absent future composite owner. Production,
+dependencies, TensorFlow isolation, the 45-result inventory, and the exactly
+128-ID/128-owner phase store remain unchanged.
+
+The latest implementation extracts the remaining layout-pass-set-1 recovery
+tail into one three-stage owner. The original quantized-suffix context and
+duplicate-Transpose policy are preserved, transpose/unary recovery retains its
+fixed layout-enabled and unary-passthrough-disabled policy, and safe-binary
+recovery receives the exact same embedded pass context. Source order and all
+three raw result identities are unchanged.
+
+Only the three observation-only lowerer assignments are replaced. The
+recorded squeeze/reshape phase, progress boundary, compatibility wrappers,
+independent callback routes, graph behavior, APIs, artifacts, dependencies,
+and TensorFlow isolation remain unchanged. Focused `10`, affected `482`, and
+standard `92 / 55 / 196 / 2 / 11` sequential tests pass. The phase store
+remains exactly 128 IDs and 128 owners, and the unconsumed-result inventory
+decreases from 45 to 43.
+
+The next characterization fixes the first two stages of layout pass set 2
+before any production edit. QLinear/Mean/Concat recovery must run before the
+base layout-recovery prefix through the exact shared callback-bearing layout
+context. The existing pass-set-2 progress description and downstream
+pre-add/mean/attention recovery remain the outer boundaries, and both
+compatibility wrappers remain available.
+
+Focused and reference-based affected sequential validation report
+`4 passed, 1 xfailed` and `390 passed, 1 xfailed`; the sole expected failure is
+the deliberately absent future composite owner. Production behavior,
+dependencies, TensorFlow isolation, the 43-result inventory, and the exactly
+128-ID/128-owner phase store remain unchanged.
+
+The latest implementation adds a dedicated layout-pass-set-2 QLinear/layout
+owner. QLinear/Mean/Concat recovery receives the exact embedded session pass
+context, then base layout recovery receives the original callback-bearing
+layout context. Both complete child results, their source order, and their
+object identities are preserved.
+
+Only the two observation-only lowerer assignments are replaced. The existing
+progress description, downstream pre-add/attention route, compatibility
+wrappers, graph behavior, APIs, artifacts, dependencies, and TensorFlow
+isolation remain unchanged. Focused `6`, affected `392`, and standard
+`92 / 55 / 196 / 2 / 11` sequential tests pass. The phase store remains
+exactly 128 IDs and 128 owners, and the unconsumed-result inventory decreases
+from 43 to 42.
+
+The next characterization fixes the adjacent layout-pass-set-2
+pre-add/mean/attention and attention-gate/QDQ observations before any
+production edit. Both must receive the exact shared callback-bearing attention
+context and return their complete seven-slot and ten-slot results unchanged.
+The existing QLinear/layout owner and recorded dequantize/TransposeConv/
+quantize cleanup remain the outer boundaries.
+
+Focused and reference-based affected sequential validation report
+`2 passed, 1 xfailed` and `416 passed, 1 xfailed`; the sole expected failure is
+the deliberately absent future owner. Production behavior, dependencies,
+TensorFlow isolation, the 42-result inventory, and the exactly
+128-ID/128-owner phase store remain unchanged.
+
+The latest implementation adds a dedicated layout-pass-set-2
+pre-add/attention-gate owner. Both public children receive the exact original
+callback-bearing attention context, and their complete seven-slot and ten-slot
+results retain source order and object identity.
+
+Only the two observation-only lowerer assignments are replaced. The existing
+QLinear/layout predecessor, recorded dequantize/TransposeConv/quantize
+successor, compatibility wrappers, nested callbacks, graph behavior, APIs,
+artifacts, dependencies, and TensorFlow isolation remain unchanged. Focused
+`4`, affected `418`, and standard `92 / 55 / 196 / 2 / 11` sequential tests
+pass. The phase store remains exactly 128 IDs and 128 owners, and the
+unconsumed-result inventory decreases from 42 to 41.
+
+The next characterization fixes the adjacent full channel-shuffle/Gather and
+pre-add/mean/attention observations before any production edit. The channel
+child must receive the exact pass context embedded in the callback-bearing
+attention context and retain post-Gather cleanup, then the pre-add child must
+receive the original attention context. Both complete seven-slot results must
+remain unchanged.
+
+Focused and reference-based affected sequential validation report
+`2 passed, 1 xfailed` and `424 passed, 1 xfailed`; the sole expected failure is
+the deliberately absent future owner. Production behavior, dependencies,
+TensorFlow isolation, the 41-result inventory, and the exactly
+128-ID/128-owner phase store remain unchanged.
+
+The latest implementation adds a dedicated layout-pass-set-2 channel/pre-add
+owner. Full channel-shuffle/Gather recovery receives the exact pass context
+embedded in the callback-bearing attention context and retains post-Gather
+cleanup; pre-add/mean/attention recovery then receives the original attention
+context. Both complete seven-slot results preserve order and object identity.
+
+Only the two observation-only lowerer assignments are replaced. Recorded
+phase boundaries, compatibility wrappers, independent callbacks and late
+owners, graph behavior, APIs, artifacts, dependencies, and TensorFlow
+isolation remain unchanged. Focused `4`, affected `426`, and standard
+`92 / 55 / 196 / 2 / 11` sequential tests pass. The phase store remains
+exactly 128 IDs and 128 owners, and the unconsumed-result inventory decreases
+from 41 to 40.
+
+The next characterization fixes unconditional terminal boundary-layout
+recovery followed by optional terminal mean/attention recovery before any
+production edit. Both children must receive the exact shared pass context; the
+mean child retains `include_conv_attention=False` and executes only when
+layout optimization is enabled. Both complete five-slot results remain
+unchanged when present.
+
+Focused and reference-based affected sequential validation report
+`2 passed, 1 xfailed` and `417 passed, 1 xfailed`; the sole expected failure is
+the deliberately absent future owner. Production behavior, both flag paths,
+dependencies, TensorFlow isolation, the 40-result inventory, and the exactly
+128-ID/128-owner phase store remain unchanged.
+
+The latest implementation adds an optional terminal boundary/mean-attention
+owner. Terminal boundary recovery always receives the exact shared pass
+context. Terminal mean/attention receives that same context with
+`include_conv_attention=False` only when layout optimization is enabled. Raw
+result identity is preserved, and the disabled branch returns no mean result.
+
+Only the two observation-only lowerer assignments are replaced. Both flag
+paths, recorded terminal phases, compatibility wrappers, callbacks, graph
+behavior, APIs, artifacts, dependencies, and TensorFlow isolation remain
+unchanged. Focused `4`, affected `419`, and standard
+`92 / 55 / 196 / 2 / 11` sequential tests pass. The phase store remains
+exactly 128 IDs and 128 owners, and the unconsumed-result inventory decreases
+from 40 to 39.
+
+The next characterization freezes the cross-guard terminal singleton/
+Clamp-SiNet boundary before changing production. Singleton reshape executes
+only with layout optimization and retains both terminal options; Clamp/SiNet
+always executes next through the callback-bearing SiNet context. Both paths,
+all nested schemas, callback identity, phase neighbors, wrappers, and
+observation-only results are fixed.
+
+Focused and reference-based affected sequential validation report
+`2 passed, 1 xfailed` and `633 passed, 1 xfailed`; the sole expected failure is
+the deliberately absent future owner. Production behavior, dependencies,
+TensorFlow isolation, the 39-result inventory, and the exactly
+128-ID/128-owner phase store remain unchanged.
+
+The latest implementation adds an optional terminal singleton/Clamp-SiNet
+owner. Singleton reshape receives the exact pass context and fixed terminal
+layout/multi-branch policies only when layout optimization is enabled.
+Clamp/SiNet then always receives the original callback-bearing SiNet context.
+Both child results retain object identity, with `None` representing the
+disabled singleton path.
+
+Only the two observation-only lowerer assignments are replaced. Both flag
+paths, recorded phase boundaries, wrappers, callbacks, graph behavior, APIs,
+artifacts, dependencies, and TensorFlow isolation remain unchanged. Focused
+`5`, affected `636`, and standard `92 / 55 / 196 / 2 / 11` sequential tests
+pass. The phase store remains exactly 128 IDs and 128 owners, and the
+unconsumed-result inventory decreases from 39 to 38.
+
+The next characterization freezes unconditional late affine/Concat cleanup
+followed by optional elementwise fan-out cleanup before changing production.
+Both share the exact pass context; the fan-out child executes only when layout
+optimization is enabled. Both result schemas, both flag paths, the fan-out
+wrapper, and the recorded predecessor and late-shape successor are fixed.
+
+Focused and reference-based affected sequential validation report
+`2 passed, 1 xfailed` and `424 passed, 1 xfailed`; the sole expected failure is
+the deliberately absent future owner. Production behavior, dependencies,
+TensorFlow isolation, the 38-result inventory, and the exactly
+128-ID/128-owner phase store remain unchanged.
+
+The latest implementation adds an optional late affine/elementwise fan-out
+owner. Late affine/Concat cleanup always receives the exact shared pass
+context; elementwise fan-out receives that context's model only when layout
+optimization is enabled. Raw result identities are retained, with `None`
+representing the disabled fan-out path.
+
+Only the two observation-only lowerer assignments are replaced. Both flag
+paths, recorded predecessor, late-shape successor, compatibility wrapper,
+graph behavior, APIs, artifacts, dependencies, and TensorFlow isolation remain
+unchanged. Focused `5`, affected `427`, and standard
+`92 / 55 / 196 / 2 / 11` sequential tests pass. The phase store remains
+exactly 128 IDs and 128 owners, and the unconsumed-result inventory decreases
+from 38 to 37.
+
+The next characterization freezes optional terminal elementwise fan-out
+followed by unconditional singleton MaxPool/Reshape cleanup before changing
+production. Both operations use the exact shared pass state, while fan-out
+executes only when layout optimization is enabled. Both result schemas, both
+flag paths, retained wrappers, and the late-shape predecessor and terminal
+Conv/Pool successor are fixed.
+
+Focused and reference-based affected sequential validation report
+`2 passed, 1 xfailed` and `446 passed, 1 xfailed`; the sole expected failure
+is the deliberately absent future owner. Production behavior, dependencies,
+TensorFlow isolation, the managed 37-result inventory, and the exactly
+128-ID/128-owner phase store remain unchanged.
+
+The latest implementation adds an optional terminal fan-out/singleton owner.
+Elementwise fan-out receives the exact shared context's model only when layout
+optimization is enabled; singleton MaxPool/Reshape always receives the exact
+shared context next. Raw result identities are retained, with `None`
+representing the disabled fan-out path.
+
+Only the two observation-only lowerer assignments are replaced. Both flag
+paths, the late-shape predecessor, terminal Conv/Pool/no-layout successor,
+compatibility wrappers, graph behavior, APIs, artifacts, dependencies, and
+TensorFlow isolation remain unchanged. The initially recorded 33 affected
+failures were all stale structural ownership expectations; after owner-aware
+updates, focused `5`, affected `449`, and standard `92 / 55 / 196 / 2 / 11`
+sequential tests pass. The phase store remains exactly 128 IDs and 128 owners,
+and the managed unconsumed-result inventory decreases from 37 to 36.
+
+The next characterization freezes adjacent QLinear/layout-prefix recovery
+and pre-add/attention-gate recovery at the start of layout pass-set 2. The
+children retain their two distinct immutable callback contexts, both of which
+embed the exact same shared pass context. Complete nested results and callback
+result identities are preserved.
+
+Focused and reference-based affected sequential validation report
+`2 passed, 1 xfailed` and `302 passed, 1 xfailed`; the sole expected failure
+is the deliberately absent future owner. Production behavior, the surrounding
+layout-opt guard and recorded successor phase, dependencies, TensorFlow
+isolation, the managed 36-result inventory, and the exactly 128-ID/128-owner
+phase store remain unchanged.
+
+The latest implementation adds a straight-line layout-pass-set-2
+QLinear/pre-add owner. It preserves both distinct callback-bearing context
+objects, their common embedded pass context, fixed child order, and both raw
+nested result identities.
+
+Only the two observation-only lowerer assignments are replaced. The enclosing
+layout-opt guard, progress description, recorded successor phase, graph
+behavior, APIs, artifacts, dependencies, and TensorFlow isolation remain
+unchanged. The initially recorded six affected failures were all stale
+structural ownership expectations; after owner-aware updates, focused `4`,
+affected `304`, and standard `92 / 55 / 196 / 2 / 11` sequential tests pass.
+The phase store remains exactly 128 IDs and 128 owners, and the managed
+unconsumed-result inventory decreases from 36 to 35.
+
+The next characterization freezes fallback indexed binary adapters followed
+by singleton/consecutive-Reshape cleanup inside the existing norm-repair
+guard. Both children reuse the exact fallback pass context state; complete
+2+3 dictionary schemas, the existing wrapper, and the recorded topology
+successor are preserved.
+
+Focused and reference-based affected sequential validation report
+`2 passed, 1 xfailed` and `394 passed, 1 xfailed`; the sole expected failure
+is the deliberately absent future owner. Production behavior, fallback guard,
+dependencies, TensorFlow isolation, the managed 35-result inventory, and the
+exactly 128-ID/128-owner phase store remain unchanged.
+
+The latest implementation adds a shared-context fallback norm adapter/reshape
+owner. It preserves indexed binary adapter cleanup, singleton/consecutive-
+Reshape cleanup, their exact fallback model/context state, fixed order, and
+both complete raw result identities.
+
+Only the three observation-only lowerer targets are replaced. The norm guard,
+recorded topology successor, compatibility wrapper, graph behavior, APIs,
+artifacts, dependencies, and TensorFlow isolation remain unchanged. The
+initially recorded 11 affected failures were all stale structural ownership
+expectations; after owner-aware updates, focused `4`, affected `396`, and
+standard `92 / 55 / 196 / 2 / 11` sequential tests pass. The phase store
+remains exactly 128 IDs and 128 owners, and the managed unconsumed-result
+inventory decreases from 35 to 33.
+
+The next characterization freezes adjacent late final-shape boundary cleanup
+and terminal optional fan-out/singleton cleanup. The two children share the
+exact existing pass context through the already-created late-boundary context;
+the layout option continues to control only elementwise fan-out. Complete raw
+result schemas, child order, observation-only semantics, and the neighboring
+late-affine and terminal Conv/Pool/no-layout boundaries are preserved.
+
+Focused and reference-based affected sequential validation report
+`3 passed, 1 xfailed` and `419 passed, 1 xfailed`; the sole expected failure is
+the deliberately absent future owner. Production behavior, dependencies,
+TensorFlow isolation, the managed 33-result inventory, and the exactly
+128-ID/128-owner phase store remain unchanged.
+
+The latest implementation adds one late final-shape/terminal fan-out owner.
+It preserves the exact existing late-boundary context, its embedded shared pass
+context, fixed child order, layout-option policy, and both complete raw result
+identities without reconstructing graph, layout, or diagnostic state.
+
+Only the two observation-only lowerer targets are replaced. The late-affine
+predecessor, terminal Conv/Pool/no-layout successor, existing child owners and
+wrappers, graph behavior, APIs, artifacts, dependencies, and TensorFlow
+isolation remain unchanged. The initially recorded 47 affected failures across
+24 files were all stale structural ownership expectations; after owner-aware
+updates, focused `6`, affected `422`, and standard
+`92 / 55 / 196 / 2 / 11` sequential tests pass. The phase store remains
+exactly 128 IDs and 128 owners, and the managed unconsumed-result inventory
+decreases from 33 to 32.
+
+The next characterization freezes adjacent late affine/optional fan-out and
+late final-shape/terminal fan-out composites. Both reuse the exact existing
+late-boundary context and its embedded shared pass context; the same layout
+option is forwarded unchanged to both children. Complete nested schemas,
+child order, result observation policy, and neighboring phase/branch
+boundaries are preserved.
+
+Focused and reference-based affected sequential validation report
+`3 passed, 1 xfailed` and `430 passed, 1 xfailed`; the sole expected failure is
+the deliberately absent future owner. Production behavior, dependencies,
+TensorFlow isolation, the managed 32-result inventory, and the exactly
+128-ID/128-owner phase store remain unchanged.
+
+The latest implementation adds one late affine/final-shape/terminal owner. It
+preserves the exact existing late-boundary context and embedded shared pass
+context, fixed child order, identical layout-option policy, and both complete
+raw result identities without reconstructing graph, layout, or diagnostic
+state.
+
+Only the two observation-only lowerer targets are replaced. The recorded late
+NDHWC cost-volume predecessor, terminal Conv/Pool/no-layout successor, child
+owners and wrappers, graph behavior, APIs, artifacts, dependencies, and
+TensorFlow isolation remain unchanged. The initially recorded 52 affected
+failures across 26 files were all stale structural ownership expectations;
+after owner-aware updates, focused `6`, affected `433`, and standard
+`92 / 55 / 196 / 2 / 11` sequential tests pass. The phase store remains
+exactly 128 IDs and 128 owners, and the managed unconsumed-result inventory
+decreases from 32 to 31.
+
+The next characterization freezes the unconditional late terminal composite
+with the immediately following layout-opt-only Conv/Pool output passthrough.
+The exact late-boundary context, option policy, complete nested schemas,
+optional result, and compatibility wrapper are preserved. The mutually
+exclusive no-layout branch, recorded safe-transpose phase, and affine cleanup
+remain outside the future owner under an equivalent negative-layout guard.
+
+Focused and reference-based affected sequential validation report
+`4 passed, 1 xfailed` and `453 passed, 1 xfailed`; the sole expected failure is
+the deliberately absent future owner. Production behavior, dependencies,
+TensorFlow isolation, the managed 31-result inventory, and the exactly
+128-ID/128-owner phase store remain unchanged.
+
+The latest implementation adds one optional-child late-terminal owner. It
+preserves the exact late-boundary context, maps the existing layout option to
+the established elementwise-fan-out policy, and runs the public Conv/Pool
+passthrough owner only on the layout-optimized path. Both complete raw result
+objects are returned by identity; the retained lowerer compatibility wrapper
+and all independent child routes remain available.
+
+Only the two observation-only targets are replaced. The recorded late NDHWC
+cost-volume predecessor remains fixed, while the no-layout safe-transpose
+phase and affine cleanup stay in the lowerer under the equivalent combined
+negative-layout guard. Graph behavior, APIs, artifacts, dependencies, and
+TensorFlow isolation remain unchanged. The initially recorded 61 affected
+failures across 29 files were all stale structural ownership expectations;
+after owner-aware updates, focused `7`, fixed affected `456`, and standard
+`92 / 55 / 196 / 2 / 11` sequential tests pass. The AST audit reports 32 raw
+and 30 managed unconsumed lowerer results, and the phase store remains exactly
+128 IDs and 128 owners.
+
+The next characterization freezes the terminal singleton/Clamp-SiNet
+composite together with its immediately following recorded HardSwish-SE pass.
+The future owner will use the exact existing SiNet terminal context and public
+HardSwish implementation, while the lowerer will record returned element
+`[1]` under the unchanged HardSwish phase ID before any later graph mutation.
+Complete schemas, both layout-option paths, wrapper compatibility, adjacent
+QKV/Dequant boundaries, and the terminal SiNet/singleton-Reshape route are
+preserved.
+
+Focused and reference-based affected sequential validation report
+`4 passed, 1 xfailed` and `395 passed, 1 xfailed` across 14 files; the sole
+expected failure is the deliberately absent future owner. Production behavior,
+dependencies, TensorFlow isolation, the raw/managed 32/30 inventory, and the
+exactly 128-ID/128-owner phase store remain unchanged.
+
+The latest implementation adds a terminal singleton/Clamp-SiNet/HardSwish
+owner. It reuses the exact existing SiNet terminal context, forwards the
+layout-option policy unchanged, runs the established terminal composite before
+the public HardSwish implementation, and returns both complete raw results by
+identity. The lowerer records returned element `[1]` under the unchanged
+HardSwish phase ID immediately before the existing Dequant/HardSigmoid phase,
+preserving graph mutation order and observation timing.
+
+Only the old observation-only terminal target is replaced. The QKV predecessor,
+Dequant and terminal SiNet/singleton-Reshape successors, child owner,
+compatibility wrapper, APIs, artifacts, dependencies, and TensorFlow isolation
+remain unchanged. The initially recorded `376 passed / 22 failed` affected
+result contained only stale structural ownership expectations across 11 files;
+after owner-aware updates, focused `7`, affected `398`, and standard
+`92 / 55 / 196 / 2 / 11` sequential tests pass. The AST audit reports 31 raw
+and 29 managed unconsumed lowerer results, zero old selected-target stores, one
+new composite store and load, and exactly 128 phase calls, unique IDs, and
+owners.
+
+The next characterization freezes terminal SiNet/singleton-Reshape cleanup
+together with its immediately following recorded indexed shape convergence.
+The future owner will reuse the exact pass context embedded in the existing
+SiNet terminal context and call the public indexed-convergence implementation;
+the lowerer will record returned element `[1]` at the unchanged phase position.
+The boundary stops before very-late SiNet recovery, preserving graph mutation
+and observation order.
+
+Four initially observed affected failures were stale tests that patched
+obsolete lowerer-local dependencies instead of the existing public
+indexed-convergence owner. Their probes now follow the actual delegation path,
+and all four stable/mutating cases pass without a production change. Focused
+and final affected sequential validation report `3 passed, 1 xfailed` and
+`350 passed, 1 xfailed`; only the intentionally absent future owner is xfailed.
+Phase-store validation remains `2 passed`, production remains unchanged, the
+raw/managed inventory remains 31/29, and the store remains exactly 128 calls,
+128 unique IDs, and 128 owners.
+
+The latest implementation adds a terminal SiNet/singleton-Reshape convergence
+owner. It reuses the exact pass context embedded in the existing SiNet terminal
+context, runs the terminal child before the public indexed-convergence owner,
+and returns both complete raw results by identity. The lowerer records returned
+element `[1]` at the unchanged indexed-convergence phase position, before any
+very-late SiNet mutation.
+
+Only the old observation-only terminal assignment is removed. The preceding
+Dequant/HardSigmoid record, following very-late SiNet owner, child owner,
+compatibility wrapper, APIs, artifacts, dependencies, and TensorFlow isolation
+remain unchanged. The initially recorded `336 passed / 16 failed` affected
+result contained only stale structural expectations across 9 files; after
+owner-aware updates, focused `5`, affected `352`, and standard
+`92 / 55 / 196 / 2 / 11` sequential tests pass. The AST audit reports 30 raw
+and 28 managed unconsumed lowerer results, zero old selected-target stores, one
+new indexed owner expression, and exactly 128 phase calls, unique IDs, and
+owners.
+
+The next characterization freezes the unconsumed very-late SiNet recovery tail
+together with its immediately following recorded residual-affine/PReLU pass.
+The future owner will reuse the exact existing SiNet terminal context and call
+the public PReLU implementation with its embedded model; the lowerer will
+record returned element `[1]` at the unchanged phase position. The boundary
+stops before residual-affine fan-out, preserving graph mutation and observation
+order.
+
+Focused and reference-based affected sequential validation report
+`3 passed, 1 xfailed` and `359 passed, 1 xfailed` across 15 files. Only the
+intentionally absent future owner is xfailed. Phase-store validation remains
+`2 passed`, production remains unchanged, the raw/managed inventory remains
+30/28, and the store remains exactly 128 calls, 128 unique IDs, and 128 owners.
+
+The latest extraction gives the very-late SiNet recovery tail and its adjacent
+residual-affine/PReLU cleanup one explicit context owner. The owner preserves
+the exact existing order, forwards the existing terminal SiNet context to the
+tail, forwards its embedded `ModelIR` to the public PReLU implementation, and
+returns both complete raw results by identity. The lowerer records element
+`[1]` directly at the unchanged PReLU phase and removes the unconsumed
+very-late SiNet local; indexed convergence remains immediately before it and
+residual-affine fan-out remains immediately after it.
+
+The implementation does not change either child pass, the retained lowerer
+compatibility wrapper, independent attention and SiNet call routes, public
+interfaces, artifacts, dependencies, or TensorFlow isolation. The deliberately
+captured first affected run reported `339 passed / 22 failed`; all 22 failures
+were stale structure assertions caused by the ownership move. After those
+assertions were made owner-aware, focused `5`, affected `361`, and standard
+`92 / 55 / 196 / 2 / 11` sequential tests pass. Static checks pass, the
+raw/managed unconsumed inventory decreases from 30/28 to 29/27, and the phase
+store remains exactly 128 calls, 128 unique IDs, and 128 owner expressions.
+
+The next characterization freezes the unconsumed post-cleanup SiNet
+pre-add/resize recovery together with its immediately following recorded CSP
+attention pass. The future owner will reuse their existing shared
+`ModelIRPassContext`, run the six-step SiNet recovery first, and forward the
+same model and `LayoutState` to the CSP owner. The lowerer will record returned
+element `[1]` at the unchanged phase position; very-late prune/reconcile and
+SA/PA MirrorPad remain the direct neighboring phases.
+
+Production is unchanged. Focused and fixed 9-file affected sequential
+characterization report `3 passed, 1 xfailed` and
+`293 passed, 1 xfailed`; only the deliberately absent future owner is xfailed.
+Static checks pass, the raw/managed inventory remains 29/27, and the phase
+store remains exactly 128 calls, 128 unique IDs, and 128 owner expressions.
+
+The latest extraction gives post-cleanup SiNet pre-add/resize recovery and its
+adjacent CSP-attention pass one explicit shared-context owner. It preserves the
+existing order, forwards the exact `ModelIRPassContext` to the six-step SiNet
+owner, forwards the same model and `LayoutState` to CSP attention, and returns
+both complete raw results by identity. The lowerer records element `[1]`
+directly at the unchanged CSP phase, between the same very-late prune/reconcile
+and SA/PA MirrorPad phases.
+
+The implementation preserves both children, lowerer compatibility wrappers,
+the nested terminal-SiNet callback route, public interfaces, artifacts,
+dependencies, and TensorFlow isolation. The deliberately captured initial
+affected run reported `285 passed / 10 failed`; all failures were stale
+structure assertions caused by the ownership move. After owner-aware updates,
+focused `5`, affected `295`, and standard `92 / 55 / 196 / 2 / 11` sequential
+tests pass. Static checks pass, the raw/managed inventory decreases from 29/27
+to 28/26, and the phase store remains exactly 128 calls, 128 unique IDs, and
+128 owner expressions.
+
+The next characterization freezes the unconsumed post-SiNet QKV attention
+result together with its immediately following recorded ReLU/Split-all output
+cleanup. The future owner will reuse their shared `ModelIRPassContext`, retain
+the QKV default option policy, and forward the same model and `LayoutState` to
+the public ReLU owner. The lowerer will record returned element `[1]` at the
+unchanged phase position; post-SiNet BatchMatMul adjacent-flags and
+ReLU/Split/Conv/Concat remain the direct neighboring phases.
+
+Production is unchanged. Focused and fixed 10-file affected sequential
+characterization report `3 passed, 1 xfailed` and
+`301 passed, 1 xfailed`; only the deliberately absent future owner is xfailed.
+Static checks pass, the raw/managed inventory remains 28/26, and the phase
+store remains exactly 128 calls, 128 unique IDs, and 128 owner expressions.
+
+The latest extraction gives post-SiNet QKV attention and its adjacent
+ReLU/Split-all output cleanup one explicit shared-context owner. It preserves
+the existing QKV default policy, forwards the exact `ModelIRPassContext` to
+QKV cleanup, forwards the same model and `LayoutState` to the public ReLU
+owner, and returns both complete results by identity. The lowerer records
+element `[1]` directly at the unchanged ReLU/Split-all phase, between the same
+BatchMatMul adjacent-flags and ReLU/Split/Conv/Concat phases.
+
+The implementation preserves both children, lowerer compatibility wrappers,
+the independent terminal QKV route, public interfaces, artifacts,
+dependencies, and TensorFlow isolation. The deliberately captured initial
+affected run reported `293 passed / 10 failed`; all failures were stale
+structure assertions caused by the ownership move. After owner-aware updates,
+focused `5`, affected `303`, and standard `92 / 55 / 196 / 2 / 11` sequential
+tests pass. Static checks pass, the raw/managed inventory decreases from 28/26
+to 27/25, and the phase store remains exactly 128 calls, 128 unique IDs, and
+128 owner expressions.
+
+The next characterization freezes the unconsumed terminal Slice/Concat
+recovery together with its immediately following recorded boundary-input
+Transpose/StridedSlice/QDQ/Concat cleanup. The future owner will receive the
+existing `TerminalSliceConcatRecoveryContext`, run its fourteen-child recovery
+first, and forward the embedded model and `LayoutState` to the boundary pass.
+The lowerer will record returned element `[1]` at the unchanged boundary phase
+position; terminal channel-slice Mul/Add and Swish residual-Concat remain the
+direct neighboring recorded phases.
+
+Production is unchanged. Focused and fixed 9-file affected sequential
+characterization report `3 passed, 1 xfailed` and
+`345 passed, 1 xfailed`; only the deliberately absent future owner is xfailed.
+Standalone phase-store validation reports `2 passed`. Static checks pass, the
+raw/managed inventory remains 27/25, and the store remains exactly 128 calls,
+128 unique IDs, and 128 owner expressions.
+
+The latest extraction gives terminal Slice/Concat recovery and its adjacent
+boundary-input Transpose/StridedSlice/QDQ/Concat pass one explicit context
+owner. It preserves the complete fourteen-child recovery order, forwards the
+exact existing context, model, and `LayoutState`, and returns both raw child
+results by identity. The lowerer records element `[1]` directly at the
+unchanged boundary phase, between the same terminal channel-slice Mul/Add and
+Swish residual-Concat recorded phases.
+
+The implementation preserves both child implementations, both lowerer
+compatibility wrappers, the independent final-boundary recovery route, public
+interfaces, artifacts, dependencies, and TensorFlow isolation. The deliberately
+captured initial affected run reported `336 passed / 11 failed`; all failures
+were stale structural expectations caused by the ownership move. After
+owner-aware updates, focused `5`, affected `347`, and standard
+`92 / 55 / 196 / 2 / 11` sequential tests pass. Static checks pass, the
+raw/managed inventory decreases from 27/25 to 26/24, and the phase store
+remains exactly 128 calls, 128 unique IDs, and 128 owner expressions.
+
+The next characterization freezes the unconsumed final input/dynamic
+composite together with its immediately following recorded very-late final
+static-shape reconciliation. The future owner will receive the existing shared
+`ModelIRPassContext`, run the nested input/dynamic composite first, then call
+the public static-shape reconciler with the same model and
+`include_mutation_count=True`. The lowerer will record returned element `[1]`
+at the unchanged phase position; progress advancement and unsupported-Split
+fallback remain the direct outer boundaries, while conditional post-Split
+reconciliation remains independent.
+
+Production is unchanged. Focused and fixed 11-file affected sequential
+characterization report `3 passed, 1 xfailed` and
+`306 passed, 1 xfailed`; only the deliberately absent future owner is xfailed.
+Standalone phase-store validation reports `2 passed`. Static checks pass, the
+raw/managed inventory remains 26/24, and the store remains exactly 128 calls,
+128 unique IDs, and 128 owner expressions.
+
+The latest extraction gives final input/dynamic cleanup and its adjacent
+very-late final static-shape reconciliation one explicit shared-context owner.
+It preserves the complete nested child order and shape mutation evidence. The
+shape reconciler remains injectable, defaults to the public implementation,
+and receives the retained lowerer compatibility wrapper on the production
+route so existing instrumentation hooks remain effective. Both complete raw
+results are returned by identity.
+
+The lowerer records element `[1]` directly at the unchanged very-late final
+shape phase and removes only the observation-only final input/dynamic local.
+Progress advancement, unsupported-Split fallback, and the independent
+conditional post-Split reconciliation remain in their original order. The
+initial affected run reported `293 passed / 15 failed`, all from stale
+structural expectations. A subsequent standard core run exposed one wrapper-
+instrumentation regression (`54 passed / 1 failed`), which explicit callback
+injection corrected. Final focused `5`, affected `308`, and standard
+`92 / 55 / 196 / 2 / 11` sequential tests pass. Static checks pass, the
+raw/managed inventory decreases from 26/24 to 25/23, and the phase store
+remains exactly 128 calls, 128 unique IDs, and 128 owner expressions.

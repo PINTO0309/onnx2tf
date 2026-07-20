@@ -22,8 +22,8 @@ OWNER = (
     "_optimize_transpose_squeeze_instancenorm_unary_expanddims_transpose_nhwc_chains"
 )
 RESULT_TARGET = "_late_conv1d_instancenorm_unary_stats"
-PREDECESSOR_TARGET = "_late_conv1d_unary_fanout_stats"
-SUCCESSOR = "_optimize_tencoder_add_expand_transpose_conv_nhwc_chains"
+COMPOSITE_TARGET = "_late_dequant_swish_layout_tail_results"
+COMPOSITE_OWNER = "run_late_dequant_swish_layout_tail_cleanup"
 RESULT_SCHEMA = {
     "optimized_transpose_squeeze_instancenorm_unary_expanddims_transpose_nhwc_chains": 0,
 }
@@ -59,15 +59,6 @@ def _single_target(statement: ast.stmt) -> str | None:
 
 def _lowerer() -> ast.FunctionDef:
     return _functions(LOWERER_PATH)["lower_onnx_to_ir"]
-
-
-def _direct_location() -> tuple[ast.FunctionDef, int]:
-    lowerer = _lowerer()
-    return lowerer, next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if _call_name(statement) == OWNER
-    )
 
 
 def test_late_conv1d_instance_norm_schema_wrapper_and_cleanup_are_explicit() -> None:
@@ -107,32 +98,25 @@ def test_late_conv1d_instance_norm_schema_wrapper_and_cleanup_are_explicit() -> 
     ) == RESULT_SCHEMA
 
 
-def test_late_conv1d_instance_norm_direct_boundary_is_explicit() -> None:
-    lowerer, index = _direct_location()
-    invocation = lowerer.body[index]
-    assert _single_target(invocation) == RESULT_TARGET
-    call = _statement_call(invocation)
-    assert call is not None
-    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-    assert {
-        keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
-    } == {"layout_state": "session.layout_state"}
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
-    assert _call_name(lowerer.body[index + 1]) == SUCCESSOR
-    assert sum(
+def test_late_conv1d_instance_norm_direct_call_moves_to_composite() -> None:
+    lowerer = _lowerer()
+    assert not any(
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == OWNER
         for node in ast.walk(lowerer)
-    ) == 1
+    )
+    composite = next(
+        statement
+        for statement in lowerer.body
+        if _single_target(statement) == COMPOSITE_TARGET
+    )
+    assert _call_name(composite) == COMPOSITE_OWNER
 
 
-def test_late_conv1d_instance_norm_result_is_retained_for_observation() -> None:
-    lowerer, index = _direct_location()
-    assert _single_target(lowerer.body[index]) == RESULT_TARGET
+def test_late_conv1d_instance_norm_old_result_local_is_removed() -> None:
+    lowerer = _lowerer()
     assert not any(
-        isinstance(node, ast.Name)
-        and node.id == RESULT_TARGET
-        and isinstance(node.ctx, ast.Load)
+        isinstance(node, ast.Name) and node.id == RESULT_TARGET
         for node in ast.walk(lowerer)
     )

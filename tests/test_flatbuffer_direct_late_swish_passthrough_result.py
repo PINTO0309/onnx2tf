@@ -25,11 +25,23 @@ OWNER_PATH = (
     / "passes"
     / "activation_passthrough_layout.py"
 )
+ORCHESTRATION_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "late_swish_layout_tail_orchestration.py"
+)
 WRAPPER = "_optimize_swish_transpose_passthrough_chains"
 DISPATCH = "_optimize_swish_transpose_passthrough_chains_pass"
-RESULT_TARGET = "_late_swish_transpose_passthrough_stats"
-PREDECESSOR_TARGET = "_late_dequant_unary_fanout_results"
-SUCCESSOR = "_optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_chains"
+ORCHESTRATION_OWNER = "run_late_swish_layout_tail_cleanup"
+LOWERER_OWNER = "run_late_dequant_swish_layout_tail_cleanup"
+PUBLIC_OWNER = "optimize_swish_transpose_passthrough_chains"
+RESULT_TARGET = "_late_dequant_swish_layout_tail_results"
+PREDECESSOR_GUARD = (
+    "not optimize_layout_transpose_chains and "
+    "apply_safe_transpose_reduction_lite_on_no_layout_opt"
+)
 RESULT_SCHEMA = {"rewritten_swish_transpose_passthrough_chains": 0}
 
 
@@ -70,7 +82,7 @@ def _direct_location() -> tuple[ast.FunctionDef, int]:
     return lowerer, next(
         index
         for index, statement in enumerate(lowerer.body)
-        if _call_name(statement) == WRAPPER
+        if _call_name(statement) == LOWERER_OWNER
     )
 
 
@@ -124,18 +136,36 @@ def test_late_swish_direct_and_layout_recovery_route_are_explicit() -> None:
     assert _single_target(invocation) == RESULT_TARGET
     call = _statement_call(invocation)
     assert call is not None
-    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
+    assert [ast.unparse(argument) for argument in call.args] == [
+        "shared_model_ir_pass_context"
+    ]
     assert {
         keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
-    } == {"layout_state": "session.layout_state"}
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
-    assert _call_name(lowerer.body[index + 1]) == SUCCESSOR
+    } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
+    predecessor = lowerer.body[index - 1]
+    assert isinstance(predecessor, ast.If)
+    assert ast.unparse(predecessor.test) == PREDECESSOR_GUARD
     assert sum(
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == WRAPPER
         for node in ast.walk(lowerer)
-    ) == 1
+    ) == 0
+
+    owner = _functions(ORCHESTRATION_PATH)[ORCHESTRATION_OWNER]
+    direct = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == PUBLIC_OWNER
+    )
+    assert [ast.unparse(argument) for argument in direct.args] == [
+        "context.model_ir"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value) for keyword in direct.keywords
+    } == {"layout_state": "context.layout_state"}
 
     model_ir = ModelIR("late_swish_layout_recovery")
     pass_context = ModelIRPassContext(

@@ -827,3 +827,24 @@ def optimize_prelu_transpose_passthrough_chains(
     # calls. Preserve that externally visible tensor-table cleanup contract.
     _prune_unused_tensors(model_ir, layout_state=layout_state)
     return {_STATS_KEY: int(rewritten)}
+
+
+def run_prelu_transpose_passthrough_summary(
+    model_ir: ModelIR,
+    *,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
+    """Run PRELU passthrough cleanup and retain prune-only evidence."""
+
+    initial_tensor_count = len(model_ir.tensors)
+    result = optimize_prelu_transpose_passthrough_chains(
+        model_ir,
+        layout_state=layout_state,
+    )
+    return {
+        **result,
+        "pruned_unused_tensors": max(
+            0,
+            int(initial_tensor_count - len(model_ir.tensors)),
+        ),
+    }

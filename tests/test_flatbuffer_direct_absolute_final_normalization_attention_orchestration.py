@@ -18,13 +18,66 @@ from onnx2tf.tflite_builder.passes.absolute_final_normalization_attention_orches
     build_absolute_final_normalization_attention_invocations,
     run_absolute_final_normalization_attention,
 )
+from onnx2tf.tflite_builder.passes.pre_terminal_affine_tail_orchestration import (
+    PRE_TERMINAL_AFFINE_TAIL_PASS_IDS,
+)
+from onnx2tf.tflite_builder.passes.terminal_slice_concat_recovery_orchestration import (
+    TERMINAL_SLICE_CONCAT_RECOVERY_PASS_IDS,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 ABSOLUTE_FINAL_NORMALIZATION_ATTENTION = (
-    "_run_absolute_final_normalization_attention_pass_pair"
+    "run_absolute_final_normalization_attention_rank1_cleanup"
 )
+ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "absolute_final_normalization_attention_orchestration.py"
+)
+VERY_LATE_PAD_INSTANCENORM = (
+    "run_very_late_pad_instancenorm_layout_cleanup"
+)
+VERY_LATE_LAYOUT_TAIL_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "very_late_layout_tail_orchestration.py"
+)
+VERY_LATE_LAYOUT_TAIL = "run_very_late_layout_tail_cleanup"
+PRE_TERMINAL_INSTANCENORM_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "pre_terminal_instancenorm_layout_orchestration.py"
+)
+PRE_TERMINAL_INSTANCENORM = (
+    "run_pre_terminal_instancenorm_layout_cleanup"
+)
+ABSOLUTE_FINAL_AFFINE_INSTANCENORM_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "absolute_final_affine_instancenorm_orchestration.py"
+)
+ABSOLUTE_FINAL_AFFINE_INSTANCENORM = (
+    "run_absolute_final_affine_instancenorm_cleanup"
+)
+ABSOLUTE_FINAL_CLEANUP_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "absolute_final_cleanup_orchestration.py"
+)
+ABSOLUTE_FINAL_CLEANUP = "run_absolute_final_cleanup"
+ABSOLUTE_FINAL_CLEANUP_TARGET = "_absolute_final_cleanup_results"
 
 
 def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -34,13 +87,98 @@ def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
         for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
+    owner_tree = ast.parse(
+        ABSOLUTE_FINAL_NORMALIZATION_ATTENTION_PATH.read_text(encoding="utf-8")
+    )
     helper = next(
         node
-        for node in lowerer.body
+        for node in owner_tree.body
         if isinstance(node, ast.FunctionDef)
         and node.name == ABSOLUTE_FINAL_NORMALIZATION_ATTENTION
     )
     return lowerer, helper
+
+
+def _absolute_final_cleanup_owner() -> ast.FunctionDef:
+    tree = ast.parse(
+        ABSOLUTE_FINAL_CLEANUP_PATH.read_text(encoding="utf-8")
+    )
+    return next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == ABSOLUTE_FINAL_CLEANUP
+    )
+
+
+def _absolute_final_cleanup_calls(function_name: str) -> list[ast.Call]:
+    return [
+        node
+        for node in ast.walk(_absolute_final_cleanup_owner())
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name
+    ]
+
+
+def _very_late_pad_instancenorm_call_count(
+    lowerer: ast.FunctionDef,
+) -> int:
+    del lowerer
+    tree = ast.parse(VERY_LATE_LAYOUT_TAIL_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == VERY_LATE_LAYOUT_TAIL
+    )
+    return sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == VERY_LATE_PAD_INSTANCENORM
+        for node in ast.walk(owner)
+    )
+
+
+def _pre_terminal_instancenorm_call_count(function_name: str) -> int:
+    tree = ast.parse(
+        PRE_TERMINAL_INSTANCENORM_PATH.read_text(encoding="utf-8")
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == PRE_TERMINAL_INSTANCENORM
+    )
+    owner_name = function_name.removeprefix("_")
+    return sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == owner_name
+        for node in ast.walk(owner)
+    )
+
+
+def _absolute_final_affine_instancenorm_calls(
+    function_name: str,
+) -> list[ast.Call]:
+    tree = ast.parse(
+        ABSOLUTE_FINAL_AFFINE_INSTANCENORM_PATH.read_text(encoding="utf-8")
+    )
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == ABSOLUTE_FINAL_AFFINE_INSTANCENORM
+    )
+    owner_name = function_name.removeprefix("_")
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == owner_name
+    ]
 
 
 def _expression_path(node: ast.expr) -> Any:
@@ -49,6 +187,21 @@ def _expression_path(node: ast.expr) -> Any:
     if isinstance(node, ast.Attribute):
         return f"{_expression_path(node.value)}.{node.attr}"
     raise AssertionError(f"unexpected call expression: {ast.dump(node)}")
+
+
+def _phase_result_owner(statement: ast.stmt, phase_id: str) -> ast.Call:
+    assert isinstance(statement, ast.Expr)
+    record = statement.value
+    assert isinstance(record, ast.Call)
+    assert isinstance(record.func, ast.Attribute)
+    assert isinstance(record.func.value, ast.Name)
+    assert record.func.value.id == "session"
+    assert record.func.attr == "record_phase_result"
+    assert len(record.args) == 2
+    assert ast.literal_eval(record.args[0]) == phase_id
+    owner = record.args[1]
+    assert isinstance(owner, ast.Call)
+    return owner
 
 
 def _context() -> AbsoluteFinalNormalizationAttentionContext:
@@ -85,8 +238,8 @@ def test_absolute_final_normalization_attention_is_a_straight_line_delegate() ->
     _, helper = _lowerer_and_helper()
 
     assert helper.end_lineno is not None
-    assert helper.end_lineno - helper.lineno + 1 == 4
-    assert helper.args.args == []
+    assert helper.end_lineno - helper.lineno + 1 == 10
+    assert [argument.arg for argument in helper.args.args] == ["context"]
     assert helper.args.posonlyargs == []
     assert helper.args.kwonlyargs == []
     assert helper.args.vararg is None
@@ -161,19 +314,30 @@ def test_absolute_final_normalization_attention_preserves_cleanup_contracts() ->
     assert rebuilt_scope is not scopes[0]
 
 
-def test_absolute_final_normalization_attention_invocation_is_zero_argument() -> None:
+def test_absolute_final_normalization_attention_invocation_uses_shared_context() -> None:
     lowerer, _ = _lowerer_and_helper()
-    invocations = [
+    invocations = _absolute_final_cleanup_calls(
+        ABSOLUTE_FINAL_NORMALIZATION_ATTENTION
+    )
+
+    assert len(invocations) == 1
+    assert [ast.unparse(argument) for argument in invocations[0].args] == [
+        "context"
+    ]
+    assert invocations[0].keywords == []
+
+    top_invocations = [
         node
         for node in ast.walk(lowerer)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id == ABSOLUTE_FINAL_NORMALIZATION_ATTENTION
+        and node.func.id == ABSOLUTE_FINAL_CLEANUP
     ]
-
-    assert len(invocations) == 1
-    assert invocations[0].args == []
-    assert invocations[0].keywords == []
+    assert len(top_invocations) == 1
+    assert [ast.unparse(argument) for argument in top_invocations[0].args] == [
+        "shared_model_ir_pass_context"
+    ]
+    assert top_invocations[0].keywords == []
 
 
 def test_absolute_final_normalization_attention_preserves_outer_boundaries() -> None:
@@ -184,99 +348,79 @@ def test_absolute_final_normalization_attention_preserves_outer_boundaries() -> 
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id
-        == "_absolute_final_normalization_attention_results"
+        and statement.targets[0].id == ABSOLUTE_FINAL_CLEANUP_TARGET
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == ABSOLUTE_FINAL_NORMALIZATION_ATTENTION
+        and statement.value.func.id == ABSOLUTE_FINAL_CLEANUP
     )
 
-    previous = lowerer.body[invocation_index - 1]
     invocation = lowerer.body[invocation_index]
     following = lowerer.body[invocation_index + 1]
     assert isinstance(invocation, ast.Assign)
     assert isinstance(invocation.value, ast.Call)
     assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == ABSOLUTE_FINAL_NORMALIZATION_ATTENTION
-    assert isinstance(previous, ast.Assign)
-    assert len(previous.targets) == 1
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_absolute_final_instancenorm_post_bias_stats"
-    assert isinstance(previous.value, ast.Call)
-    assert isinstance(previous.value.func, ast.Name)
-    assert (
-        previous.value.func.id
-        == "_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains"
+    assert invocation.value.func.id == ABSOLUTE_FINAL_CLEANUP
+    assert [ast.unparse(argument) for argument in invocation.value.args] == [
+        "shared_model_ir_pass_context"
+    ]
+    assert invocation.value.keywords == []
+    assert isinstance(following, ast.Expr)
+    assert ast.unparse(following) == (
+        "session.record_phase_result('topology_layout.primary.absolute_final', "
+        "run_topology_layout_refresh(model_ir))"
     )
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_absolute_final_dynamic_rank1_stats"
-    assert isinstance(following.value, ast.Call)
-    assert isinstance(following.value.func, ast.Name)
-    assert (
-        following.value.func.id
-        == "_rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs"
-    )
+
+    calls = [
+        node
+        for node in ast.walk(_absolute_final_cleanup_owner())
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id
+        in {
+            "run_boundary_shape_signature_cleanup",
+            ABSOLUTE_FINAL_AFFINE_INSTANCENORM,
+            ABSOLUTE_FINAL_NORMALIZATION_ATTENTION,
+        }
+    ]
+    calls.sort(key=lambda node: (node.lineno, node.col_offset))
+    assert [call.func.id for call in calls] == [
+        "run_boundary_shape_signature_cleanup",
+        ABSOLUTE_FINAL_AFFINE_INSTANCENORM,
+        ABSOLUTE_FINAL_NORMALIZATION_ATTENTION,
+    ]
 
 
 def test_absolute_final_post_bias_captures_complete_mutation_evidence() -> None:
     lowerer, _ = _lowerer_and_helper()
-    normalization_index = next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id
-        == "_absolute_final_normalization_attention_results"
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == ABSOLUTE_FINAL_NORMALIZATION_ATTENTION
-    )
-    invocation = lowerer.body[normalization_index - 1]
-    assert isinstance(invocation, ast.Assign)
-    assert len(invocation.targets) == 1
-    assert isinstance(invocation.targets[0], ast.Name)
-    assert invocation.targets[0].id == (
-        "_absolute_final_instancenorm_post_bias_stats"
-    )
-    assert isinstance(invocation.value, ast.Call)
-    assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == (
+    top_calls = [
+        node
+        for node in ast.walk(_absolute_final_cleanup_owner())
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id
+        in {
+            ABSOLUTE_FINAL_AFFINE_INSTANCENORM,
+            ABSOLUTE_FINAL_NORMALIZATION_ATTENTION,
+        }
+    ]
+    top_calls.sort(key=lambda node: (node.lineno, node.col_offset))
+    assert [call.func.id for call in top_calls] == [
+        ABSOLUTE_FINAL_AFFINE_INSTANCENORM,
+        ABSOLUTE_FINAL_NORMALIZATION_ATTENTION,
+    ]
+    assert all(ast.unparse(call.args[0]) == "context" for call in top_calls)
+
+    owner_calls = _absolute_final_affine_instancenorm_calls(
         "_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains"
     )
-    assert len(invocation.value.args) == 1
-    assert isinstance(invocation.value.args[0], ast.Name)
-    assert invocation.value.args[0].id == "model_ir"
-    assert len(invocation.value.keywords) == 1
-    layout_keyword = invocation.value.keywords[0]
-    assert layout_keyword.arg == "layout_state"
-    assert isinstance(layout_keyword.value, ast.Attribute)
-    assert isinstance(layout_keyword.value.value, ast.Name)
-    assert layout_keyword.value.value.id == "session"
-    assert layout_keyword.value.attr == "layout_state"
-
-    previous = lowerer.body[normalization_index - 2]
-    assert isinstance(previous, ast.Assign)
-    assert len(previous.targets) == 1
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_absolute_final_affine_post_add_stats"
-    assert isinstance(previous.value, ast.Call)
-    assert isinstance(previous.value.func, ast.Name)
-    assert previous.value.func.id == (
-        "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
-    )
-    following = lowerer.body[normalization_index]
-    assert isinstance(following, ast.Assign)
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == (
-        "_absolute_final_normalization_attention_results"
-    )
-    assert isinstance(following.value, ast.Call)
-    assert isinstance(following.value.func, ast.Name)
-    assert following.value.func.id == ABSOLUTE_FINAL_NORMALIZATION_ATTENTION
-
+    assert len(owner_calls) == 1
+    assert [ast.unparse(argument) for argument in owner_calls[0].args] == [
+        "context.model_ir"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in owner_calls[0].keywords
+    } == {"layout_state": "context.layout_state"}
     direct_statements = [
         statement
         for statement in lowerer.body
@@ -289,82 +433,62 @@ def test_absolute_final_post_bias_captures_complete_mutation_evidence() -> None:
             for node in ast.walk(statement)
         )
     ]
-    assert len(direct_statements) == 4
-    assert isinstance(direct_statements[0], ast.Assign)
-    assert isinstance(direct_statements[0].targets[0], ast.Name)
-    assert direct_statements[0].targets[0].id == (
-        "_terminal_instancenorm_post_bias_stats"
+    assert (
+        len(direct_statements)
+        + _very_late_pad_instancenorm_call_count(lowerer)
+        + _pre_terminal_instancenorm_call_count(
+            "_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains"
+        )
+        + len(owner_calls)
+        == 4
     )
-    assert isinstance(direct_statements[1], ast.Assign)
-    second_target = direct_statements[1].targets[0]
-    assert isinstance(second_target, ast.Name)
-    assert second_target.id == "_very_late_instancenorm_post_bias_stats"
-    assert isinstance(direct_statements[2], ast.Assign)
-    third_target = direct_statements[2].targets[0]
-    assert isinstance(third_target, ast.Name)
-    assert third_target.id == "_pre_terminal_affine_instancenorm_post_bias_stats"
-    assert direct_statements[3] is invocation
+    terminal_owner = _phase_result_owner(
+        direct_statements[0],
+        "cleanup.terminal.instancenorm_post_bias",
+    )
+    assert isinstance(terminal_owner.func, ast.Name)
+    assert terminal_owner.func.id == (
+        "_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains"
+    )
 
 
 def test_absolute_final_affine_post_add_captures_complete_mutation_evidence() -> (
     None
 ):
     lowerer, _ = _lowerer_and_helper()
-    post_bias_index = next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id
-        == "_absolute_final_instancenorm_post_bias_stats"
+    top_calls = [
+        node
+        for node in ast.walk(_absolute_final_cleanup_owner())
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id
+        in {
+            "run_boundary_shape_signature_cleanup",
+            ABSOLUTE_FINAL_AFFINE_INSTANCENORM,
+            ABSOLUTE_FINAL_NORMALIZATION_ATTENTION,
+        }
+    ]
+    top_calls.sort(key=lambda node: (node.lineno, node.col_offset))
+    assert [call.func.id for call in top_calls] == [
+        "run_boundary_shape_signature_cleanup",
+        ABSOLUTE_FINAL_AFFINE_INSTANCENORM,
+        ABSOLUTE_FINAL_NORMALIZATION_ATTENTION,
+    ]
+    assert ast.unparse(top_calls[1]) == (
+        f"{ABSOLUTE_FINAL_AFFINE_INSTANCENORM}(context)"
     )
-    invocation = lowerer.body[post_bias_index - 1]
-    assert isinstance(invocation, ast.Assign)
-    assert len(invocation.targets) == 1
-    assert isinstance(invocation.targets[0], ast.Name)
-    assert invocation.targets[0].id == "_absolute_final_affine_post_add_stats"
-    assert isinstance(invocation.value, ast.Call)
-    assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == (
+
+    owner_calls = _absolute_final_affine_instancenorm_calls(
         "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
     )
-    assert len(invocation.value.args) == 1
-    assert isinstance(invocation.value.args[0], ast.Name)
-    assert invocation.value.args[0].id == "model_ir"
-    assert len(invocation.value.keywords) == 1
-    layout_keyword = invocation.value.keywords[0]
-    assert layout_keyword.arg == "layout_state"
-    assert isinstance(layout_keyword.value, ast.Attribute)
-    assert isinstance(layout_keyword.value.value, ast.Name)
-    assert layout_keyword.value.value.id == "session"
-    assert layout_keyword.value.attr == "layout_state"
-
-    previous = lowerer.body[post_bias_index - 2]
-    assert isinstance(previous, ast.Assign)
-    assert len(previous.targets) == 1
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_absolute_final_static_signature_stats"
-    assert isinstance(previous.value, ast.Call)
-    assert isinstance(previous.value.func, ast.Name)
-    assert previous.value.func.id == "_sanitize_static_shape_signature_consistency"
-    realign = lowerer.body[post_bias_index - 3]
-    assert isinstance(realign, ast.Assign)
-    assert len(realign.targets) == 1
-    assert isinstance(realign.targets[0], ast.Name)
-    assert realign.targets[0].id == "_absolute_final_boundary_signature_stats"
-    assert isinstance(realign.value, ast.Call)
-    assert isinstance(realign.value.func, ast.Name)
-    assert realign.value.func.id == (
-        "_realign_dynamic_boundary_shape_signature_map"
-    )
-    following = lowerer.body[post_bias_index]
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == (
-        "_absolute_final_instancenorm_post_bias_stats"
-    )
+    assert len(owner_calls) == 1
+    assert [ast.unparse(argument) for argument in owner_calls[0].args] == [
+        "context.model_ir"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in owner_calls[0].keywords
+    } == {"layout_state": "context.layout_state"}
 
     direct_statements = [
         statement
@@ -378,45 +502,72 @@ def test_absolute_final_affine_post_add_captures_complete_mutation_evidence() ->
             for node in ast.walk(statement)
         )
     ]
-    assert len(direct_statements) == 3
-    assert isinstance(direct_statements[0], ast.Assign)
-    first_target = direct_statements[0].targets[0]
-    assert isinstance(first_target, ast.Name)
-    assert first_target.id == "_pre_terminal_affine_post_add_stats"
-    assert isinstance(direct_statements[1], ast.Assign)
-    second_target = direct_statements[1].targets[0]
-    assert isinstance(second_target, ast.Name)
-    assert second_target.id == "_very_late_affine_post_add_stats"
-    assert direct_statements[2] is invocation
+    assert (
+        len(direct_statements)
+        + PRE_TERMINAL_AFFINE_TAIL_PASS_IDS.count(
+            "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
+        )
+        + TERMINAL_SLICE_CONCAT_RECOVERY_PASS_IDS.count(
+            "_optimize_transpose_mul_posttranspose_add_nhwc_chains"
+        )
+        + len(owner_calls)
+        == 3
+    )
+    assert direct_statements == []
 
 
-def test_absolute_final_normalization_attention_context_and_wrapper_are_explicit() -> (
+def test_absolute_final_normalization_attention_context_and_composite_are_explicit() -> (
     None
 ):
     lowerer, helper = _lowerer_and_helper()
     statement = helper.body[0]
     assert isinstance(statement, ast.Return)
-    call = statement.value
-    assert isinstance(call, ast.Call)
-    assert isinstance(call.func, ast.Name)
-    assert call.func.id == "run_absolute_final_normalization_attention"
-    assert tuple(_expression_path(arg) for arg in call.args) == (
-        "absolute_final_normalization_attention_context",
+    assert isinstance(statement.value, ast.Tuple)
+    assert len(statement.value.elts) == 2
+    normalization_call = statement.value.elts[0]
+    dynamic_call = statement.value.elts[1]
+    assert isinstance(normalization_call, ast.Call)
+    assert isinstance(normalization_call.func, ast.Name)
+    assert normalization_call.func.id == "run_absolute_final_normalization_attention"
+    assert tuple(_expression_path(arg) for arg in normalization_call.args) == (
+        "context",
     )
-    assert call.keywords == []
+    assert normalization_call.keywords == []
+    assert isinstance(dynamic_call, ast.Call)
+    assert isinstance(dynamic_call.func, ast.Name)
+    assert dynamic_call.func.id == (
+        "rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs"
+    )
+    assert tuple(_expression_path(arg) for arg in dynamic_call.args) == (
+        "context.model_ir",
+    )
+    assert {
+        keyword.arg: _expression_path(keyword.value)
+        for keyword in dynamic_call.keywords
+    } == {"layout_state": "context.layout_state"}
 
-    context_assignment = next(
+    top_calls = _absolute_final_cleanup_calls(
+        ABSOLUTE_FINAL_NORMALIZATION_ATTENTION
+    )
+    assert len(top_calls) == 1
+    assert ast.unparse(top_calls[0]) == (
+        "run_absolute_final_normalization_attention_rank1_cleanup(context)"
+    )
+    invocation = next(
         statement
         for statement in lowerer.body
         if isinstance(statement, ast.Assign)
-        and any(
-            isinstance(target, ast.Name)
-            and target.id == "absolute_final_normalization_attention_context"
-            for target in statement.targets
-        )
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == ABSOLUTE_FINAL_CLEANUP_TARGET
     )
-    assert isinstance(context_assignment.value, ast.Name)
-    assert context_assignment.value.id == "shared_model_ir_pass_context"
+    assert ast.unparse(invocation.value) == (
+        "run_absolute_final_cleanup(shared_model_ir_pass_context)"
+    )
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id == "absolute_final_normalization_attention_context"
+        for node in ast.walk(lowerer)
+    )
 
 
 def test_absolute_final_normalization_attention_runner_preserves_order(
@@ -480,9 +631,20 @@ def test_absolute_final_normalization_attention_lowerer_captures_results() -> No
     assert len(helper.body) == 1
     helper_statement = helper.body[0]
     assert isinstance(helper_statement, ast.Return)
-    assert isinstance(helper_statement.value, ast.Call)
-    assert isinstance(helper_statement.value.func, ast.Name)
-    assert helper_statement.value.func.id == "run_absolute_final_normalization_attention"
+    assert isinstance(helper_statement.value, ast.Tuple)
+    assert len(helper_statement.value.elts) == 2
+    raw_call = helper_statement.value.elts[0]
+    assert isinstance(raw_call, ast.Call)
+    assert isinstance(raw_call.func, ast.Name)
+    assert raw_call.func.id == "run_absolute_final_normalization_attention"
+
+    top_calls = _absolute_final_cleanup_calls(
+        ABSOLUTE_FINAL_NORMALIZATION_ATTENTION
+    )
+    assert len(top_calls) == 1
+    assert ast.unparse(top_calls[0]) == (
+        "run_absolute_final_normalization_attention_rank1_cleanup(context)"
+    )
 
     invocation_index = next(
         index
@@ -490,25 +652,24 @@ def test_absolute_final_normalization_attention_lowerer_captures_results() -> No
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id
-        == "_absolute_final_normalization_attention_results"
+        and statement.targets[0].id == ABSOLUTE_FINAL_CLEANUP_TARGET
     )
     invocation = lowerer.body[invocation_index]
     assert isinstance(invocation, ast.Assign)
     assert isinstance(invocation.value, ast.Call)
     assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == ABSOLUTE_FINAL_NORMALIZATION_ATTENTION
-    assert invocation.value.args == []
+    assert invocation.value.func.id == ABSOLUTE_FINAL_CLEANUP
+    assert [ast.unparse(argument) for argument in invocation.value.args] == [
+        "shared_model_ir_pass_context"
+    ]
     assert invocation.value.keywords == []
 
-    previous = lowerer.body[invocation_index - 1]
     following = lowerer.body[invocation_index + 1]
-    assert isinstance(previous, ast.Assign)
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_absolute_final_instancenorm_post_bias_stats"
-    assert isinstance(following, ast.Assign)
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_absolute_final_dynamic_rank1_stats"
+    assert isinstance(following, ast.Expr)
+    assert ast.unparse(following) == (
+        "session.record_phase_result('topology_layout.primary.absolute_final', "
+        "run_topology_layout_refresh(model_ir))"
+    )
 
 
 def test_absolute_final_normalization_attention_module_does_not_import_lowerer() -> (

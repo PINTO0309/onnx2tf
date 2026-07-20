@@ -17,6 +17,21 @@ from onnx2tf.tflite_builder.passes.batchmatmul_affine_input_layout import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+POST_SINET_RESULT_TARGETS = (
+    "_post_sinet_batchmatmul_affine_input_stats",
+    "_post_sinet_batchmatmul_reshape_se_stats",
+    "_post_sinet_batchmatmul_adj_flags_stats",
+)
+POST_SINET_PHASE_IDS = (
+    "cleanup.post_sinet.batchmatmul_affine_input",
+    "cleanup.post_sinet.batchmatmul_reshape_se",
+    "cleanup.post_sinet.batchmatmul_adj_flags",
+)
+POST_SINET_OWNER_EXPRESSIONS = (
+    "_optimize_batchmatmul_affine_transpose_input_chains(model_ir)",
+    "_optimize_batchmatmul_reshape_se_nhwc_chains(model_ir)",
+    "_optimize_batchmatmul_transpose_input_to_adj_flags(model_ir)",
+)
 
 
 def _statement_call(statement: ast.stmt) -> ast.Call | None:
@@ -24,7 +39,17 @@ def _statement_call(statement: ast.stmt) -> ast.Call | None:
         statement.value,
         ast.Call,
     ):
-        return statement.value
+        call = statement.value
+        if (
+            isinstance(call.func, ast.Attribute)
+            and isinstance(call.func.value, ast.Name)
+            and call.func.value.id == "session"
+            and call.func.attr == "record_phase_result"
+            and len(call.args) == 2
+            and isinstance(call.args[1], ast.Call)
+        ):
+            return call.args[1]
+        return call
     return None
 
 
@@ -33,6 +58,33 @@ def _call_name(statement: ast.stmt) -> str | None:
     if call is None or not isinstance(call.func, ast.Name):
         return None
     return call.func.id
+
+
+def _assert_phase_result_record(statement: ast.stmt, phase_id: str) -> None:
+    assert isinstance(statement, ast.Expr)
+    record = statement.value
+    assert isinstance(record, ast.Call)
+    assert isinstance(record.func, ast.Attribute)
+    assert isinstance(record.func.value, ast.Name)
+    assert record.func.value.id == "session"
+    assert record.func.attr == "record_phase_result"
+    assert len(record.args) == 2
+    assert ast.literal_eval(record.args[0]) == phase_id
+
+
+def _phase_id(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
+        return None
+    call = statement.value
+    if (
+        not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != "session"
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
 
 
 def _fingerprint(model_ir: ModelIR) -> tuple[object, ...]:
@@ -151,7 +203,7 @@ def test_flatbuffer_direct_batchmatmul_affine_transpose_input_chains() -> None:
     assert rhs_shape_vals == [1, 256, 96]
 
 
-def test_batchmatmul_affine_input_results_are_retained_at_both_boundaries() -> None:
+def test_batchmatmul_affine_input_results_are_recorded_at_both_boundaries() -> None:
     tree = ast.parse(LOWERER_PATH.read_text(encoding="utf-8"))
     lowerer = next(
         node
@@ -174,11 +226,7 @@ def test_batchmatmul_affine_input_results_are_retained_at_both_boundaries() -> N
         if isinstance(statement, ast.If)
         and isinstance(statement.test, ast.Name)
         and statement.test.id == "optimize_layout_transpose_chains"
-        and any(
-            isinstance(node, ast.Name)
-            and node.id == "_terminal_mean_attention_results"
-            for node in ast.walk(statement)
-        )
+        and any(_call_name(child) == callback_name for child in statement.body)
     )
     terminal_index = next(
         index
@@ -186,15 +234,18 @@ def test_batchmatmul_affine_input_results_are_retained_at_both_boundaries() -> N
         if _call_name(statement) == callback_name
     )
     terminal = terminal_guard.body[terminal_index]
-    assert isinstance(terminal, ast.Assign)
-    assert len(terminal.targets) == 1
-    assert isinstance(terminal.targets[0], ast.Name)
-    assert terminal.targets[0].id == "_terminal_batchmatmul_affine_input_stats"
-    assert terminal_index > 0
-    predecessor = terminal_guard.body[terminal_index - 1]
+    _assert_phase_result_record(
+        terminal,
+        "cleanup.terminal.batchmatmul_affine_input",
+    )
+    assert terminal_index == 0
+    guard_index = lowerer.body.index(terminal_guard)
+    predecessor = lowerer.body[guard_index - 1]
     assert isinstance(predecessor, ast.Assign)
     assert isinstance(predecessor.targets[0], ast.Name)
-    assert predecessor.targets[0].id == "_terminal_mean_attention_results"
+    assert predecessor.targets[0].id == (
+        "_terminal_boundary_mean_attention_results"
+    )
     assert _call_name(terminal_guard.body[terminal_index + 1]) == (
         "_optimize_batchmatmul_reshape_se_nhwc_chains"
     )
@@ -205,16 +256,14 @@ def test_batchmatmul_affine_input_results_are_retained_at_both_boundaries() -> N
         if _call_name(statement) == callback_name
     )
     post_sinet = lowerer.body[post_sinet_index]
-    assert isinstance(post_sinet, ast.Assign)
-    assert len(post_sinet.targets) == 1
-    assert isinstance(post_sinet.targets[0], ast.Name)
-    assert post_sinet.targets[0].id == "_post_sinet_batchmatmul_affine_input_stats"
+    _assert_phase_result_record(
+        post_sinet,
+        "cleanup.post_sinet.batchmatmul_affine_input",
+    )
     post_sinet_predecessor = lowerer.body[post_sinet_index - 1]
-    assert isinstance(post_sinet_predecessor, ast.Assign)
-    assert len(post_sinet_predecessor.targets) == 1
-    assert isinstance(post_sinet_predecessor.targets[0], ast.Name)
-    assert post_sinet_predecessor.targets[0].id == (
-        "_post_cleanup_sa_pa_mirrorpad_stats"
+    _assert_phase_result_record(
+        post_sinet_predecessor,
+        "cleanup.post_cleanup.sa_pa_mirrorpad",
     )
     assert _call_name(post_sinet_predecessor) == (
         "_optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains"
@@ -228,3 +277,43 @@ def test_batchmatmul_affine_input_results_are_retained_at_both_boundaries() -> N
         assert call is not None
         assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
         assert call.keywords == []
+
+
+def test_post_sinet_batchmatmul_results_use_phase_result_store() -> None:
+    tree = ast.parse(LOWERER_PATH.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    records = [
+        statement
+        for statement in lowerer.body
+        if _phase_id(statement) in POST_SINET_PHASE_IDS
+    ]
+    indices = [lowerer.body.index(statement) for statement in records]
+
+    assert tuple(_phase_id(statement) for statement in records) == POST_SINET_PHASE_IDS
+    assert tuple(ast.unparse(statement.value.args[1]) for statement in records) == (
+        POST_SINET_OWNER_EXPRESSIONS
+    )
+    assert indices == list(range(indices[0], indices[0] + 3))
+    _assert_phase_result_record(
+        lowerer.body[indices[0] - 1],
+        "cleanup.post_cleanup.sa_pa_mirrorpad",
+    )
+    successor = lowerer.body[indices[-1] + 1]
+    _assert_phase_result_record(
+        successor,
+        "cleanup.post_sinet.relu_split_all_outputs",
+    )
+    assert ast.unparse(successor.value.args[1]) == (
+        "run_post_sinet_qkv_relu_split_all_cleanup("
+        "shared_model_ir_pass_context)[1]"
+    )
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id in POST_SINET_RESULT_TARGETS
+        and isinstance(node.ctx, ast.Load)
+        for node in ast.walk(lowerer)
+    )

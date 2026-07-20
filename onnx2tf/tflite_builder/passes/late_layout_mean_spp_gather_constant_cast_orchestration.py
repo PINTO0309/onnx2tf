@@ -160,3 +160,25 @@ def run_late_layout_mean_spp_gather_constant_cast(
         expected_pass_ids=expected_pass_ids,
         phase_name="late layout/mean/SPP/gather/constant-fold/cast",
     )
+
+
+def run_late_layout_mean_spp_gather_constant_cast_summary(
+    context: LateLayoutMeanSPPGatherConstantCastContext,
+    *,
+    include_layout_transpose: bool,
+) -> Dict[str, int]:
+    """Run the late layout cluster and return its prune-aware summary."""
+
+    initial_tensor_count = len(context.model_ir.tensors)
+    pass_results = run_late_layout_mean_spp_gather_constant_cast(
+        context,
+        include_layout_transpose=include_layout_transpose,
+    )
+    return summarize_late_layout_mean_spp_gather_constant_cast_mutations(
+        pass_results,
+        include_layout_transpose=include_layout_transpose,
+        pruned_unused_tensors=max(
+            0,
+            int(initial_tensor_count - len(context.model_ir.tensors)),
+        ),
+    )

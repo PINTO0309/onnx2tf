@@ -42,7 +42,18 @@ def _functions() -> dict[str, ast.FunctionDef]:
 def _statement_call(statement: ast.stmt) -> ast.Call | None:
     if not isinstance(statement, (ast.Assign, ast.Expr)):
         return None
-    return statement.value if isinstance(statement.value, ast.Call) else None
+    call = statement.value if isinstance(statement.value, ast.Call) else None
+    if (
+        call is not None
+        and isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        return call.args[1]
+    return call
 
 
 def _call_name(statement: ast.stmt) -> str | None:
@@ -126,25 +137,54 @@ def test_all_direct_squeeze_reshape_results_are_retained_observation_only() -> N
     assert len(locations) == 3
     assert tuple(
         _single_target(body[index]) for body, index in locations
-    ) == RESULT_TARGETS
+    ) == (None, None, None)
 
     first_body, first_index = locations[0]
-    assert _single_target(first_body[first_index - 1]) == (
-        "_layout_pass_set_1_instancenorm_prepost_stats"
+    assert ast.unparse(first_body[first_index - 1]) == (
+        "session.record_phase_result("
+        "'cleanup.layout_pass_set_1.instancenorm_prepost', "
+        "_optimize_transpose_instancenorm_prepost_nhwc_chains(model_ir, "
+        "layout_state=session.layout_state))"
+    )
+    assert ast.unparse(first_body[first_index]) == (
+        "session.record_phase_result("
+        "'cleanup.layout_pass_set_1.squeeze_reshape_identity', "
+        "run_squeeze_reshape_identity_cleanup(model_ir, "
+        "include_unary_passthrough=True, "
+        "layout_state=session.layout_state, "
+        "diagnostics=session.diagnostics))"
     )
     assert _single_target(first_body[first_index + 1]) == (
-        "_layout_pass_set_1_final_attention_quantized_suffix_results"
+        "_layout_pass_set_1_final_quantized_unary_safe_results"
     )
 
     core_body, core_index = locations[1]
-    assert _call_name(core_body[core_index - 1]) == (
-        "_resolve_dynamic_reshape_shapes"
+    assert ast.unparse(core_body[core_index]) == (
+        "session.record_phase_result("
+        "'cleanup.core.squeeze_reshape_identity', "
+        "run_squeeze_reshape_identity_cleanup(model_ir, "
+        "include_unary_passthrough=True, "
+        "layout_state=session.layout_state, "
+        "diagnostics=session.diagnostics))"
+    )
+    assert ast.unparse(core_body[core_index - 1]) == (
+        "session.record_phase_result("
+        "'shape_resolution.core.dynamic_reshape', "
+        "_resolve_dynamic_reshape_shapes(model_ir))"
     )
     assert _call_name(core_body[core_index + 1]) == (
         "run_indexed_prune_reconcile_cleanup"
     )
 
     final_body, final_index = locations[2]
+    assert ast.unparse(final_body[final_index]) == (
+        "session.record_phase_result("
+        "'cleanup.layout_pass_set_2.squeeze_reshape_identity', "
+        "run_squeeze_reshape_identity_cleanup(model_ir, "
+        "include_unary_passthrough=True, "
+        "layout_state=session.layout_state, "
+        "diagnostics=session.diagnostics))"
+    )
     convergence_loop = final_body[final_index - 1]
     assert isinstance(convergence_loop, ast.For)
     assert ast.unparse(convergence_loop.target) == "_"

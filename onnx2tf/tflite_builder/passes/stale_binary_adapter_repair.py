@@ -143,3 +143,19 @@ def _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(
             repaired
         ),
     }
+
+
+def run_stale_binary_adapter_repair_summary(
+    model_ir: ModelIR,
+) -> Dict[str, int]:
+    """Run stale binary-adapter repair and retain prune-only evidence."""
+
+    initial_tensor_count = len(model_ir.tensors)
+    result = _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(model_ir)
+    return {
+        **result,
+        "pruned_unused_tensors": max(
+            0,
+            int(initial_tensor_count - len(model_ir.tensors)),
+        ),
+    }

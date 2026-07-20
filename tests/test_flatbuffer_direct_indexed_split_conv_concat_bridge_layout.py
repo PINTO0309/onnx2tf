@@ -34,6 +34,45 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 TERMINAL_SPLIT_CONV_CONCAT_BRIDGE_OWNER = (
     "_optimize_split_conv_concat_transpose_bridge_to_single_post_nchw"
 )
+TERMINAL_ACTIVATION_BRIDGE_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_activation_bridge_orchestration.py"
+)
+TERMINAL_ACTIVATION_BRIDGE_OWNER = (
+    "run_terminal_activation_bridge_cleanup"
+)
+OUTER_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_qkv_activation_bridge_orchestration.py"
+)
+OUTER_OWNER = "run_terminal_qkv_activation_bridge_cleanup"
+OUTER_RESULT = "_terminal_qkv_activation_bridge_results"
+TOP_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_qkv_activation_layout_shape_orchestration.py"
+)
+TOP_OWNER = "run_terminal_qkv_activation_layout_shape_cleanup"
+TOP_RESULT = "_terminal_qkv_activation_layout_shape_results"
+LOWERER_OWNER = "run_terminal_affine_qkv_layout_shape_cleanup"
+LOWERER_RESULT = "_terminal_affine_qkv_layout_shape_results"
+TERMINAL_SINGLETON_CLAMP_SINET_OWNER = (
+    "run_terminal_singleton_clamp_sinet_hardswish_cleanup"
+)
+TERMINAL_SINGLETON_CLAMP_SINET_RESULT = (
+    "_terminal_singleton_clamp_sinet_hardswish_results"
+)
+PUBLIC_SPLIT_CONV_CONCAT_BRIDGE_OWNER = (
+    "optimize_split_conv_concat_transpose_bridge_to_single_post_nchw"
+)
 
 
 def _tensor(
@@ -734,6 +773,30 @@ def test_indexed_split_conv_concat_bridge_rejects_unsafe_candidate_transactional
 
 
 def test_terminal_split_conv_concat_bridge_captures_complete_mutation_evidence() -> None:
+    owner_tree = ast.parse(
+        TERMINAL_ACTIVATION_BRIDGE_OWNER_PATH.read_text(encoding="utf-8")
+    )
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == TERMINAL_ACTIVATION_BRIDGE_OWNER
+    )
+    invocation = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == PUBLIC_SPLIT_CONV_CONCAT_BRIDGE_OWNER
+    )
+    assert [ast.unparse(argument) for argument in invocation.args] == [
+        "context.model_ir"
+    ]
+    assert [keyword.arg for keyword in invocation.keywords] == [
+        "layout_state"
+    ]
+    assert ast.unparse(invocation.keywords[0].value) == "context.layout_state"
+
     tree = ast.parse(
         (
             REPO_ROOT
@@ -753,33 +816,60 @@ def test_terminal_split_conv_concat_bridge_captures_complete_mutation_evidence()
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_terminal_split_conv_concat_bridge_stats"
+        and statement.targets[0].id == LOWERER_RESULT
     )
-    invocation = lowerer.body[invocation_index]
-    assert isinstance(invocation, ast.Assign)
-    assert isinstance(invocation.value, ast.Call)
-    assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == TERMINAL_SPLIT_CONV_CONCAT_BRIDGE_OWNER
-    assert len(invocation.value.args) == 1
-    assert isinstance(invocation.value.args[0], ast.Name)
-    assert invocation.value.args[0].id == "model_ir"
-    assert [keyword.arg for keyword in invocation.value.keywords] == [
-        "layout_state"
-    ]
-
+    composite = lowerer.body[invocation_index]
+    assert isinstance(composite, ast.Assign)
+    assert isinstance(composite.value, ast.Call)
+    assert isinstance(composite.value.func, ast.Name)
+    assert composite.value.func.id == LOWERER_OWNER
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in composite.value.keywords
+    } == {
+        "include_layout_transpose": "optimize_layout_transpose_chains",
+    }
     previous = lowerer.body[invocation_index - 1]
-    assert isinstance(previous, ast.Assign)
-    assert len(previous.targets) == 1
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_late_qkv_stats"
-    assert isinstance(previous.value, ast.Call)
-    assert isinstance(previous.value.func, ast.Name)
-    assert previous.value.func.id == "summarize_qkv_attention_mutations"
+    assert isinstance(previous, ast.If)
+    assert ast.unparse(previous.test) == (
+        "_late_binary_layout_recovery_requires_reconciliation"
+    )
     following = lowerer.body[invocation_index + 1]
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "terminal_hardswish_se_tensor_count"
+    assert isinstance(following, ast.Expr)
+    assert isinstance(following.value, ast.Call)
+    assert isinstance(following.value.func, ast.Attribute)
+    assert ast.unparse(following.value.func) == "session.record_phase_result"
+    assert ast.literal_eval(following.value.args[0]) == (
+        "shape_reconciliation.terminal.expand_squeeze"
+    )
+    top_tree = ast.parse(TOP_OWNER_PATH.read_text(encoding="utf-8"))
+    top_owner = next(
+        node
+        for node in top_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == TOP_OWNER
+    )
+    top_calls = [
+        node
+        for node in ast.walk(top_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OUTER_OWNER
+    ]
+    assert len(top_calls) == 1
+    outer_tree = ast.parse(OUTER_OWNER_PATH.read_text(encoding="utf-8"))
+    outer_owner = next(
+        node
+        for node in outer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == OUTER_OWNER
+    )
+    outer_calls = [
+        node
+        for node in ast.walk(outer_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == TERMINAL_ACTIVATION_BRIDGE_OWNER
+    ]
+    assert len(outer_calls) == 1
 
 
 def test_split_conv_concat_bridge_retains_both_earlier_results() -> None:
@@ -797,23 +887,54 @@ def test_split_conv_concat_bridge_retains_both_earlier_results() -> None:
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
 
-    def _call_name(statement: ast.stmt) -> str | None:
+    def _statement_call(statement: ast.stmt) -> ast.Call | None:
         if not isinstance(statement, (ast.Assign, ast.Expr)):
             return None
         if not isinstance(statement.value, ast.Call):
             return None
-        if not isinstance(statement.value.func, ast.Name):
-            return None
-        return statement.value.func.id
+        call = statement.value
+        if (
+            isinstance(call.func, ast.Attribute)
+            and isinstance(call.func.value, ast.Name)
+            and call.func.value.id == "session"
+            and call.func.attr == "record_phase_result"
+            and len(call.args) == 2
+            and isinstance(call.args[1], ast.Call)
+        ):
+            return call.args[1]
+        return call
 
-    all_calls = [
+    def _call_name(statement: ast.stmt) -> str | None:
+        call = _statement_call(statement)
+        if call is None or not isinstance(call.func, ast.Name):
+            return None
+        return call.func.id
+
+    lowerer_calls = [
         node
         for node in ast.walk(lowerer)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == TERMINAL_SPLIT_CONV_CONCAT_BRIDGE_OWNER
     ]
-    assert len(all_calls) == 3
+    assert len(lowerer_calls) == 2
+    owner_tree = ast.parse(
+        TERMINAL_ACTIVATION_BRIDGE_OWNER_PATH.read_text(encoding="utf-8")
+    )
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == TERMINAL_ACTIVATION_BRIDGE_OWNER
+    )
+    owner_calls = [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == PUBLIC_SPLIT_CONV_CONCAT_BRIDGE_OWNER
+    ]
+    assert len(owner_calls) == 1
 
     terminal_guard = next(
         statement
@@ -833,19 +954,29 @@ def test_split_conv_concat_bridge_retains_both_earlier_results() -> None:
         if _call_name(statement) == TERMINAL_SPLIT_CONV_CONCAT_BRIDGE_OWNER
     )
     terminal = terminal_guard.body[terminal_index]
-    assert isinstance(terminal, ast.Assign)
-    assert len(terminal.targets) == 1
-    assert isinstance(terminal.targets[0], ast.Name)
-    assert terminal.targets[0].id == (
-        "_terminal_qkv_split_conv_concat_bridge_stats"
+    assert isinstance(terminal, ast.Expr)
+    record = terminal.value
+    assert isinstance(record, ast.Call)
+    assert isinstance(record.func, ast.Attribute)
+    assert isinstance(record.func.value, ast.Name)
+    assert record.func.value.id == "session"
+    assert record.func.attr == "record_phase_result"
+    assert ast.literal_eval(record.args[0]) == (
+        "cleanup.terminal.qkv_split_conv_concat_bridge"
     )
     predecessor = terminal_guard.body[terminal_index - 1]
     assert isinstance(predecessor, ast.Assign)
     assert isinstance(predecessor.targets[0], ast.Name)
     assert predecessor.targets[0].id == "_terminal_qkv_attention_results"
-    assert _call_name(terminal_guard.body[terminal_index + 1]) == (
-        "_run_singleton_reshape_layout_pass_cluster"
+    assert terminal_index == len(terminal_guard.body) - 1
+    terminal_guard_index = lowerer.body.index(terminal_guard)
+    terminal_successor = lowerer.body[terminal_guard_index + 1]
+    assert isinstance(terminal_successor, ast.Assign)
+    assert isinstance(terminal_successor.targets[0], ast.Name)
+    assert terminal_successor.targets[0].id == (
+        TERMINAL_SINGLETON_CLAMP_SINET_RESULT
     )
+    assert _call_name(terminal_successor) == TERMINAL_SINGLETON_CLAMP_SINET_OWNER
 
     post_sinet_index = next(
         index
@@ -853,11 +984,15 @@ def test_split_conv_concat_bridge_retains_both_earlier_results() -> None:
         if _call_name(statement) == TERMINAL_SPLIT_CONV_CONCAT_BRIDGE_OWNER
     )
     post_sinet = lowerer.body[post_sinet_index]
-    assert isinstance(post_sinet, ast.Assign)
-    assert len(post_sinet.targets) == 1
-    assert isinstance(post_sinet.targets[0], ast.Name)
-    assert post_sinet.targets[0].id == (
-        "_post_sinet_split_conv_concat_bridge_stats"
+    assert isinstance(post_sinet, ast.Expr)
+    post_sinet_record = post_sinet.value
+    assert isinstance(post_sinet_record, ast.Call)
+    assert isinstance(post_sinet_record.func, ast.Attribute)
+    assert isinstance(post_sinet_record.func.value, ast.Name)
+    assert post_sinet_record.func.value.id == "session"
+    assert post_sinet_record.func.attr == "record_phase_result"
+    assert ast.literal_eval(post_sinet_record.args[0]) == (
+        "cleanup.post_sinet.split_conv_concat_bridge"
     )
     assert _call_name(lowerer.body[post_sinet_index - 1]) == (
         "_optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains"
@@ -867,20 +1002,21 @@ def test_split_conv_concat_bridge_retains_both_earlier_results() -> None:
     )
 
     for statement in (terminal, post_sinet):
-        assert isinstance(statement.value, ast.Call)
-        assert [ast.unparse(argument) for argument in statement.value.args] == [
+        call = _statement_call(statement)
+        assert call is not None
+        assert [ast.unparse(argument) for argument in call.args] == [
             "model_ir"
         ]
         assert {
             keyword.arg: ast.unparse(keyword.value)
-            for keyword in statement.value.keywords
+            for keyword in call.keywords
         } == {"layout_state": "session.layout_state"}
 
-    late = next(
-        statement
-        for statement in lowerer.body
-        if isinstance(statement, ast.Assign)
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_terminal_split_conv_concat_bridge_stats"
-    )
-    assert _call_name(late) == TERMINAL_SPLIT_CONV_CONCAT_BRIDGE_OWNER
+    late = owner_calls[0]
+    assert [ast.unparse(argument) for argument in late.args] == [
+        "context.model_ir"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in late.keywords
+    } == {"layout_state": "context.layout_state"}

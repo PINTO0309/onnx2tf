@@ -28,8 +28,17 @@ ORCHESTRATION_PATH = (
 )
 OWNER = "_run_late_dequant_unary_fanout_pass_cluster"
 RESULT_TARGET = "_late_dequant_unary_fanout_results"
-PREDECESSOR_TARGET = "_late_dequant_hardsigmoid_bridge_stats"
-SUCCESSOR = "_optimize_swish_transpose_passthrough_chains"
+SUCCESSOR_PHASE_ID = "shape_reconciliation.primary.very_late_broadcast"
+COMPOSITE_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "late_dequant_hardsigmoid_unary_orchestration.py"
+)
+COMPOSITE_OWNER = "run_late_dequant_hardsigmoid_unary_cleanup"
+LOWERER_OWNER = "run_late_dequant_swish_layout_tail_cleanup"
+COMPOSITE_TARGET = "_late_dequant_swish_layout_tail_results"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -70,6 +79,18 @@ def _single_target(statement: ast.stmt) -> str | None:
     return target.id if isinstance(target, ast.Name) else None
 
 
+def _phase_id(statement: ast.stmt) -> str | None:
+    call = _statement_call(statement)
+    if (
+        call is None
+        or not isinstance(call.func, ast.Attribute)
+        or ast.unparse(call.func) != "session.record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
+
+
 def _context(name: str) -> ModelIRPassContext:
     model_ir = ModelIR(name)
     return ModelIRPassContext(
@@ -84,7 +105,7 @@ def _direct_location() -> tuple[ast.FunctionDef, int]:
     return lowerer, next(
         index
         for index, statement in enumerate(lowerer.body)
-        if _call_name(statement) == OWNER
+        if _call_name(statement) == LOWERER_OWNER
     )
 
 
@@ -120,14 +141,21 @@ def test_late_dequant_unary_fanout_result_contract_is_explicit() -> None:
 
     observed_lowerer, index = _direct_location()
     assert observed_lowerer.name == lowerer.name
-    assert _single_target(observed_lowerer.body[index]) == RESULT_TARGET
-    assert _single_target(observed_lowerer.body[index - 1]) == PREDECESSOR_TARGET
-    assert _call_name(observed_lowerer.body[index + 1]) == SUCCESSOR
-    assert sum(
+    assert _single_target(observed_lowerer.body[index]) == COMPOSITE_TARGET
+    assert isinstance(observed_lowerer.body[index - 1], ast.If)
+    assert _phase_id(observed_lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
+    assert not any(
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == OWNER
         for node in ast.walk(lowerer)
+    )
+    composite = _functions(COMPOSITE_PATH)[COMPOSITE_OWNER]
+    assert sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_late_dequant_unary_fanout"
+        for node in ast.walk(composite)
     ) == 1
 
 
@@ -177,7 +205,7 @@ def test_late_dequant_unary_fanout_results_propagate_to_direct_target(
 
     observed_lowerer, index = _direct_location()
     assert observed_lowerer.name == lowerer.name
-    assert _single_target(observed_lowerer.body[index]) == RESULT_TARGET
+    assert _single_target(observed_lowerer.body[index]) == COMPOSITE_TARGET
     assert not any(
         isinstance(node, ast.Name)
         and node.id == RESULT_TARGET

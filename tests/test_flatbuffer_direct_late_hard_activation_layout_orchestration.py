@@ -22,6 +22,34 @@ from onnx2tf.tflite_builder.passes.late_hard_activation_layout_orchestration imp
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 LATE_HARD_ACTIVATION_LAYOUT = "_run_late_hard_activation_layout_pass_pair"
+TERMINAL_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_activation_bridge_orchestration.py"
+)
+TERMINAL_OWNER = "run_terminal_activation_bridge_cleanup"
+OUTER_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_qkv_activation_bridge_orchestration.py"
+)
+OUTER_OWNER = "run_terminal_qkv_activation_bridge_cleanup"
+OUTER_RESULT = "_terminal_qkv_activation_bridge_results"
+TOP_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_qkv_activation_layout_shape_orchestration.py"
+)
+TOP_OWNER = "run_terminal_qkv_activation_layout_shape_cleanup"
+TOP_RESULT = "_terminal_qkv_activation_layout_shape_results"
+LOWERER_OWNER = "run_terminal_affine_qkv_layout_shape_cleanup"
+LOWERER_RESULT = "_terminal_affine_qkv_layout_shape_results"
 
 
 def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -38,6 +66,47 @@ def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
         and node.name == LATE_HARD_ACTIVATION_LAYOUT
     )
     return lowerer, helper
+
+
+def _terminal_owner() -> ast.FunctionDef:
+    tree = ast.parse(TERMINAL_OWNER_PATH.read_text(encoding="utf-8"))
+    return next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == TERMINAL_OWNER
+    )
+
+
+def _outer_calls() -> list[ast.Call]:
+    tree = ast.parse(OUTER_OWNER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == OUTER_OWNER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == TERMINAL_OWNER
+    ]
+
+
+def _top_calls() -> list[ast.Call]:
+    tree = ast.parse(TOP_OWNER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == TOP_OWNER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OUTER_OWNER
+    ]
 
 
 def _expression_path(node: ast.expr) -> Any:
@@ -320,59 +389,47 @@ def test_late_hard_activation_returns_and_summarizes_mutations(
 
 def test_lowerer_captures_late_hard_activation_mutation_evidence() -> None:
     lowerer, _ = _lowerer_and_helper()
-    target_names = (
-        "late_hard_activation_tensor_count",
-        "late_hard_activation_results",
-        "_late_hard_activation_stats",
+    summary_call = next(
+        node
+        for node in ast.walk(_terminal_owner())
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_late_hard_activation_layout_summary"
     )
-    assignment_indices = {}
-    assignments = {}
-    for index, statement in enumerate(lowerer.body):
-        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
-            continue
-        target = statement.targets[0]
-        if isinstance(target, ast.Name) and target.id in target_names:
-            assignment_indices[target.id] = index
-            assignments[target.id] = statement.value
-
-    first_index = min(assignment_indices.values())
-    assert assignment_indices == {
-        target_names[0]: first_index,
-        target_names[1]: first_index + 1,
-        target_names[2]: first_index + 2,
+    assert [_expression_path(argument) for argument in summary_call.args] == [
+        "context"
+    ]
+    assert {
+        keyword.arg: _expression_path(keyword.value)
+        for keyword in summary_call.keywords
+    } == {
+        "include_layout_transpose": "include_layout_transpose",
     }
-    result_call = assignments[target_names[1]]
-    assert isinstance(result_call, ast.Call)
-    assert isinstance(result_call.func, ast.Name)
-    assert result_call.func.id == LATE_HARD_ACTIVATION_LAYOUT
-    summary_call = assignments[target_names[2]]
-    assert isinstance(summary_call, ast.Call)
-    assert isinstance(summary_call.func, ast.Name)
-    assert summary_call.func.id == (
-        "summarize_late_hard_activation_layout_mutations"
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id
+        in {"late_hard_activation_tensor_count", "late_hard_activation_results"}
+        for node in ast.walk(lowerer)
     )
-    assert {keyword.arg for keyword in summary_call.keywords} == {
-        "include_layout_transpose",
-        "pruned_unused_tensors",
-    }
 
 
 def test_late_hard_activation_layout_preserves_required_invocation_option() -> None:
-    lowerer, _ = _lowerer_and_helper()
     invocations = [
         node
-        for node in ast.walk(lowerer)
+        for node in ast.walk(_terminal_owner())
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id == LATE_HARD_ACTIVATION_LAYOUT
+        and node.func.id == "run_late_hard_activation_layout_summary"
     ]
 
     assert len(invocations) == 1
-    assert invocations[0].args == []
+    assert [_expression_path(argument) for argument in invocations[0].args] == [
+        "context"
+    ]
     assert {
         str(keyword.arg): _expression_path(keyword.value)
         for keyword in invocations[0].keywords
-    } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
+    } == {"include_layout_transpose": "include_layout_transpose"}
 
 
 def test_late_hard_activation_layout_preserves_outer_boundaries() -> None:
@@ -383,32 +440,27 @@ def test_late_hard_activation_layout_preserves_outer_boundaries() -> None:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "late_hard_activation_results"
+        and statement.targets[0].id == LOWERER_RESULT
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == LATE_HARD_ACTIVATION_LAYOUT
+        and statement.value.func.id == LOWERER_OWNER
     )
 
-    previous = lowerer.body[invocation_index - 2]
-    following = lowerer.body[invocation_index + 2]
-    assert isinstance(previous, ast.Assign)
-    assert len(previous.targets) == 1
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_terminal_hardswish_se_stats"
-    assert isinstance(previous.value, ast.Dict)
-    previous_call = previous.value.values[0]
-    assert isinstance(previous_call, ast.Call)
-    assert isinstance(previous_call.func, ast.Name)
-    assert previous_call.func.id == (
-        "_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains"
+    previous = lowerer.body[invocation_index - 1]
+    following = lowerer.body[invocation_index + 1]
+    assert isinstance(previous, ast.If)
+    assert ast.unparse(previous.test) == (
+        "_late_binary_layout_recovery_requires_reconciliation"
     )
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_absolute_final_pre_concat_stats"
+    assert isinstance(following, ast.Expr)
     assert isinstance(following.value, ast.Call)
-    assert isinstance(following.value.func, ast.Name)
-    assert following.value.func.id == "_optimize_transpose_pre_concat_nhwc_chains"
+    assert isinstance(following.value.func, ast.Attribute)
+    assert ast.unparse(following.value.func) == "session.record_phase_result"
+    assert ast.literal_eval(following.value.args[0]) == (
+        "shape_reconciliation.terminal.expand_squeeze"
+    )
+    assert len(_top_calls()) == 1
+    assert len(_outer_calls()) == 1
 
 
 def test_late_hard_activation_layout_context_is_explicit() -> None:

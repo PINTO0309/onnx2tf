@@ -45,9 +45,41 @@ GATE_LAYOUT_PASS_IDS = (
     "run_mixed_attention_layout_cleanup",
     *GATE_LAYOUT_REQUIRED_PASS_IDS,
 )
+LATE_NDHWC_COST_VOLUME_PASS_IDS = (
+    "run_ndhwc_gate_layout_cleanup",
+    "run_cost_volume_scatter_layout_cleanup",
+)
 
 
 GateLayoutContext = ModelIRPassContext
+
+
+def run_late_ndhwc_cost_volume_layout_cleanup(
+    context: GateLayoutContext,
+) -> Dict[str, int]:
+    """Run the adjacent late NDHWC and cost-volume groups with one state."""
+
+    state_scope = ModelIRPassStateScope(
+        context.model_ir,
+        layout_state=context.layout_state,
+    )
+    ndhwc_details = run_ndhwc_gate_layout_cleanup(
+        context.model_ir,
+        layout_state=context.layout_state,
+        diagnostics=context.diagnostics,
+        state_scope=state_scope,
+    )
+    cost_volume_details = run_cost_volume_scatter_layout_cleanup(
+        context.model_ir,
+        layout_state=context.layout_state,
+        diagnostics=context.diagnostics,
+        state_scope=state_scope,
+    )
+    return {
+        str(key): int(value)
+        for details in (ndhwc_details, cost_volume_details)
+        for key, value in details.items()
+    }
 
 
 def build_gate_layout_invocations(

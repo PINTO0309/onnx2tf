@@ -47,8 +47,8 @@ RESULT_SCHEMAS = (
     },
     {"optimized_transpose_squeeze_mean_squeeze_terminal_nhwc_chains": 0},
 )
-PREDECESSOR_TARGET = "_late_conv1d_tencoder_stats"
-SUCCESSOR_TARGET = "_very_late_pad_layout_stats"
+COMPOSITE_TARGET = "_late_dequant_swish_layout_tail_results"
+COMPOSITE_OWNER = "run_late_dequant_swish_layout_tail_cleanup"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -92,18 +92,6 @@ def _contains_call(node: ast.AST, name: str) -> bool:
 
 def _lowerer() -> ast.FunctionDef:
     return _functions(LOWERER_PATH)["lower_onnx_to_ir"]
-
-
-def _direct_locations() -> tuple[ast.FunctionDef, tuple[int, ...]]:
-    lowerer = _lowerer()
-    return lowerer, tuple(
-        next(
-            index
-            for index, statement in enumerate(lowerer.body)
-            if _call_name(statement) == owner
-        )
-        for owner in OWNERS
-    )
 
 
 def test_late_tail_schemas_wrappers_and_positive_cleanup_are_explicit() -> None:
@@ -156,36 +144,26 @@ def test_late_tail_schemas_wrappers_and_positive_cleanup_are_explicit() -> None:
         assert callback(ModelIR(f"{owner}_schema")) == schema
 
 
-def test_late_tail_direct_chain_is_explicit() -> None:
-    lowerer, indices = _direct_locations()
-    assert indices == tuple(range(indices[0], indices[0] + len(OWNERS)))
-    for index, owner, target in zip(indices, OWNERS, RESULT_TARGETS):
-        invocation = lowerer.body[index]
-        assert _single_target(invocation) == target
-        call = _statement_call(invocation)
-        assert call is not None
-        assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-        assert {
-            keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
-        } == {"layout_state": "session.layout_state"}
-        assert sum(
+def test_late_tail_direct_calls_move_to_composite() -> None:
+    lowerer = _lowerer()
+    for owner in OWNERS:
+        assert not any(
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
             and node.func.id == owner
             for node in ast.walk(lowerer)
-        ) == 1
-    assert _single_target(lowerer.body[indices[0] - 1]) == PREDECESSOR_TARGET
-    assert _single_target(lowerer.body[indices[-1] + 1]) == SUCCESSOR_TARGET
-
-
-def test_late_tail_results_are_retained_for_observation() -> None:
-    lowerer, indices = _direct_locations()
-    assert tuple(_single_target(lowerer.body[index]) for index in indices) == (
-        RESULT_TARGETS
+        )
+    composite = next(
+        statement
+        for statement in lowerer.body
+        if _single_target(statement) == COMPOSITE_TARGET
     )
+    assert _call_name(composite) == COMPOSITE_OWNER
+
+
+def test_late_tail_old_result_locals_are_removed() -> None:
+    lowerer = _lowerer()
     assert not any(
-        isinstance(node, ast.Name)
-        and node.id in RESULT_TARGETS
-        and isinstance(node.ctx, ast.Load)
+        isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
     )

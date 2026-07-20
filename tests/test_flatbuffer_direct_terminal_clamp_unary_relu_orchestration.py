@@ -37,6 +37,20 @@ LAYOUT_TRANSPOSE_PATH = (
 )
 TERMINAL_CLAMP_UNARY_RELU = "_run_terminal_clamp_unary_relu_pass_cluster"
 RESULT_TARGET = "_terminal_clamp_unary_relu_results"
+COMPOSITE_OWNER = "run_terminal_singleton_clamp_sinet_cleanup"
+COMPOSITE_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_singleton_clamp_sinet_orchestration.py"
+)
+LOWERER_COMPOSITE_OWNER = (
+    "run_terminal_singleton_clamp_sinet_hardswish_cleanup"
+)
+LOWERER_COMPOSITE_TARGET = (
+    "_terminal_singleton_clamp_sinet_hardswish_results"
+)
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -243,7 +257,7 @@ def test_terminal_clamp_unary_relu_child_schemas_and_pruning_are_explicit() -> N
 
 
 def test_terminal_clamp_unary_relu_invocation_remains_zero_argument() -> None:
-    lowerer, _ = _lowerer_and_helper()
+    lowerer, helper = _lowerer_and_helper()
     invocations = [
         node
         for node in ast.walk(lowerer)
@@ -252,9 +266,15 @@ def test_terminal_clamp_unary_relu_invocation_remains_zero_argument() -> None:
         and node.func.id == TERMINAL_CLAMP_UNARY_RELU
     ]
 
-    assert len(invocations) == 1
-    assert invocations[0].args == []
-    assert invocations[0].keywords == []
+    assert invocations == []
+    assert helper.args.args == []
+    assert helper.args.kwonlyargs == []
+    assert any(
+        isinstance(statement, ast.Assign)
+        and _single_target(statement) == LOWERER_COMPOSITE_TARGET
+        and _direct_call_name(statement) == LOWERER_COMPOSITE_OWNER
+        for statement in lowerer.body
+    )
 
 
 def test_terminal_clamp_unary_relu_preserves_outer_boundaries() -> None:
@@ -263,10 +283,10 @@ def test_terminal_clamp_unary_relu_preserves_outer_boundaries() -> None:
         index
         for index, statement in enumerate(lowerer.body)
         if isinstance(statement, ast.Assign)
-        and _single_target(statement) == RESULT_TARGET
+        and _single_target(statement) == LOWERER_COMPOSITE_TARGET
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == TERMINAL_CLAMP_UNARY_RELU
+        and statement.value.func.id == LOWERER_COMPOSITE_OWNER
     )
 
     previous = lowerer.body[invocation_index - 1]
@@ -274,29 +294,54 @@ def test_terminal_clamp_unary_relu_preserves_outer_boundaries() -> None:
     assert isinstance(previous.test, ast.Name)
     assert previous.test.id == "optimize_layout_transpose_chains"
     previous_call = previous.body[-1]
-    assert isinstance(previous_call, ast.Assign)
-    assert len(previous_call.targets) == 1
-    assert isinstance(previous_call.targets[0], ast.Name)
-    assert previous_call.targets[0].id == "_terminal_singleton_reshape_results"
-    assert isinstance(previous_call.value, ast.Call)
-    assert isinstance(previous_call.value.func, ast.Name)
-    assert previous_call.value.func.id == "_run_singleton_reshape_layout_pass_cluster"
+    assert isinstance(previous_call, ast.Expr)
+    assert ast.unparse(previous_call).startswith(
+        "session.record_phase_result("
+        "'cleanup.terminal.qkv_split_conv_concat_bridge'"
+    )
+
+    owner = _functions(COMPOSITE_PATH)[COMPOSITE_OWNER]
+    clamp_sinet_call = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_terminal_clamp_sinet_layout_cleanup"
+    )
+    assert [ast.unparse(argument) for argument in clamp_sinet_call.args] == [
+        "context"
+    ]
+    assert clamp_sinet_call.keywords == []
+
+    singleton_call = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_singleton_reshape"
+    )
     assert {
         str(keyword.arg): _expression_path(keyword.value)
-        for keyword in previous_call.value.keywords
+        for keyword in singleton_call.keywords
     } == {
         "include_layout_transpose": True,
         "include_multi_branch_gate": True,
     }
 
+    invocation = lowerer.body[invocation_index]
+    assert isinstance(invocation, ast.Assign)
+    assert isinstance(invocation.value, ast.Call)
+    assert [ast.unparse(argument) for argument in invocation.value.args] == [
+        "sinet_terminal_layout_recovery_context"
+    ]
+    assert {
+        str(keyword.arg): _expression_path(keyword.value)
+        for keyword in invocation.value.keywords
+    } == {"include_terminal_singleton": "optimize_layout_transpose_chains"}
     following = lowerer.body[invocation_index + 1]
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_terminal_sinet_layout_recovery_results"
-    assert isinstance(following.value, ast.Call)
-    assert isinstance(following.value.func, ast.Name)
-    assert following.value.func.id == "_run_sinet_terminal_layout_recovery_sequence"
+    assert ast.unparse(following).startswith(
+        "session.record_phase_result('cleanup.terminal.sinet_hardswish_se'"
+    )
 
 
 def test_terminal_clamp_unary_relu_context_and_wrapper_are_explicit() -> None:
@@ -398,13 +443,12 @@ def test_terminal_clamp_unary_relu_propagates_and_retains_ordered_results(
     invocation_statement = next(
         statement
         for statement in lowerer.body
-        if _direct_call_name(statement) == TERMINAL_CLAMP_UNARY_RELU
+        if _direct_call_name(statement) == LOWERER_COMPOSITE_OWNER
     )
-    assert _single_target(invocation_statement) == RESULT_TARGET
+    assert _single_target(invocation_statement) == LOWERER_COMPOSITE_TARGET
     assert not any(
         isinstance(node, ast.Name)
         and node.id == RESULT_TARGET
-        and isinstance(node.ctx, ast.Load)
         for node in ast.walk(lowerer)
     )
 

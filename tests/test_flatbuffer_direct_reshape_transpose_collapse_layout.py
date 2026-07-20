@@ -28,6 +28,9 @@ from onnx2tf.tflite_builder.passes.reshape_transpose_collapse_layout import (
 from onnx2tf.tflite_builder.passes.layout_recovery_orchestration import (
     ATTENTION_RECOVERY_PASS_IDS,
 )
+from onnx2tf.tflite_builder.passes.late_reshape_layout_orchestration import (
+    LATE_RESHAPE_LAYOUT_PASS_IDS,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -754,6 +757,9 @@ def test_reshape_transpose_collapse_keeps_owner_wrapper_and_calls() -> None:
     assert (
         len(calls)
         + ATTENTION_RECOVERY_PASS_IDS.count(
+            "_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains"
+        )
+        + LATE_RESHAPE_LAYOUT_PASS_IDS.count(
             "_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains"
         )
         == 2

@@ -12,8 +12,23 @@ LEGACY_OWNER_PATH = (
     / "passes"
     / "nhwc_concat_legacy_layout.py"
 )
+PRE_CONCAT_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "pre_concat_nhwc_layout.py"
+)
+TERMINAL_LAYOUT_SHAPE_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_layout_shape_orchestration.py"
+)
+TERMINAL_LAYOUT_SHAPE_OWNER = "run_terminal_layout_shape_cleanup"
 PRE_CONCAT = "_optimize_transpose_pre_concat_nhwc_chains"
-LEGACY_WRAPPER = "_optimize_transpose_pre_concat_nhwc_chains_legacy"
+PRE_CONCAT_OWNER = "optimize_transpose_pre_concat_nhwc_chains"
 LEGACY_OWNER = "optimize_transpose_pre_concat_nhwc_chains_legacy"
 RESULT_TARGETS = (
     "_layout_opt_pre_concat_stats",
@@ -36,10 +51,20 @@ def _direct_call(statement: ast.stmt) -> ast.Call | None:
         return None
     if not isinstance(statement.value, ast.Call):
         return None
-    function = statement.value.func
+    call = statement.value
+    if (
+        isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        call = call.args[1]
+    function = call.func
     if not isinstance(function, ast.Name) or function.id != PRE_CONCAT:
         return None
-    return statement.value
+    return call
 
 
 def _single_target(statement: ast.stmt) -> str | None:
@@ -61,30 +86,65 @@ def _call_name(statement: ast.stmt) -> str | None:
     if not isinstance(statement, (ast.Assign, ast.Expr)):
         return None
     value = statement.value
-    if not isinstance(value, ast.Call) or not isinstance(value.func, ast.Name):
+    if not isinstance(value, ast.Call):
+        return None
+    if (
+        isinstance(value.func, ast.Attribute)
+        and isinstance(value.func.value, ast.Name)
+        and value.func.value.id == "session"
+        and value.func.attr == "record_phase_result"
+        and len(value.args) == 2
+        and isinstance(value.args[1], ast.Call)
+    ):
+        value = value.args[1]
+    if not isinstance(value.func, ast.Name):
         return None
     return value.func.id
 
 
 def test_pre_concat_composite_schema_order_and_cleanup_are_explicit() -> None:
-    composite = _functions(LOWERER_PATH)[PRE_CONCAT]
+    composite_tree = ast.parse(
+        PRE_CONCAT_OWNER_PATH.read_text(encoding="utf-8")
+    )
+    composite = _functions(PRE_CONCAT_OWNER_PATH)[PRE_CONCAT_OWNER]
     expected_dispatches = (
         "run_nhwc_concat_layout_cleanup",
         "run_nhwc_concat_quantized_layout_cleanup",
-        LEGACY_WRAPPER,
+        LEGACY_OWNER,
     )
-    dispatches = [
-        node.func.id
-        for node in ast.walk(composite)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in expected_dispatches
-    ]
-    assert tuple(dispatches) == expected_dispatches
+    dispatches = sorted(
+        (
+            node
+            for node in ast.walk(composite)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in expected_dispatches
+        ),
+        key=lambda node: node.lineno,
+    )
+    assert tuple(node.func.id for node in dispatches) == expected_dispatches
+    stats_key = next(
+        node
+        for node in composite_tree.body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == "_STATS_KEY"
+    )
+    assert ast.literal_eval(stats_key.value) == (
+        "optimized_transpose_pre_concat_nhwc_chains"
+    )
     composite_return = composite.body[-1]
     assert isinstance(composite_return, ast.Return)
     assert ast.unparse(composite_return.value) == (
-        "{'optimized_transpose_pre_concat_nhwc_chains': int(optimized)}"
+        "{_STATS_KEY: int(optimized)}"
+    )
+
+    compatibility_wrapper = _functions(LOWERER_PATH)[PRE_CONCAT]
+    assert len(compatibility_wrapper.body) == 1
+    assert ast.unparse(compatibility_wrapper.body[0]) == (
+        "return _optimize_transpose_pre_concat_nhwc_chains_pass(model_ir, "
+        "layout_state=layout_state, diagnostics=diagnostics)"
     )
 
     legacy_owner = _functions(LEGACY_OWNER_PATH)[LEGACY_OWNER]
@@ -111,9 +171,9 @@ def test_all_direct_pre_concat_results_are_retained_observation_only() -> None:
         ),
         key=lambda statement: statement.lineno,
     )
-    assert len(direct_results) == 3
+    assert len(direct_results) == 1
     assert tuple(_single_target(statement) for statement in direct_results) == (
-        RESULT_TARGETS
+        None,
     )
     for statement in direct_results:
         call = _direct_call(statement)
@@ -128,27 +188,15 @@ def test_all_direct_pre_concat_results_are_retained_observation_only() -> None:
         }
     for target in RESULT_TARGETS:
         assert not any(
-            isinstance(node, ast.Name)
-            and node.id == target
-            and isinstance(node.ctx, ast.Load)
+            isinstance(node, ast.Name) and node.id == target
             for node in ast.walk(lowerer)
         )
 
     expected_boundaries = (
         (
             "run_spp_layout_cleanup",
-            "_layout_opt_spp_stats",
+            None,
             "run_ndhwc_concat_layout_cleanup",
-        ),
-        (
-            "_optimize_transpose_slice_prepost_nhwc_passthrough_chains",
-            "_final_slice_prepost_passthrough_stats",
-            "_optimize_transpose_relu_split_all_outputs_to_nhwc_chains",
-        ),
-        (
-            "summarize_late_hard_activation_layout_mutations",
-            "_late_hard_activation_stats",
-            "_optimize_transpose_shape_extract_nhwc_to_nchw_chains",
         ),
     )
     observed_boundaries = []
@@ -165,6 +213,28 @@ def test_all_direct_pre_concat_results_are_retained_observation_only() -> None:
             )
         )
     assert tuple(observed_boundaries) == expected_boundaries
+
+    terminal_owner = _functions(TERMINAL_LAYOUT_SHAPE_OWNER_PATH)[
+        TERMINAL_LAYOUT_SHAPE_OWNER
+    ]
+    terminal_calls = [
+        node
+        for node in ast.walk(terminal_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == PRE_CONCAT_OWNER
+    ]
+    assert len(terminal_calls) == 1
+    assert [ast.unparse(argument) for argument in terminal_calls[0].args] == [
+        "context.model_ir"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in terminal_calls[0].keywords
+    } == {
+        "layout_state": "context.layout_state",
+        "diagnostics": "context.diagnostics",
+    }
 
 
 def test_layout_recovery_keeps_independent_pre_concat_callback_selection() -> None:

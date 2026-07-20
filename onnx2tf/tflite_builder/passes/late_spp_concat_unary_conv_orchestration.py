@@ -80,3 +80,13 @@ def run_late_spp_concat_unary_conv(
         expected_pass_ids=LATE_SPP_CONCAT_UNARY_CONV_PASS_IDS,
         phase_name="late SPP/concat-unary-conv",
     )
+
+
+def run_late_spp_concat_unary_conv_summary(
+    context: LateSPPConcatUnaryConvContext,
+) -> Dict[str, int]:
+    """Run late SPP/Concat/Unary cleanup and return its normalized summary."""
+
+    return summarize_late_spp_concat_unary_conv_mutations(
+        run_late_spp_concat_unary_conv(context)
+    )

@@ -5,12 +5,36 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "indexed_final_shape_activation_convergence.py"
+)
+ORCHESTRATION_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_sinet_singleton_reshape_convergence_orchestration.py"
+)
+ORCHESTRATION_OWNER = (
+    "run_terminal_sinet_singleton_reshape_convergence_cleanup"
+)
 INDEXED_SHAPE_CONVERGENCE = "_run_indexed_shape_convergence_cleanup"
 FINAL_CONVERGENCE = "_run_indexed_final_shape_activation_convergence"
+INDEXED_SHAPE_OWNER = "run_indexed_shape_convergence_cleanup"
+FINAL_OWNER = "run_indexed_final_shape_activation_convergence"
+PHASE_ID = "shape_topology.terminal.indexed_convergence"
+PHASE_OWNER_EXPRESSION = (
+    "run_terminal_sinet_singleton_reshape_convergence_cleanup("
+    "sinet_terminal_layout_recovery_context)[1]"
+)
 
 
-def _module_functions() -> dict[str, ast.FunctionDef]:
-    tree = ast.parse(LOWERER_PATH.read_text(encoding="utf-8"))
+def _module_functions(path: Path = LOWERER_PATH) -> dict[str, ast.FunctionDef]:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
     return {
         node.name: node
         for node in tree.body
@@ -23,7 +47,17 @@ def _statement_call(statement: ast.stmt) -> ast.Call | None:
         return None
     if not isinstance(statement.value, ast.Call):
         return None
-    return statement.value
+    call = statement.value
+    if (
+        isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "session"
+        and call.func.attr == "record_phase_result"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Call)
+    ):
+        return call.args[1]
+    return call
 
 
 def _single_target(statement: ast.stmt) -> str | None:
@@ -48,9 +82,25 @@ def _direct_invocations(function: ast.FunctionDef) -> list[ast.stmt]:
     ]
 
 
+def _phase_id(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
+        return None
+    call = statement.value
+    if (
+        not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != "session"
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
+
+
 def test_indexed_shape_convergence_result_schema_and_forms_are_explicit() -> None:
     functions = _module_functions()
-    owner = functions[INDEXED_SHAPE_CONVERGENCE]
+    owner_functions = _module_functions(OWNER_PATH)
+    owner = owner_functions[INDEXED_SHAPE_OWNER]
     result_return = next(
         statement
         for statement in owner.body
@@ -68,19 +118,33 @@ def test_indexed_shape_convergence_result_schema_and_forms_are_explicit() -> Non
     ]
 
     lowerer_invocations = _direct_invocations(functions["lower_onnx_to_ir"])
-    nested_invocations = _direct_invocations(functions[FINAL_CONVERGENCE])
-    assert len(lowerer_invocations) == 1
+    orchestration_owner = _module_functions(ORCHESTRATION_PATH)[
+        ORCHESTRATION_OWNER
+    ]
+    orchestration_invocations = [
+        node
+        for node in ast.walk(orchestration_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == INDEXED_SHAPE_OWNER
+    ]
+    nested_invocations = [
+        statement
+        for statement in owner_functions[FINAL_OWNER].body
+        if _call_name(statement) == INDEXED_SHAPE_OWNER
+    ]
+    assert lowerer_invocations == []
+    assert len(orchestration_invocations) == 1
     assert len(nested_invocations) == 1
 
-    top_level_call = _statement_call(lowerer_invocations[0])
-    assert top_level_call is not None
+    top_level_call = orchestration_invocations[0]
     assert [ast.unparse(argument) for argument in top_level_call.args] == [
-        "model_ir",
+        "context.pass_context.model_ir",
     ]
     assert {
         keyword.arg: ast.unparse(keyword.value)
         for keyword in top_level_call.keywords
-    } == {"layout_state": "session.layout_state"}
+    } == {"layout_state": "context.pass_context.layout_state"}
 
     nested_statement = nested_invocations[0]
     assert _single_target(nested_statement) == "convergence_stats"
@@ -98,24 +162,39 @@ def test_indexed_shape_convergence_result_schema_and_forms_are_explicit() -> Non
     }
 
 
-def test_lowerer_retains_top_level_indexed_shape_convergence_result() -> None:
+def test_top_level_indexed_shape_convergence_uses_phase_result_store() -> None:
     functions = _module_functions()
     lowerer = functions["lower_onnx_to_ir"]
-    invocations = _direct_invocations(lowerer)
-    assert len(invocations) == 1
-    invocation = invocations[0]
-    assert _single_target(invocation) == (
-        "_post_terminal_indexed_shape_convergence_stats"
+    records = [
+        statement for statement in lowerer.body if _phase_id(statement) == PHASE_ID
+    ]
+    assert len(records) == 1
+    record = records[0]
+    index = lowerer.body.index(record)
+
+    assert ast.unparse(record.value.args[1]) == PHASE_OWNER_EXPRESSION
+    assert _phase_id(lowerer.body[index - 1]) == (
+        "cleanup.terminal.dequant_hardsigmoid_bridge"
+    )
+    very_late_record = lowerer.body[index + 1]
+    assert _phase_id(very_late_record) == (
+        "cleanup.very_late.residual_affine_prelu"
+    )
+    assert ast.unparse(very_late_record.value.args[1]) == (
+        "run_very_late_sinet_residual_affine_prelu_cleanup("
+        "sinet_terminal_layout_recovery_context)[1]"
+    )
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id == "_post_terminal_indexed_shape_convergence_stats"
+        for node in ast.walk(lowerer)
     )
 
-    invocation_index = lowerer.body.index(invocation)
-    previous = lowerer.body[invocation_index - 1]
-    following = lowerer.body[invocation_index + 1]
-    assert _single_target(previous) == "_post_terminal_singleton_reshape_results"
-    assert _call_name(previous) == "_run_singleton_reshape_layout_pass_cluster"
-    assert _single_target(following) == "_very_late_sinet_layout_recovery_results"
-    assert _call_name(following) == "_run_sinet_terminal_layout_recovery_sequence"
-
-    nested_invocations = _direct_invocations(functions[FINAL_CONVERGENCE])
+    owner_functions = _module_functions(OWNER_PATH)
+    nested_invocations = [
+        statement
+        for statement in owner_functions[FINAL_OWNER].body
+        if _call_name(statement) == INDEXED_SHAPE_OWNER
+    ]
     assert len(nested_invocations) == 1
     assert _single_target(nested_invocations[0]) == "convergence_stats"

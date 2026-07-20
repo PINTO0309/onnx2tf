@@ -1,0 +1,252 @@
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+
+import numpy as np
+
+from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
+from onnx2tf.tflite_builder.lower_from_onnx2tf import (
+    _reconcile_static_tensor_shapes,
+    _replace_expand_dims_and_squeeze_with_reshape,
+)
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+EXPAND_RESULT_TARGET = "_terminal_expand_squeeze_stats"
+COMPOSITE_TARGET = "_terminal_qkv_activation_layout_shape_results"
+LOWERER_TARGET = "_terminal_affine_qkv_layout_shape_results"
+LOWERER_OWNER = "run_terminal_affine_qkv_layout_shape_cleanup"
+RECONCILE_RESULT_TARGET = "_terminal_expand_squeeze_static_shape_stats"
+RECONCILE_PHASE_ID = "shape_reconciliation.terminal.expand_squeeze"
+TERMINAL_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_layout_shape_orchestration.py"
+)
+TERMINAL_OWNER = "run_terminal_layout_shape_cleanup"
+OUTER_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_qkv_activation_layout_shape_orchestration.py"
+)
+OUTER_OWNER = "run_terminal_qkv_activation_layout_shape_cleanup"
+
+
+def _lowerer() -> ast.FunctionDef:
+    tree = ast.parse(LOWERER_PATH.read_text(encoding="utf-8"))
+    return next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+
+
+def _single_target(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+        return None
+    target = statement.targets[0]
+    return target.id if isinstance(target, ast.Name) else None
+
+
+def _statement_call(statement: ast.stmt) -> ast.Call | None:
+    if not isinstance(statement, (ast.Assign, ast.Expr)):
+        return None
+    return statement.value if isinstance(statement.value, ast.Call) else None
+
+
+def _call_name(statement: ast.stmt) -> str | None:
+    call = _statement_call(statement)
+    if call is None or not isinstance(call.func, ast.Name):
+        return None
+    return call.func.id
+
+
+def _phase_result_owner(statement: ast.stmt) -> ast.Call | None:
+    call = _statement_call(statement)
+    if (
+        call is None
+        or not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != "session"
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+        or not isinstance(call.args[1], ast.Call)
+    ):
+        return None
+    return call.args[1]
+
+
+def _terminal_expand_squeeze_call() -> ast.Call:
+    tree = ast.parse(TERMINAL_OWNER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == TERMINAL_OWNER
+    )
+    return next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "replace_expand_dims_and_squeeze_with_reshape"
+    )
+
+
+def _stale_reshape_model_ir() -> ModelIR:
+    model_ir = ModelIR("terminal_expand_squeeze_reconcile")
+    model_ir.inputs = ["input"]
+    model_ir.outputs = ["output"]
+    model_ir.tensors = {
+        "input": TensorIR(
+            name="input",
+            dtype="FLOAT32",
+            shape=[1, 4],
+            shape_signature=[1, 4],
+        ),
+        "shape": TensorIR(
+            name="shape",
+            dtype="INT32",
+            shape=[2],
+            shape_signature=[2],
+            data=np.asarray([2, 2], dtype=np.int32),
+        ),
+        "output": TensorIR(
+            name="output",
+            dtype="FLOAT32",
+            shape=[1, 4],
+            shape_signature=[1, 4],
+        ),
+    }
+    model_ir.operators = [
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["input", "shape"],
+            outputs=["output"],
+            options={"newShape": [2, 2]},
+        )
+    ]
+    return model_ir
+
+
+def test_terminal_expand_squeeze_reconciliation_contract_is_explicit() -> None:
+    assert _reconcile_static_tensor_shapes(ModelIR("default_schema")) == {
+        "reconciled_static_tensor_shapes": 0,
+    }
+    assert _reconcile_static_tensor_shapes(
+        ModelIR("complete_schema"),
+        include_mutation_count=True,
+    ) == {
+        "reconciled_static_tensor_shapes": 0,
+        "reconciled_static_shape_mutations": 0,
+    }
+
+    lowerer = _lowerer()
+    expand_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if _single_target(statement) == LOWERER_TARGET
+    )
+    expand_call = _statement_call(lowerer.body[expand_index])
+    assert expand_call is not None
+    assert isinstance(expand_call.func, ast.Name)
+    assert expand_call.func.id == LOWERER_OWNER
+    assert [ast.unparse(argument) for argument in expand_call.args] == [
+        "shared_model_ir_pass_context"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in expand_call.keywords
+    } == {"include_layout_transpose": "optimize_layout_transpose_chains"}
+
+    outer_tree = ast.parse(OUTER_OWNER_PATH.read_text(encoding="utf-8"))
+    outer_owner = next(
+        node
+        for node in outer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == OUTER_OWNER
+    )
+    assert sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == TERMINAL_OWNER
+        for node in ast.walk(outer_owner)
+    ) == 1
+
+    child_call = _terminal_expand_squeeze_call()
+    assert [ast.unparse(argument) for argument in child_call.args] == [
+        "context.model_ir"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in child_call.keywords
+    } == {"layout_state": "context.layout_state"}
+
+    reconciliation = lowerer.body[expand_index + 1]
+    record_call = _statement_call(reconciliation)
+    assert record_call is not None
+    assert ast.literal_eval(record_call.args[0]) == RECONCILE_PHASE_ID
+    reconcile_call = _phase_result_owner(reconciliation)
+    assert reconcile_call is not None
+    assert isinstance(reconcile_call.func, ast.Name)
+    assert reconcile_call.func.id == "_reconcile_static_tensor_shapes"
+    assert [ast.unparse(argument) for argument in reconcile_call.args] == [
+        "model_ir"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in reconcile_call.keywords
+    } == {"include_mutation_count": "True"}
+    assert _call_name(lowerer.body[expand_index + 2]) == "_advance_post_progress"
+
+
+def test_terminal_reconciliation_is_required_after_zero_expand_rewrites() -> None:
+    model_ir = _stale_reshape_model_ir()
+
+    assert _replace_expand_dims_and_squeeze_with_reshape(model_ir) == {
+        "replaced_expand_dims_and_squeeze_with_reshape": 0,
+        "expand_dims_squeeze_rewrite_shape_tensors": 0,
+    }
+    assert _reconcile_static_tensor_shapes(
+        model_ir,
+        include_mutation_count=True,
+    ) == {
+        "reconciled_static_tensor_shapes": 1,
+        "reconciled_static_shape_mutations": 1,
+    }
+    assert model_ir.tensors["output"].shape == [2, 2]
+    assert model_ir.tensors["output"].shape_signature == [1, 4]
+
+
+def test_terminal_reconciliation_retains_complete_observation_result() -> None:
+    lowerer = _lowerer()
+    expand_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if _single_target(statement) == LOWERER_TARGET
+    )
+    reconciliation = lowerer.body[expand_index + 1]
+    record_call = _statement_call(reconciliation)
+    assert record_call is not None
+    assert ast.literal_eval(record_call.args[0]) == RECONCILE_PHASE_ID
+    reconcile_call = _phase_result_owner(reconciliation)
+    assert reconcile_call is not None
+    assert isinstance(reconcile_call.func, ast.Name)
+    assert reconcile_call.func.id == "_reconcile_static_tensor_shapes"
+    assert [ast.unparse(argument) for argument in reconcile_call.args] == [
+        "model_ir"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in reconcile_call.keywords
+    } == {"include_mutation_count": "True"}
+    assert _call_name(lowerer.body[expand_index + 2]) == "_advance_post_progress"
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id in {EXPAND_RESULT_TARGET, RECONCILE_RESULT_TARGET}
+        for node in ast.walk(lowerer)
+    )

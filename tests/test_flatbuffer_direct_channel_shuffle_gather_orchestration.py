@@ -38,6 +38,24 @@ PHASE_PATH = (
     / "channel_shuffle_gather_orchestration.py"
 )
 CHANNEL_SHUFFLE_GATHER = "_run_channel_shuffle_gather_layout_pass_cluster"
+COMPOSITE_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "late_reshape_shuffle_attention_window_orchestration.py"
+)
+COMPOSITE_OWNER = "run_late_reshape_shuffle_attention_window_cleanup"
+COMPOSITE_TARGET = "_late_affine_final_shape_terminal_convpool_results"
+FULL_POST_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "layout_pass_set_2_channel_preadd_orchestration.py"
+)
+FULL_POST_OWNER = "run_layout_pass_set_2_channel_preadd_recovery"
+FULL_POST_TARGET = "_layout_pass_set_2_channel_preadd_results"
 POLICIES = (
     (False, False, False),
     (False, False, True),
@@ -65,6 +83,39 @@ def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
     return lowerer, helper
 
 
+def _composite_calls(function_name: str) -> list[ast.Call]:
+    tree = ast.parse(COMPOSITE_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == COMPOSITE_OWNER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name
+    ]
+
+
+def _full_post_owner_calls(function_name: str) -> list[ast.Call]:
+    tree = ast.parse(FULL_POST_OWNER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == FULL_POST_OWNER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name
+    ]
+
+
 def _expression_path(node: ast.expr) -> Any:
     if isinstance(node, ast.Name):
         return node.id
@@ -75,11 +126,24 @@ def _expression_path(node: ast.expr) -> Any:
     raise AssertionError(f"unexpected expression: {ast.dump(node)}")
 
 
-def _direct_call_name(statement: ast.stmt) -> str:
-    assert isinstance(statement, (ast.Assign, ast.Expr))
-    assert isinstance(statement.value, ast.Call)
-    assert isinstance(statement.value.func, ast.Name)
-    return statement.value.func.id
+def _phase_result_owner_name(
+    statement: ast.stmt,
+    *,
+    phase_id: str,
+) -> str:
+    assert isinstance(statement, ast.Expr)
+    call = statement.value
+    assert isinstance(call, ast.Call)
+    assert isinstance(call.func, ast.Attribute)
+    assert ast.unparse(call.func.value) == "session"
+    assert call.func.attr == "record_phase_result"
+    assert len(call.args) == 2
+    assert isinstance(call.args[0], ast.Constant)
+    assert call.args[0].value == phase_id
+    owner = call.args[1]
+    assert isinstance(owner, ast.Call)
+    assert isinstance(owner.func, ast.Name)
+    return owner.func.id
 
 
 def _context(*, use_layout_state: bool = False) -> ChannelShuffleGatherContext:
@@ -379,48 +443,28 @@ def test_channel_shuffle_gather_helper_propagates_and_retains_results() -> None:
         ),
         key=lambda statement: statement.lineno,
     )
-    assert len(statements) == 2
-    expected = (
-        (
-            "_layout_opt_channel_shuffle_gather_results",
-            {"include_post_gather_cleanup": True},
-        ),
-        (
-            "_late_channel_shuffle_gather_results",
-            {
-                "include_two_way_shuffle": False,
-                "include_nhwc_shuffle": False,
-            },
-        ),
-    )
-    for statement, (target_name, expected_keywords) in zip(
-        statements,
-        expected,
-        strict=True,
-    ):
-        assert isinstance(statement, ast.Assign)
-        assert isinstance(statement.targets[0], ast.Name)
-        assert statement.targets[0].id == target_name
-        assert {
-            keyword.arg: _expression_path(keyword.value)
-            for keyword in statement.value.keywords
-        } == expected_keywords
-
-    full_post_guard = next(
-        statement
-        for statement in lowerer.body
-        if isinstance(statement, ast.If) and statements[0] in statement.body
-    )
-    assert ast.unparse(full_post_guard.test) == "optimize_layout_transpose_chains"
-    assert statements[1] in lowerer.body
-    late_index = lowerer.body.index(statements[1])
-    previous = lowerer.body[late_index - 1]
-    assert isinstance(previous, ast.Assign)
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_late_nhwc_reshape_collapse_stats"
-    assert _direct_call_name(lowerer.body[late_index + 1]) == (
-        "_optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains"
-    )
+    assert statements == []
+    full_post_calls = _full_post_owner_calls("run_channel_shuffle_gather")
+    assert len(full_post_calls) == 1
+    assert [
+        ast.unparse(argument) for argument in full_post_calls[0].args
+    ] == ["context.pass_context"]
+    assert {
+        keyword.arg: _expression_path(keyword.value)
+        for keyword in full_post_calls[0].keywords
+    } == {"include_post_gather_cleanup": True}
+    composite_calls = _composite_calls("run_channel_shuffle_gather")
+    assert len(composite_calls) == 1
+    assert [ast.unparse(argument) for argument in composite_calls[0].args] == [
+        "context"
+    ]
+    assert {
+        keyword.arg: _expression_path(keyword.value)
+        for keyword in composite_calls[0].keywords
+    } == {
+        "include_two_way_shuffle": False,
+        "include_nhwc_shuffle": False,
+    }
 
 
 def test_channel_shuffle_gather_preserves_full_post_policy_and_boundaries() -> None:
@@ -430,23 +474,21 @@ def test_channel_shuffle_gather_preserves_full_post_policy_and_boundaries() -> N
         for statement in lowerer.body
         if isinstance(statement, ast.If)
         and any(
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == CHANNEL_SHUFFLE_GATHER
-            and any(
-                keyword.arg == "include_post_gather_cleanup"
-                for keyword in node.keywords
-            )
-            for node in ast.walk(statement)
+            isinstance(candidate, ast.Assign)
+            and isinstance(candidate.targets[0], ast.Name)
+            and candidate.targets[0].id == FULL_POST_TARGET
+            for candidate in statement.body
         )
     )
     invocation_index = next(
         index
         for index, statement in enumerate(guard.body)
         if isinstance(statement, ast.Assign)
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == FULL_POST_TARGET
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == CHANNEL_SHUFFLE_GATHER
+        and statement.value.func.id == FULL_POST_OWNER
     )
     invocation = guard.body[invocation_index]
 
@@ -454,56 +496,68 @@ def test_channel_shuffle_gather_preserves_full_post_policy_and_boundaries() -> N
     assert guard.test.id == "optimize_layout_transpose_chains"
     assert isinstance(invocation, ast.Assign)
     assert isinstance(invocation.targets[0], ast.Name)
-    assert invocation.targets[0].id == (
-        "_layout_opt_channel_shuffle_gather_results"
-    )
+    assert invocation.targets[0].id == FULL_POST_TARGET
     assert isinstance(invocation.value, ast.Call)
-    assert invocation.value.args == []
-    assert {
-        str(keyword.arg): _expression_path(keyword.value)
-        for keyword in invocation.value.keywords
-    } == {"include_post_gather_cleanup": True}
-    assert _direct_call_name(guard.body[invocation_index - 1]) == (
+    assert [ast.unparse(argument) for argument in invocation.value.args] == [
+        "attention_recovery_context"
+    ]
+    assert invocation.value.keywords == []
+    assert _phase_result_owner_name(
+        guard.body[invocation_index - 1],
+        phase_id="cleanup.layout_pass_set_2.slice_logistic_concat_tail",
+    ) == (
         "_optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains"
     )
-    assert _direct_call_name(guard.body[invocation_index + 1]) == (
-        "_run_preadd_mean_attention_recovery_sequence"
-    )
+    assert _phase_result_owner_name(
+        guard.body[invocation_index + 1],
+        phase_id="cleanup.layout_pass_set_2.sa_pa_mirrorpad",
+    ) == "_optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains"
+    full_post_calls = _full_post_owner_calls("run_channel_shuffle_gather")
+    assert len(full_post_calls) == 1
+    assert {
+        str(keyword.arg): _expression_path(keyword.value)
+        for keyword in full_post_calls[0].keywords
+    } == {"include_post_gather_cleanup": True}
 
 
 def test_channel_shuffle_gather_preserves_late_base_policy_and_boundaries() -> None:
     lowerer, _ = _lowerer_and_helper()
-    invocation_index = next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Assign)
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == CHANNEL_SHUFFLE_GATHER
-    )
-    invocation = lowerer.body[invocation_index]
-
-    assert isinstance(invocation, ast.Assign)
-    assert isinstance(invocation.targets[0], ast.Name)
-    assert invocation.targets[0].id == "_late_channel_shuffle_gather_results"
-    assert isinstance(invocation.value, ast.Call)
-    assert invocation.value.args == []
+    invocations = _composite_calls("run_channel_shuffle_gather")
+    assert len(invocations) == 1
+    invocation = invocations[0]
+    assert [ast.unparse(argument) for argument in invocation.args] == [
+        "context"
+    ]
     assert {
         str(keyword.arg): _expression_path(keyword.value)
-        for keyword in invocation.value.keywords
+        for keyword in invocation.keywords
     } == {
         "include_two_way_shuffle": False,
         "include_nhwc_shuffle": False,
     }
-    assert _direct_call_name(lowerer.body[invocation_index - 1]) == (
-        "_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains"
+    composite = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == COMPOSITE_TARGET
     )
-    previous = lowerer.body[invocation_index - 1]
-    assert isinstance(previous, ast.Assign)
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_late_nhwc_reshape_collapse_stats"
-    assert _direct_call_name(lowerer.body[invocation_index + 1]) == (
-        "_optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains"
+    index = lowerer.body.index(composite)
+    predecessor = lowerer.body[index - 1]
+    assert isinstance(predecessor, ast.Expr)
+    assert ast.literal_eval(predecessor.value.args[0]) == (
+        "cleanup.late.ndhwc_cost_volume"
+    )
+    successor = lowerer.body[index + 1]
+    assert isinstance(successor, ast.If)
+    assert ast.unparse(successor.test) == (
+        "not optimize_layout_transpose_chains and "
+        "apply_safe_transpose_reduction_lite_on_no_layout_opt"
+    )
+    assert isinstance(successor.body[1], ast.Assign)
+    assert isinstance(successor.body[1].targets[0], ast.Name)
+    assert successor.body[1].targets[0].id == (
+        "_no_layout_fallback_affine_prepost_stats"
     )
 
 
@@ -564,7 +618,9 @@ def test_channel_shuffle_gather_preserves_argument_free_default_callback() -> No
         and isinstance(node.func, ast.Name)
         and node.func.id == CHANNEL_SHUFFLE_GATHER
     ]
-    assert len(direct_invocations) == 2
+    assert direct_invocations == []
+    assert len(_full_post_owner_calls("run_channel_shuffle_gather")) == 1
+    assert len(_composite_calls("run_channel_shuffle_gather")) == 1
 
 
 def test_channel_shuffle_gather_phase_imports_owners_without_lowerer() -> None:

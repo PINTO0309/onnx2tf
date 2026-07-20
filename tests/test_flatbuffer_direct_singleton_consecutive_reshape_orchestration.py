@@ -29,6 +29,32 @@ PHASE_PATH = (
     / "passes"
     / "singleton_consecutive_reshape_orchestration.py"
 )
+SHARED_LATE_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "shared_late_reconciliation_orchestration.py"
+)
+VERY_LATE_TAIL_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "very_late_layout_tail_orchestration.py"
+)
+VERY_LATE_TAIL_OWNER = "run_very_late_layout_tail_cleanup"
+FALLBACK_NORM_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "fallback_norm_adapter_reshape_orchestration.py"
+)
+FALLBACK_NORM_OWNER = "run_fallback_norm_adapter_reshape_cleanup"
+FALLBACK_NORM_RESULT = "_fallback_norm_adapter_reshape_results"
+LOWERER_TAIL_OWNER = "run_late_dequant_swish_layout_tail_cleanup"
+LOWERER_TAIL_RESULT = "_late_dequant_swish_layout_tail_results"
 SINGLETON_CONSECUTIVE = "_run_singleton_consecutive_reshape_pass_cluster"
 
 
@@ -84,6 +110,69 @@ def _main_invocation_indexes(lowerer: ast.FunctionDef) -> list[int]:
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == SINGLETON_CONSECUTIVE
     ]
+
+
+def _shared_late_singleton_calls() -> list[ast.Call]:
+    tree = ast.parse(SHARED_LATE_OWNER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_shared_late_reconciliation_cleanup"
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_singleton_consecutive_reshape"
+    ]
+
+
+def _very_late_tail_singleton_calls() -> list[ast.Call]:
+    tree = ast.parse(VERY_LATE_TAIL_OWNER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == VERY_LATE_TAIL_OWNER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_singleton_consecutive_reshape"
+    ]
+
+
+def _fallback_norm_singleton_calls() -> list[ast.Call]:
+    tree = ast.parse(FALLBACK_NORM_OWNER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == FALLBACK_NORM_OWNER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_singleton_consecutive_reshape"
+    ]
+
+
+def _very_late_tail_assignment(lowerer: ast.FunctionDef) -> ast.Assign:
+    assignment = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == LOWERER_TAIL_RESULT
+    )
+    assert _statement_call_name(assignment) == LOWERER_TAIL_OWNER
+    return assignment
 
 
 def _context(*, use_layout_state: bool) -> SingletonConsecutiveReshapeContext:
@@ -305,115 +394,89 @@ def test_singleton_consecutive_preserves_all_three_target_forms() -> None:
     assert [
         tuple(_expression_path(argument) for argument in invocation.args)
         for invocation in invocations
-    ] == [
-        ("model_ir", "session.layout_state"),
-        ("model_ir", "session.layout_state"),
-        ("fallback_ir", None),
-    ]
+    ] == []
     assert all(invocation.keywords == [] for invocation in invocations)
+    very_late_calls = _very_late_tail_singleton_calls()
+    assert len(very_late_calls) == 1
+    assert [
+        _expression_path(argument) for argument in very_late_calls[0].args
+    ] == ["context"]
+    assert very_late_calls[0].keywords == []
+    shared_late_calls = _shared_late_singleton_calls()
+    assert len(shared_late_calls) == 1
+    assert [
+        _expression_path(argument) for argument in shared_late_calls[0].args
+    ] == ["context"]
+    assert shared_late_calls[0].keywords == []
+    fallback_calls = _fallback_norm_singleton_calls()
+    assert len(fallback_calls) == 1
+    assert [
+        _expression_path(argument) for argument in fallback_calls[0].args
+    ] == ["context"]
+    assert fallback_calls[0].keywords == []
 
 
 def test_singleton_consecutive_retains_very_late_main_results() -> None:
     lowerer, _ = _lowerer_and_helper()
-    first_index, second_index = _main_invocation_indexes(lowerer)
-
-    first = lowerer.body[first_index]
-    assert isinstance(first, ast.Assign)
-    assert len(first.targets) == 1
-    assert isinstance(first.targets[0], ast.Name)
-    assert first.targets[0].id == (
-        "_very_late_singleton_consecutive_reshape_results"
-    )
-    assert isinstance(first.value, ast.Call)
-    assert isinstance(first.value.func, ast.Name)
-    assert first.value.func.id == SINGLETON_CONSECUTIVE
-    assert [_expression_path(argument) for argument in first.value.args] == [
-        "model_ir",
-        "session.layout_state",
-    ]
-    assert first.value.keywords == []
-
+    first = _very_late_tail_assignment(lowerer)
+    first_index = lowerer.body.index(first)
     predecessor = lowerer.body[first_index - 1]
-    assert isinstance(predecessor, ast.Assign)
-    assert len(predecessor.targets) == 1
-    assert isinstance(predecessor.targets[0], ast.Name)
-    assert predecessor.targets[0].id == (
-        "_very_late_instancenorm_dualstats_stats"
+    assert isinstance(predecessor, ast.If)
+    assert ast.unparse(predecessor.test) == "optimize_layout_transpose_chains"
+    successor = lowerer.body[first_index + 1]
+    assert isinstance(successor, ast.Expr)
+    assert ast.unparse(successor).startswith(
+        "session.record_phase_result("
+        "'shape_reconciliation.primary.very_late_broadcast'"
+    )
+    very_late_calls = _very_late_tail_singleton_calls()
+    assert len(very_late_calls) == 1
+    assert ast.unparse(very_late_calls[0]) == (
+        "run_singleton_consecutive_reshape(context)"
     )
 
-    successor = lowerer.body[first_index + 1]
-    assert isinstance(successor, ast.If)
-    assert isinstance(successor.test, ast.Name)
-    assert successor.test.id == "optimize_layout_transpose_chains"
-
-    second = lowerer.body[second_index]
-    assert isinstance(second, ast.Assign)
-    assert len(second.targets) == 1
-    second_target = second.targets[0]
-    assert isinstance(second_target, ast.Tuple)
-    assert [
-        element.id
-        for element in second_target.elts
-        if isinstance(element, ast.Name)
-    ] == [
-        "shared_singleton_channel_stats",
-        "shared_duplicate_fanout_stats",
-        "shared_consecutive_reshape_stats",
-    ]
-
-    fallback_calls = [
-        node
-        for node in ast.walk(lowerer)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == SINGLETON_CONSECUTIVE
-        and [_expression_path(argument) for argument in node.args]
-        == ["fallback_ir", None]
-    ]
+    fallback_calls = _fallback_norm_singleton_calls()
     assert len(fallback_calls) == 1
-    fallback_call = fallback_calls[0]
+    assert [
+        _expression_path(argument) for argument in fallback_calls[0].args
+    ] == ["context"]
     assert any(
         isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
         and statement.targets[0].id
-        == "_fallback_singleton_consecutive_reshape_results"
-        and statement.value is fallback_call
+        == FALLBACK_NORM_RESULT
+        and _statement_call_name(statement) == FALLBACK_NORM_OWNER
         for statement in ast.walk(lowerer)
     )
 
 
 def test_singleton_consecutive_preserves_both_main_boundaries() -> None:
     lowerer, _ = _lowerer_and_helper()
-    invocation_indexes = _main_invocation_indexes(lowerer)
-
-    assert len(invocation_indexes) == 2
-    first_index, second_index = invocation_indexes
+    first = _very_late_tail_assignment(lowerer)
+    first_index = lowerer.body.index(first)
     first_preceding = lowerer.body[first_index - 1]
-    assert isinstance(first_preceding, ast.Assign)
-    assert len(first_preceding.targets) == 1
-    assert isinstance(first_preceding.targets[0], ast.Name)
-    assert first_preceding.targets[0].id == (
-        "_very_late_instancenorm_dualstats_stats"
-    )
-    assert _statement_call_name(first_preceding) == (
-        "_optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains"
+    assert isinstance(first_preceding, ast.If)
+    assert ast.unparse(first_preceding.test) == (
+        "optimize_layout_transpose_chains"
     )
     first_following = lowerer.body[first_index + 1]
-    assert isinstance(first_following, ast.If)
-    assert isinstance(first_following.test, ast.Name)
-    assert first_following.test.id == "optimize_layout_transpose_chains"
-
-    assert _statement_call_name(lowerer.body[second_index - 1]) == (
-        "run_indexed_binary_layout_adapter_cleanup"
+    assert isinstance(first_following, ast.Expr)
+    assert ast.unparse(first_following).startswith(
+        "session.record_phase_result("
+        "'shape_reconciliation.primary.very_late_broadcast'"
     )
-    second_following = lowerer.body[second_index + 1]
-    assert isinstance(second_following, ast.If)
-    assert any(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "_stats_have_positive_count"
-        for node in ast.walk(second_following.test)
+
+    very_late_calls = _very_late_tail_singleton_calls()
+    assert len(very_late_calls) == 1
+    assert ast.unparse(very_late_calls[0]) == (
+        "run_singleton_consecutive_reshape(context)"
+    )
+
+    shared_late_calls = _shared_late_singleton_calls()
+    assert len(shared_late_calls) == 1
+    assert ast.unparse(shared_late_calls[0]) == (
+        "run_singleton_consecutive_reshape(context)"
     )
 
 
@@ -427,7 +490,7 @@ def test_singleton_consecutive_preserves_fallback_guard_and_boundaries() -> None
             isinstance(statement, (ast.Assign, ast.Expr))
             and isinstance(statement.value, ast.Call)
             and isinstance(statement.value.func, ast.Name)
-            and statement.value.func.id == SINGLETON_CONSECUTIVE
+            and statement.value.func.id == FALLBACK_NORM_OWNER
             for statement in node.body
         )
     )
@@ -437,7 +500,7 @@ def test_singleton_consecutive_preserves_fallback_guard_and_boundaries() -> None
         if isinstance(statement, (ast.Assign, ast.Expr))
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == SINGLETON_CONSECUTIVE
+        and statement.value.func.id == FALLBACK_NORM_OWNER
     )
 
     invocation = fallback_guard.body[invocation_index]
@@ -445,18 +508,23 @@ def test_singleton_consecutive_preserves_fallback_guard_and_boundaries() -> None
     assert len(invocation.targets) == 1
     assert isinstance(invocation.targets[0], ast.Name)
     assert invocation.targets[0].id == (
-        "_fallback_singleton_consecutive_reshape_results"
+        FALLBACK_NORM_RESULT
     )
 
     assert ast.unparse(fallback_guard.test) == (
         "int(fallback_norm_stats.get("
         "'optimized_transpose_norm_subgraph_pad_prepost_nhwc_chains', 0)) > 0"
     )
-    assert _statement_call_name(fallback_guard.body[invocation_index - 1]) == (
-        "run_indexed_binary_layout_adapter_cleanup"
-    )
-    assert _direct_call_name(fallback_guard.body[invocation_index + 1]) == (
-        "_reconcile_static_tensor_shapes"
+    assert [
+        _expression_path(argument)
+        for argument in invocation.value.args
+    ] == ["fallback_precision_unbound_context"]
+    assert invocation.value.keywords == []
+    reconciliation = fallback_guard.body[invocation_index + 1]
+    assert isinstance(reconciliation, ast.Expr)
+    assert ast.unparse(reconciliation) == (
+        "session.record_phase_result('shape_topology.fallback.norm', "
+        "run_static_shape_topology_reconciliation(fallback_ir))"
     )
 
 

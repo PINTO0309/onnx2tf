@@ -28,6 +28,15 @@ PHASE_PATH = (
     / "terminal_boundary_layout_orchestration.py"
 )
 TERMINAL_BOUNDARY = "_run_terminal_boundary_layout_pass_cluster"
+OUTER_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_boundary_mean_attention_orchestration.py"
+)
+OUTER_OWNER = "run_terminal_boundary_mean_attention_cleanup"
+OUTER_TARGET = "_terminal_boundary_mean_attention_results"
 
 
 def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -45,6 +54,22 @@ def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
     return lowerer, helper
 
 
+def _outer_owner_calls(child_owner: str) -> list[ast.Call]:
+    tree = ast.parse(OUTER_OWNER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == OUTER_OWNER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == child_owner
+    ]
+
+
 def _expression_path(node: ast.expr) -> Any:
     if isinstance(node, ast.Name):
         return node.id
@@ -53,6 +78,21 @@ def _expression_path(node: ast.expr) -> Any:
     if isinstance(node, ast.Constant):
         return node.value
     raise AssertionError(f"unexpected expression: {ast.dump(node)}")
+
+
+def _phase_result_owner(statement: ast.stmt, phase_id: str) -> ast.Call:
+    assert isinstance(statement, ast.Expr)
+    record = statement.value
+    assert isinstance(record, ast.Call)
+    assert isinstance(record.func, ast.Attribute)
+    assert isinstance(record.func.value, ast.Name)
+    assert record.func.value.id == "session"
+    assert record.func.attr == "record_phase_result"
+    assert len(record.args) == 2
+    assert ast.literal_eval(record.args[0]) == phase_id
+    owner = record.args[1]
+    assert isinstance(owner, ast.Call)
+    return owner
 
 
 def _context(*, use_layout_state: bool) -> TerminalBoundaryLayoutContext:
@@ -244,21 +284,29 @@ def test_terminal_boundary_propagates_ordered_results_to_primary(
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_terminal_boundary_layout_results"
+        and statement.targets[0].id == OUTER_TARGET
     ]
     assert len(invocations) == 1
     invocation_index, invocation = invocations[0]
     assert isinstance(invocation.value, ast.Call)
     assert isinstance(invocation.value.func, ast.Name)
-    assert invocation.value.func.id == TERMINAL_BOUNDARY
-    assert invocation.value.args == []
-    assert invocation.value.keywords == []
+    assert invocation.value.func.id == OUTER_OWNER
+    owner_calls = _outer_owner_calls("run_terminal_boundary_layout")
+    assert len(owner_calls) == 1
+    assert [ast.unparse(argument) for argument in owner_calls[0].args] == [
+        "context"
+    ]
+    assert owner_calls[0].keywords == []
 
     predecessor = lowerer.body[invocation_index - 1]
-    assert isinstance(predecessor, ast.Assign)
-    assert len(predecessor.targets) == 1
-    assert isinstance(predecessor.targets[0], ast.Name)
-    assert predecessor.targets[0].id == "_terminal_instancenorm_dualstats_stats"
+    predecessor_owner = _phase_result_owner(
+        predecessor,
+        "cleanup.terminal.instancenorm_dualstats",
+    )
+    assert isinstance(predecessor_owner.func, ast.Name)
+    assert predecessor_owner.func.id == (
+        "_optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains"
+    )
     successor = lowerer.body[invocation_index + 1]
     assert isinstance(successor, ast.If)
     assert isinstance(successor.test, ast.Name)
@@ -275,9 +323,13 @@ def test_terminal_boundary_has_one_argument_free_production_call() -> None:
         and node.func.id == TERMINAL_BOUNDARY
     ]
 
-    assert len(invocations) == 1
-    assert invocations[0].args == []
-    assert invocations[0].keywords == []
+    assert invocations == []
+    owner_calls = _outer_owner_calls("run_terminal_boundary_layout")
+    assert len(owner_calls) == 1
+    assert [ast.unparse(argument) for argument in owner_calls[0].args] == [
+        "context"
+    ]
+    assert owner_calls[0].keywords == []
 
 
 def test_terminal_boundary_preserves_outer_boundaries() -> None:
@@ -288,22 +340,19 @@ def test_terminal_boundary_preserves_outer_boundaries() -> None:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_terminal_boundary_layout_results"
+        and statement.targets[0].id == OUTER_TARGET
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == TERMINAL_BOUNDARY
+        and statement.value.func.id == OUTER_OWNER
     )
 
     previous_boundary = lowerer.body[invocation_index - 1]
-    assert isinstance(previous_boundary, ast.Assign)
-    assert len(previous_boundary.targets) == 1
-    assert isinstance(previous_boundary.targets[0], ast.Name)
-    assert previous_boundary.targets[0].id == (
-        "_terminal_instancenorm_dualstats_stats"
+    previous_owner = _phase_result_owner(
+        previous_boundary,
+        "cleanup.terminal.instancenorm_dualstats",
     )
-    assert isinstance(previous_boundary.value, ast.Call)
-    assert isinstance(previous_boundary.value.func, ast.Name)
-    assert previous_boundary.value.func.id == (
+    assert isinstance(previous_owner.func, ast.Name)
+    assert previous_owner.func.id == (
         "_optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains"
     )
 

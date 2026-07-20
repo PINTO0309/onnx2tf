@@ -28,8 +28,9 @@ ORCHESTRATION_PATH = (
     / "passes"
     / "terminal_singleton_maxpool_reshape_orchestration.py"
 )
-OWNER = "_run_terminal_singleton_maxpool_reshape_pass_pair"
-RESULT_TARGET = "_terminal_singleton_maxpool_reshape_results"
+LOWERER_HELPER = "_run_terminal_singleton_maxpool_reshape_pass_pair"
+OUTER_OWNER = "run_late_affine_final_shape_terminal_convpool_cleanup"
+RESULT_TARGET = "_late_affine_final_shape_terminal_convpool_results"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -45,7 +46,7 @@ def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
     helper = next(
         node
         for node in lowerer.body
-        if isinstance(node, ast.FunctionDef) and node.name == OWNER
+        if isinstance(node, ast.FunctionDef) and node.name == LOWERER_HELPER
     )
     return lowerer, helper
 
@@ -84,7 +85,7 @@ def _direct_location() -> tuple[ast.FunctionDef, int]:
     return lowerer, next(
         index
         for index, statement in enumerate(lowerer.body)
-        if _call_name(statement) == OWNER
+        if _call_name(statement) == OUTER_OWNER
     )
 
 
@@ -131,18 +132,19 @@ def test_terminal_singleton_maxpool_reshape_result_contract_is_explicit() -> Non
     assert isinstance(invocation, ast.Assign)
     assert _single_target(invocation) == RESULT_TARGET
     assert _statement_call(invocation) is not None
-    assert observed_lowerer.body[index - 1].__class__ is ast.If
-    assert ast.unparse(observed_lowerer.body[index - 1].test) == (
-        "optimize_layout_transpose_chains"
-    )
+    assert observed_lowerer.body[index - 1].__class__ is ast.Expr
+    assert ast.literal_eval(
+        observed_lowerer.body[index - 1].value.args[0]
+    ) == "cleanup.late.ndhwc_cost_volume"
     assert observed_lowerer.body[index + 1].__class__ is ast.If
     assert ast.unparse(observed_lowerer.body[index + 1].test) == (
-        "optimize_layout_transpose_chains"
+        "not optimize_layout_transpose_chains and "
+        "apply_safe_transpose_reduction_lite_on_no_layout_opt"
     )
     assert sum(
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id == OWNER
+        and node.func.id == OUTER_OWNER
         for node in ast.walk(lowerer)
     ) == 1
 

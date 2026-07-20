@@ -85,3 +85,13 @@ def run_channel_slice_pad_mul(
         expected_pass_ids=CHANNEL_SLICE_PAD_MUL_PASS_IDS,
         phase_name="channel-slice/pad-mul",
     )
+
+
+def run_channel_slice_pad_mul_summary(
+    context: ChannelSlicePadMulContext,
+) -> Dict[str, int]:
+    """Run channel Slice/Pad/Mul cleanup and return its normalized summary."""
+
+    return summarize_channel_slice_pad_mul_mutations(
+        run_channel_slice_pad_mul(context)
+    )
