@@ -7539,3 +7539,36 @@ the raw/managed inventory remains 31/29, and the store remains exactly 128
 calls, 128 unique IDs, and 128 owners. Ruff, bytecode compilation, and
 whitespace checks pass. No real-model conversion was repeated for this
 characterization.
+
+## Extract terminal SiNet/singleton-Reshape convergence cleanup
+
+`passes/terminal_sinet_singleton_reshape_convergence_orchestration.py` now
+owns terminal SiNet/singleton-Reshape cleanup and the immediately following
+indexed shape convergence. It receives the exact existing
+`SINetTerminalLayoutRecoveryContext`, forwards its embedded pass context to the
+terminal child, then calls the public indexed-convergence owner with the same
+context's exact model and `LayoutState`. Both complete raw results are returned
+by identity without copying, flattening, schema inspection, or result-driven
+control flow.
+
+The lowerer removes `_terminal_sinet_singleton_reshape_results` and passes
+returned element `[1]` directly to the unchanged
+`shape_topology.terminal.indexed_convergence` record. The recorded terminal
+Dequant/HardSigmoid predecessor and `_very_late_sinet_recovery_tail_results`
+successor remain adjacent, so no very-late SiNet mutation moves across the
+observation point. The child owner, indexed compatibility wrapper, public
+owner, independent routes, APIs, artifacts, dependencies, and TensorFlow
+isolation remain unchanged.
+
+The first fixed 13-file affected run was intentionally captured before stale
+structural updates and reported `336 passed / 16 failed`, with failures across
+9 files. Every failure was an old direct-assignment, wrapper-call, phase-owner,
+target, or neighbor expectation caused by the ownership move; runtime identity,
+child schemas, mutation order, phase count, and TensorFlow boundaries remained
+green. After owner-aware updates, focused `5`, fixed affected `352`, and
+standard `92 / 55 / 196 / 2 / 11` sequential tests pass. Ruff, bytecode
+compilation, and whitespace checks pass. The AST audit reports 30 raw and 28
+managed unconsumed lowerer results, zero old selected-target stores, one new
+indexed owner expression, and exactly 128 phase calls, 128 unique IDs, and 128
+owners. No real-model conversion was repeated for this ownership-only
+extraction.

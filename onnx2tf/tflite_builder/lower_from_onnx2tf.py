@@ -250,8 +250,8 @@ from onnx2tf.tflite_builder.passes.terminal_singleton_clamp_sinet_hardswish_orch
 from onnx2tf.tflite_builder.passes.very_late_sinet_recovery_tail_orchestration import (
     run_very_late_sinet_recovery_tail_cleanup,
 )
-from onnx2tf.tflite_builder.passes.terminal_sinet_singleton_reshape_orchestration import (
-    run_terminal_sinet_singleton_reshape_cleanup,
+from onnx2tf.tflite_builder.passes.terminal_sinet_singleton_reshape_convergence_orchestration import (
+    run_terminal_sinet_singleton_reshape_convergence_cleanup,
 )
 from onnx2tf.tflite_builder.passes.terminal_singleton_maxpool_reshape_orchestration import (
     run_terminal_singleton_maxpool_reshape,
@@ -4866,17 +4866,11 @@ def lower_onnx_to_ir(
     # Terminal MUL/ADD/PRELU rewriting can recreate NCHW bridge wrappers.
     # Also apply singleton transpose->reshape regardless of layout-opt mode so
     # fallback relowering can remove channelwise TRANSPOSE adapters.
-    _terminal_sinet_singleton_reshape_results = (
-        run_terminal_sinet_singleton_reshape_cleanup(
-            shared_model_ir_pass_context,
-        )
-    )
     session.record_phase_result(
         "shape_topology.terminal.indexed_convergence",
-        _run_indexed_shape_convergence_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-        ),
+        run_terminal_sinet_singleton_reshape_convergence_cleanup(
+            sinet_terminal_layout_recovery_context,
+        )[1],
     )
     # Very late shape reconciliation can expose strict shuffle-residual patterns.
     # Re-run terminal transpose reducers once at absolute end.

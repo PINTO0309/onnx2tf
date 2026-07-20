@@ -2982,24 +2982,23 @@ def test_lowerer_sinet_preadd_resize_recovery_has_one_ordered_owner() -> None:
     ]
     assert assigned_boundary_targets == []
 
-    terminal_composite = next(
+    terminal_record = next(
         statement
         for statement in lowerer.body
-        if isinstance(statement, ast.Assign)
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_terminal_sinet_singleton_reshape_results"
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Attribute)
+        and ast.unparse(statement.value.func) == "session.record_phase_result"
+        and ast.literal_eval(statement.value.args[0])
+        == "shape_topology.terminal.indexed_convergence"
     )
-    terminal_index = lowerer.body.index(terminal_composite)
-    assert isinstance(terminal_composite.value, ast.Call)
-    assert isinstance(terminal_composite.value.func, ast.Name)
-    assert terminal_composite.value.func.id == (
-        "run_terminal_sinet_singleton_reshape_cleanup"
+    terminal_index = lowerer.body.index(terminal_record)
+    assert ast.unparse(terminal_record.value.args[1]) == (
+        "run_terminal_sinet_singleton_reshape_convergence_cleanup("
+        "sinet_terminal_layout_recovery_context)[1]"
     )
     assert _phase_aware_call(lowerer.body[terminal_index - 1])[1] == (
         "cleanup.terminal.dequant_hardsigmoid_bridge"
-    )
-    assert _phase_aware_call(lowerer.body[terminal_index + 1])[1] == (
-        "shape_topology.terminal.indexed_convergence"
     )
 
     very_late_composite = next(
@@ -3015,7 +3014,10 @@ def test_lowerer_sinet_preadd_resize_recovery_has_one_ordered_owner() -> None:
     assert very_late_composite.value.func.id == (
         "run_very_late_sinet_recovery_tail_cleanup"
     )
-    assert _phase_aware_call(lowerer.body[very_late_index - 1])[1] == (
+    very_late_predecessor = lowerer.body[very_late_index - 1]
+    assert isinstance(very_late_predecessor, ast.Expr)
+    assert isinstance(very_late_predecessor.value, ast.Call)
+    assert ast.literal_eval(very_late_predecessor.value.args[0]) == (
         "shape_topology.terminal.indexed_convergence"
     )
     assert _phase_aware_call(lowerer.body[very_late_index + 1])[1] == (
@@ -3095,7 +3097,10 @@ def test_lowerer_sinet_terminal_layout_recovery_has_one_ordered_owner() -> None:
         ast.unparse(argument) for argument in very_late_composite.value.args
     ] == ["sinet_terminal_layout_recovery_context"]
     assert very_late_composite.value.keywords == []
-    assert _phase_aware_call(lowerer.body[very_late_index - 1])[1] == (
+    very_late_predecessor = lowerer.body[very_late_index - 1]
+    assert isinstance(very_late_predecessor, ast.Expr)
+    assert isinstance(very_late_predecessor.value, ast.Call)
+    assert ast.literal_eval(very_late_predecessor.value.args[0]) == (
         "shape_topology.terminal.indexed_convergence"
     )
     assert _phase_aware_call(lowerer.body[very_late_index + 1])[1] == (
@@ -3666,36 +3671,61 @@ def test_lowerer_indexed_shape_convergence_has_one_owner() -> None:
     assert len(invocation_indexes) == 1
     invocation_index = invocation_indexes[0]
     invocation_statement = lowerer.body[invocation_index]
-    invocation, phase_id = _phase_aware_call(invocation_statement)
-    assert phase_id == "shape_topology.terminal.indexed_convergence"
-    assert invocation.func.id == helper_name
-    assert len(invocation.args) == 1
-    assert isinstance(invocation.args[0], ast.Name)
-    assert invocation.args[0].id == "model_ir"
-    layout_keyword = next(
-        keyword
-        for keyword in invocation.keywords
-        if keyword.arg == "layout_state"
+    assert isinstance(invocation_statement, ast.Expr)
+    assert isinstance(invocation_statement.value, ast.Call)
+    invocation = invocation_statement.value
+    assert ast.literal_eval(invocation.args[0]) == (
+        "shape_topology.terminal.indexed_convergence"
     )
-    assert isinstance(layout_keyword.value, ast.Attribute)
-    assert isinstance(layout_keyword.value.value, ast.Name)
-    assert layout_keyword.value.value.id == "session"
-    assert layout_keyword.value.attr == "layout_state"
+    assert ast.unparse(invocation.args[1]) == (
+        "run_terminal_sinet_singleton_reshape_convergence_cleanup("
+        "sinet_terminal_layout_recovery_context)[1]"
+    )
+    orchestration_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "terminal_sinet_singleton_reshape_convergence_orchestration.py"
+    )
+    orchestration_tree = ast.parse(
+        orchestration_path.read_text(encoding="utf-8")
+    )
+    orchestration_owner = next(
+        node
+        for node in orchestration_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name
+        == "run_terminal_sinet_singleton_reshape_convergence_cleanup"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(orchestration_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == owner_name
+    ]
+    assert len(production_calls) == 1
+    assert [ast.unparse(argument) for argument in production_calls[0].args] == [
+        "context.pass_context.model_ir"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in production_calls[0].keywords
+    } == {"layout_state": "context.pass_context.layout_state"}
     previous = lowerer.body[invocation_index - 1]
     following = lowerer.body[invocation_index + 1]
-    assert isinstance(previous, ast.Assign)
-    assert len(previous.targets) == 1
-    assert isinstance(previous.targets[0], ast.Name)
-    assert previous.targets[0].id == "_terminal_sinet_singleton_reshape_results"
+    assert isinstance(previous, ast.Expr)
     assert isinstance(previous.value, ast.Call)
-    assert isinstance(previous.value.func, ast.Name)
+    assert ast.literal_eval(previous.value.args[0]) == (
+        "cleanup.terminal.dequant_hardsigmoid_bridge"
+    )
     assert isinstance(following, ast.Assign)
     assert len(following.targets) == 1
     assert isinstance(following.targets[0], ast.Name)
     assert following.targets[0].id == "_very_late_sinet_recovery_tail_results"
     assert isinstance(following.value, ast.Call)
     assert isinstance(following.value.func, ast.Name)
-    assert previous.value.func.id == "run_terminal_sinet_singleton_reshape_cleanup"
     assert following.value.func.id == "run_very_late_sinet_recovery_tail_cleanup"
 
 

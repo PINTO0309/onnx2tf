@@ -200,8 +200,15 @@ def test_lowerer_records_post_sinet_dequant_hardsigmoid_result() -> None:
     assert ast.unparse(hardswish_record_call.args[1]) == (
         f"{TERMINAL_SINET_HARDSWISH_RESULT}[1]"
     )
-    assert _single_target(lowerer.body[terminal_index + 1]) == (
-        "_terminal_sinet_singleton_reshape_results"
+    indexed_record = lowerer.body[terminal_index + 1]
+    assert _phase_id(indexed_record) == (
+        "shape_topology.terminal.indexed_convergence"
+    )
+    indexed_record_call = _statement_call(indexed_record)
+    assert indexed_record_call is not None
+    assert ast.unparse(indexed_record_call.args[1]) == (
+        "run_terminal_sinet_singleton_reshape_convergence_cleanup("
+        "sinet_terminal_layout_recovery_context)[1]"
     )
 
     post_sinet_index = lowerer.body.index(direct_results[1])

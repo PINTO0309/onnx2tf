@@ -47,7 +47,11 @@ EXPECTED_OWNER_EXPRESSIONS = (
     f"{SINET_TERMINAL_TARGET}[1]",
     "_optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)",
 )
-SINET_RECOVERY_TARGET = "_terminal_sinet_singleton_reshape_results"
+INDEXED_PHASE_ID = "shape_topology.terminal.indexed_convergence"
+INDEXED_OWNER_EXPRESSION = (
+    "run_terminal_sinet_singleton_reshape_convergence_cleanup("
+    "sinet_terminal_layout_recovery_context)[1]"
+)
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -191,7 +195,9 @@ def test_terminal_hardswish_hardsigmoid_results_use_phase_result_store() -> None
     )
     assert indices == [indices[0], indices[0] + 1]
     assert _single_target(lowerer.body[indices[0] - 1]) == SINET_TERMINAL_TARGET
-    assert _single_target(lowerer.body[indices[-1] + 1]) == SINET_RECOVERY_TARGET
+    indexed_record = lowerer.body[indices[-1] + 1]
+    assert _phase_id(indexed_record) == INDEXED_PHASE_ID
+    assert ast.unparse(indexed_record.value.args[1]) == INDEXED_OWNER_EXPRESSION
     assert not any(
         isinstance(node, ast.Name)
         and node.id in {RESULT_TARGET, DEQUANT_TARGET}

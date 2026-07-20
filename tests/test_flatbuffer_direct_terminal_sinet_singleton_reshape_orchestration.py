@@ -33,9 +33,14 @@ RESULT_TARGETS = (
     "_terminal_sinet_preadd_resize_results",
     "_post_terminal_singleton_reshape_results",
 )
-COMPOSITE_TARGET = "_terminal_sinet_singleton_reshape_results"
+CURRENT_TARGET = "_terminal_sinet_singleton_reshape_results"
 PREDECESSOR_PHASE_ID = "cleanup.terminal.dequant_hardsigmoid_bridge"
 SUCCESSOR_PHASE_ID = "shape_topology.terminal.indexed_convergence"
+SUCCESSOR_OWNER_EXPRESSION = (
+    "run_terminal_sinet_singleton_reshape_convergence_cleanup("
+    "sinet_terminal_layout_recovery_context)[1]"
+)
+SUCCESSOR_TARGET = "_very_late_sinet_recovery_tail_results"
 SINGLETON_POLICY = {
     "include_duplicate_fanout": True,
     "include_spatial_concat_post_transpose": False,
@@ -88,21 +93,21 @@ def _phase_id(statement: ast.stmt) -> str | None:
 
 def test_terminal_sinet_singleton_reshape_current_boundary_and_schema() -> None:
     lowerer = _lowerer()
-    assignment = next(
+    record = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == COMPOSITE_TARGET
+        if _phase_id(statement) == SUCCESSOR_PHASE_ID
     )
-    index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == OWNER
-    call = _call(assignment)
+    index = lowerer.body.index(record)
+    call = _call(record)
     assert call is not None
-    assert [ast.unparse(argument) for argument in call.args] == [
-        "shared_model_ir_pass_context"
-    ]
-    assert call.keywords == []
     assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
-    assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
+    assert ast.unparse(call.args[1]) == SUCCESSOR_OWNER_EXPRESSION
+    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert not any(
+        isinstance(node, ast.Name) and node.id == CURRENT_TARGET
+        for node in ast.walk(lowerer)
+    )
     assert not any(
         isinstance(node, ast.Name)
         and isinstance(node.ctx, ast.Load)
@@ -171,21 +176,21 @@ def test_terminal_sinet_singleton_reshape_has_one_shared_context_owner() -> None
     } == SINGLETON_POLICY
 
     lowerer = _lowerer()
-    assignment = next(
+    record = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == COMPOSITE_TARGET
+        if _phase_id(statement) == SUCCESSOR_PHASE_ID
     )
-    index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == OWNER
-    call = _call(assignment)
+    index = lowerer.body.index(record)
+    call = _call(record)
     assert call is not None
-    assert [ast.unparse(argument) for argument in call.args] == [
-        "shared_model_ir_pass_context"
-    ]
-    assert call.keywords == []
     assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
-    assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
+    assert ast.unparse(call.args[1]) == SUCCESSOR_OWNER_EXPRESSION
+    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    assert not any(
+        isinstance(node, ast.Name) and node.id == CURRENT_TARGET
+        for node in ast.walk(lowerer)
+    )
     assert not any(
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)

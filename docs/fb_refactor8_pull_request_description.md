@@ -2113,3 +2113,21 @@ and final affected sequential validation report `3 passed, 1 xfailed` and
 Phase-store validation remains `2 passed`, production remains unchanged, the
 raw/managed inventory remains 31/29, and the store remains exactly 128 calls,
 128 unique IDs, and 128 owners.
+
+The latest implementation adds a terminal SiNet/singleton-Reshape convergence
+owner. It reuses the exact pass context embedded in the existing SiNet terminal
+context, runs the terminal child before the public indexed-convergence owner,
+and returns both complete raw results by identity. The lowerer records returned
+element `[1]` at the unchanged indexed-convergence phase position, before any
+very-late SiNet mutation.
+
+Only the old observation-only terminal assignment is removed. The preceding
+Dequant/HardSigmoid record, following very-late SiNet owner, child owner,
+compatibility wrapper, APIs, artifacts, dependencies, and TensorFlow isolation
+remain unchanged. The initially recorded `336 passed / 16 failed` affected
+result contained only stale structural expectations across 9 files; after
+owner-aware updates, focused `5`, affected `352`, and standard
+`92 / 55 / 196 / 2 / 11` sequential tests pass. The AST audit reports 30 raw
+and 28 managed unconsumed lowerer results, zero old selected-target stores, one
+new indexed owner expression, and exactly 128 phase calls, unique IDs, and
+owners.

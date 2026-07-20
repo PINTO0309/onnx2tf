@@ -12,11 +12,25 @@ OWNER_PATH = (
     / "passes"
     / "indexed_final_shape_activation_convergence.py"
 )
+ORCHESTRATION_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_sinet_singleton_reshape_convergence_orchestration.py"
+)
+ORCHESTRATION_OWNER = (
+    "run_terminal_sinet_singleton_reshape_convergence_cleanup"
+)
 INDEXED_SHAPE_CONVERGENCE = "_run_indexed_shape_convergence_cleanup"
 FINAL_CONVERGENCE = "_run_indexed_final_shape_activation_convergence"
 INDEXED_SHAPE_OWNER = "run_indexed_shape_convergence_cleanup"
 FINAL_OWNER = "run_indexed_final_shape_activation_convergence"
 PHASE_ID = "shape_topology.terminal.indexed_convergence"
+PHASE_OWNER_EXPRESSION = (
+    "run_terminal_sinet_singleton_reshape_convergence_cleanup("
+    "sinet_terminal_layout_recovery_context)[1]"
+)
 
 
 def _module_functions(path: Path = LOWERER_PATH) -> dict[str, ast.FunctionDef]:
@@ -104,23 +118,33 @@ def test_indexed_shape_convergence_result_schema_and_forms_are_explicit() -> Non
     ]
 
     lowerer_invocations = _direct_invocations(functions["lower_onnx_to_ir"])
+    orchestration_owner = _module_functions(ORCHESTRATION_PATH)[
+        ORCHESTRATION_OWNER
+    ]
+    orchestration_invocations = [
+        node
+        for node in ast.walk(orchestration_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == INDEXED_SHAPE_OWNER
+    ]
     nested_invocations = [
         statement
         for statement in owner_functions[FINAL_OWNER].body
         if _call_name(statement) == INDEXED_SHAPE_OWNER
     ]
-    assert len(lowerer_invocations) == 1
+    assert lowerer_invocations == []
+    assert len(orchestration_invocations) == 1
     assert len(nested_invocations) == 1
 
-    top_level_call = _statement_call(lowerer_invocations[0])
-    assert top_level_call is not None
+    top_level_call = orchestration_invocations[0]
     assert [ast.unparse(argument) for argument in top_level_call.args] == [
-        "model_ir",
+        "context.pass_context.model_ir",
     ]
     assert {
         keyword.arg: ast.unparse(keyword.value)
         for keyword in top_level_call.keywords
-    } == {"layout_state": "session.layout_state"}
+    } == {"layout_state": "context.pass_context.layout_state"}
 
     nested_statement = nested_invocations[0]
     assert _single_target(nested_statement) == "convergence_stats"
@@ -148,12 +172,9 @@ def test_top_level_indexed_shape_convergence_uses_phase_result_store() -> None:
     record = records[0]
     index = lowerer.body.index(record)
 
-    assert ast.unparse(record.value.args[1]) == (
-        "_run_indexed_shape_convergence_cleanup("
-        "model_ir, layout_state=session.layout_state)"
-    )
-    assert _single_target(lowerer.body[index - 1]) == (
-        "_terminal_sinet_singleton_reshape_results"
+    assert ast.unparse(record.value.args[1]) == PHASE_OWNER_EXPRESSION
+    assert _phase_id(lowerer.body[index - 1]) == (
+        "cleanup.terminal.dequant_hardsigmoid_bridge"
     )
     assert _single_target(lowerer.body[index + 1]) == (
         "_very_late_sinet_recovery_tail_results"

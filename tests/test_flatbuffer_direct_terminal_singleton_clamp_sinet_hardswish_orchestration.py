@@ -49,7 +49,12 @@ LAYOUT_GUARD = "optimize_layout_transpose_chains"
 PREDECESSOR_PHASE_ID = "cleanup.terminal.qkv_split_conv_concat_bridge"
 HARDSWISH_PHASE_ID = "cleanup.terminal.sinet_hardswish_se"
 SUCCESSOR_PHASE_ID = "cleanup.terminal.dequant_hardsigmoid_bridge"
-SUCCESSOR_RESULT_TARGET = "_terminal_sinet_singleton_reshape_results"
+INDEXED_PHASE_ID = "shape_topology.terminal.indexed_convergence"
+INDEXED_OWNER_EXPRESSION = (
+    "run_terminal_sinet_singleton_reshape_convergence_cleanup("
+    "sinet_terminal_layout_recovery_context)[1]"
+)
+SUCCESSOR_RESULT_TARGET = "_very_late_sinet_recovery_tail_results"
 
 SINGLETON_SCHEMA = (
     (
@@ -214,7 +219,12 @@ def test_terminal_singleton_clamp_sinet_hardswish_current_contract() -> None:
     assert _phase_id(lowerer.body[predecessor_index + 3]) == (
         SUCCESSOR_PHASE_ID
     )
-    assert _single_target(lowerer.body[predecessor_index + 4]) == (
+    indexed_record = lowerer.body[predecessor_index + 4]
+    assert _phase_id(indexed_record) == INDEXED_PHASE_ID
+    indexed_call = _phase_call(indexed_record)
+    assert indexed_call is not None
+    assert ast.unparse(indexed_call.args[1]) == INDEXED_OWNER_EXPRESSION
+    assert _single_target(lowerer.body[predecessor_index + 5]) == (
         SUCCESSOR_RESULT_TARGET
     )
     assert not any(
@@ -309,7 +319,12 @@ def test_terminal_singleton_clamp_sinet_hardswish_has_one_context_owner() -> Non
     assert _phase_id(lowerer.body[predecessor_index + 3]) == (
         SUCCESSOR_PHASE_ID
     )
-    assert _single_target(lowerer.body[predecessor_index + 4]) == (
+    indexed_record = lowerer.body[predecessor_index + 4]
+    assert _phase_id(indexed_record) == INDEXED_PHASE_ID
+    indexed_call = _phase_call(indexed_record)
+    assert indexed_call is not None
+    assert ast.unparse(indexed_call.args[1]) == INDEXED_OWNER_EXPRESSION
+    assert _single_target(lowerer.body[predecessor_index + 5]) == (
         SUCCESSOR_RESULT_TARGET
     )
     assert not any(

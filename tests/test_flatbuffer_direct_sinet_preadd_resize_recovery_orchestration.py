@@ -35,8 +35,11 @@ SINET_PREADD_RESIZE = "_run_sinet_preadd_resize_recovery_sequence"
 SINET_TERMINAL = "_run_sinet_terminal_layout_recovery_sequence"
 VERY_LATE_COMPOSITE_OWNER = "run_very_late_sinet_recovery_tail_cleanup"
 VERY_LATE_COMPOSITE_TARGET = "_very_late_sinet_recovery_tail_results"
-TERMINAL_COMPOSITE_OWNER = "run_terminal_sinet_singleton_reshape_cleanup"
-TERMINAL_COMPOSITE_TARGET = "_terminal_sinet_singleton_reshape_results"
+TERMINAL_PHASE_ID = "shape_topology.terminal.indexed_convergence"
+TERMINAL_OWNER_EXPRESSION = (
+    "run_terminal_sinet_singleton_reshape_convergence_cleanup("
+    "sinet_terminal_layout_recovery_context)[1]"
+)
 
 
 def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -306,20 +309,18 @@ def test_sinet_preadd_resize_recovery_preserves_all_outer_boundaries() -> None:
         ),
     ]
     assert assigned_boundary_targets == []
-    terminal_composite = next(
+    terminal_record = next(
         statement
         for statement in lowerer.body
-        if isinstance(statement, ast.Assign)
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == TERMINAL_COMPOSITE_TARGET
+        if _phase_id(statement) == TERMINAL_PHASE_ID
     )
-    terminal_index = lowerer.body.index(terminal_composite)
-    assert _direct_call_name(terminal_composite) == TERMINAL_COMPOSITE_OWNER
+    terminal_index = lowerer.body.index(terminal_record)
+    assert isinstance(terminal_record, ast.Expr)
+    assert ast.unparse(terminal_record.value.args[1]) == (
+        TERMINAL_OWNER_EXPRESSION
+    )
     assert _phase_id(lowerer.body[terminal_index - 1]) == (
         "cleanup.terminal.dequant_hardsigmoid_bridge"
-    )
-    assert _phase_id(lowerer.body[terminal_index + 1]) == (
-        "shape_topology.terminal.indexed_convergence"
     )
     very_late_composite = next(
         statement
@@ -477,20 +478,18 @@ def test_sinet_preadd_resize_propagates_and_retains_ordered_results(
     assert _direct_call_name(lowerer.body[direct_index + 1]) == (
         "_optimize_transpose_csp_attention_nhwc_chains"
     )
-    terminal_composite = next(
+    terminal_record = next(
         statement
         for statement in lowerer.body
-        if isinstance(statement, ast.Assign)
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == TERMINAL_COMPOSITE_TARGET
+        if _phase_id(statement) == TERMINAL_PHASE_ID
     )
-    terminal_index = lowerer.body.index(terminal_composite)
-    assert _direct_call_name(terminal_composite) == TERMINAL_COMPOSITE_OWNER
+    terminal_index = lowerer.body.index(terminal_record)
+    assert isinstance(terminal_record, ast.Expr)
+    assert ast.unparse(terminal_record.value.args[1]) == (
+        TERMINAL_OWNER_EXPRESSION
+    )
     assert _phase_id(lowerer.body[terminal_index - 1]) == (
         "cleanup.terminal.dequant_hardsigmoid_bridge"
-    )
-    assert _phase_id(lowerer.body[terminal_index + 1]) == (
-        "shape_topology.terminal.indexed_convergence"
     )
     very_late_composite = next(
         statement

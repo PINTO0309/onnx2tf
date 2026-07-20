@@ -7556,3 +7556,49 @@ coverage. Run the fixed affected suite once before updating stale structural
 expectations, then run all affected and standard gates sequentially under
 `uv`, confirm the expected 30/28 inventory, and commit and push the complete
 unit. Do not create, update, reopen, or otherwise modify a pull request.
+
+## Terminal SiNet/singleton-Reshape convergence implementation checkpoint
+
+`passes/terminal_sinet_singleton_reshape_convergence_orchestration.py` now
+provides `run_terminal_sinet_singleton_reshape_convergence_cleanup()`. It
+forwards the exact `SINetTerminalLayoutRecoveryContext.pass_context` to
+`run_terminal_sinet_singleton_reshape_cleanup()`, then calls public
+`run_indexed_shape_convergence_cleanup()` with the same context's exact model
+and `LayoutState`. Both complete child results are returned by identity.
+Runtime injection proves fixed order, pass-context/model/layout identity,
+keyword forwarding, and result identity.
+
+The lowerer removes `_terminal_sinet_singleton_reshape_results` and supplies
+returned element `[1]` directly to the unchanged
+`shape_topology.terminal.indexed_convergence` record. The terminal
+Dequant/HardSigmoid record remains its direct predecessor and
+`_very_late_sinet_recovery_tail_results` remains its direct successor. This
+keeps every very-late SiNet mutation after the observation point. The child
+owner, retained lowerer compatibility wrapper, public indexed owner,
+independent routes, APIs, artifacts, dependencies, and TensorFlow isolation
+remain intact.
+
+The first fixed 13-file affected run was intentionally executed before stale
+test updates and recorded `336 passed / 16 failed`, with failures across 9
+files. Every failure was a stale direct-assignment, wrapper-call, phase-owner,
+target, route, or neighboring-boundary assertion caused by the ownership move;
+no runtime identity, schema, mutation-order, phase-count, or TensorFlow failure
+occurred. Sequential validation now passes: focused `5`, affected `352`,
+terminal-layout/efficiency `92`, core `55`, result contracts `196`, phase
+store `2`, and TensorFlow import-blocking, default-direct, and `-cotof` `11`.
+Ruff, bytecode compilation, and whitespace checks pass.
+
+The read-only AST audit reports 30 raw unconsumed results and 28 managed
+results after excluding the two intentionally retained layout-pass-set-1
+recovery-prefix observations. The old selected target has zero stores, the new
+indexed owner expression occurs once, and the phase store remains exactly 128
+calls, 128 unique IDs, and 128 owners. No real-model conversion was repeated
+for this ownership-only extraction.
+
+At resume, refresh the managed 28-result inventory and select the next smallest
+source-adjacent, semantically closed observation-only boundary. Characterize
+all guards, recorded phase boundaries, option policies, exact context and
+callback identities, child schemas, and independent routes before changing
+production. Continue with sequential `uv` validation and complete checkpoint
+commits/pushes only. Do not create, update, reopen, or otherwise modify a pull
+request.

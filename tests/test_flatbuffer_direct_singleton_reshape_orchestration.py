@@ -52,13 +52,17 @@ LOWERER_LAYOUT_MULTI_TARGET = (
     "_terminal_singleton_clamp_sinet_hardswish_results"
 )
 TERMINAL_COMPOSITE_OWNER = "run_terminal_sinet_singleton_reshape_cleanup"
-TERMINAL_COMPOSITE_TARGET = "_terminal_sinet_singleton_reshape_results"
 TERMINAL_COMPOSITE_PATH = (
     REPO_ROOT
     / "onnx2tf"
     / "tflite_builder"
     / "passes"
     / "terminal_sinet_singleton_reshape_orchestration.py"
+)
+TERMINAL_PHASE_ID = "shape_topology.terminal.indexed_convergence"
+TERMINAL_PHASE_OWNER_EXPRESSION = (
+    "run_terminal_sinet_singleton_reshape_convergence_cleanup("
+    "sinet_terminal_layout_recovery_context)[1]"
 )
 POLICIES = tuple(product((False, True), repeat=4))
 
@@ -106,6 +110,19 @@ def _direct_call_name(statement: ast.stmt) -> str | None:
     if not isinstance(call.func, ast.Name):
         return None
     return call.func.id
+
+
+def _phase_id(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
+        return None
+    call = statement.value
+    if (
+        not isinstance(call.func, ast.Attribute)
+        or ast.unparse(call.func) != "session.record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
 
 
 def _context(*, use_layout_state: bool = False) -> SingletonReshapeContext:
@@ -482,18 +499,15 @@ def test_singleton_reshape_propagates_policy_results_to_direct_primary_callers(
         and statement.targets[0].id == LOWERER_LAYOUT_MULTI_TARGET
     )
     assert _direct_call_name(layout_multi_composite) == LOWERER_LAYOUT_MULTI_OWNER
-    composite = next(
+    terminal_record = next(
         statement
         for statement in lowerer.body
-        if isinstance(statement, ast.Assign)
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == TERMINAL_COMPOSITE_TARGET
+        if _phase_id(statement) == TERMINAL_PHASE_ID
     )
-    assert _direct_call_name(composite) == TERMINAL_COMPOSITE_OWNER
-    assert [ast.unparse(argument) for argument in composite.value.args] == [
-        "shared_model_ir_pass_context"
-    ]
-    assert composite.value.keywords == []
+    assert isinstance(terminal_record, ast.Expr)
+    assert ast.unparse(terminal_record.value.args[1]) == (
+        TERMINAL_PHASE_OWNER_EXPRESSION
+    )
 
 
 def test_singleton_reshape_preserves_layout_multi_policy_and_boundaries() -> None:
@@ -578,22 +592,21 @@ def test_singleton_reshape_preserves_duplicate_spatial_policy_and_boundaries() -
         "include_duplicate_fanout": True,
         "include_spatial_concat_post_transpose": False,
     }
-    composite_index = next(
+    terminal_index = next(
         index
         for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == TERMINAL_COMPOSITE_TARGET
+        if _phase_id(statement) == TERMINAL_PHASE_ID
     )
-    assert _direct_call_name(lowerer.body[composite_index]) == (
-        TERMINAL_COMPOSITE_OWNER
+    terminal_record = lowerer.body[terminal_index]
+    assert isinstance(terminal_record, ast.Expr)
+    assert ast.unparse(terminal_record.value.args[1]) == (
+        TERMINAL_PHASE_OWNER_EXPRESSION
     )
-    assert _direct_call_name(lowerer.body[composite_index - 1]) == (
+    assert _direct_call_name(lowerer.body[terminal_index - 1]) == (
         "_optimize_transpose_dequant_hardsigmoid_quantize_bridges"
     )
-    assert _direct_call_name(lowerer.body[composite_index + 1]) == (
-        "_run_indexed_shape_convergence_cleanup"
+    assert _direct_call_name(lowerer.body[terminal_index + 1]) == (
+        "run_very_late_sinet_recovery_tail_cleanup"
     )
 
 

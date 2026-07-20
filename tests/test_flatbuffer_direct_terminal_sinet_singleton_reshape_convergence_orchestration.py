@@ -11,6 +11,12 @@ from onnx2tf.tflite_builder.ir import ModelIR
 from onnx2tf.tflite_builder.passes.indexed_final_shape_activation_convergence import (
     run_indexed_shape_convergence_cleanup,
 )
+from onnx2tf.tflite_builder.passes import (
+    terminal_sinet_singleton_reshape_convergence_orchestration,
+)
+from onnx2tf.tflite_builder.passes.sinet_terminal_layout_recovery_orchestration import (
+    SINetTerminalLayoutRecoveryContext,
+)
 from onnx2tf.tflite_builder.passes.terminal_sinet_singleton_reshape_orchestration import (
     run_terminal_sinet_singleton_reshape_cleanup,
 )
@@ -32,7 +38,6 @@ CHILD_OWNERS = (
     "run_terminal_sinet_singleton_reshape_cleanup",
     "run_indexed_shape_convergence_cleanup",
 )
-CURRENT_OWNER = "run_terminal_sinet_singleton_reshape_cleanup"
 CURRENT_TARGET = "_terminal_sinet_singleton_reshape_results"
 CURRENT_INDEXED_WRAPPER = "_run_indexed_shape_convergence_cleanup"
 PHASE_ID = "shape_topology.terminal.indexed_convergence"
@@ -106,22 +111,11 @@ def test_terminal_sinet_singleton_reshape_convergence_current_contract() -> None
     predecessor = lowerer.body[index - 1]
     successor = lowerer.body[index + 1]
 
-    assert _single_target(predecessor) == CURRENT_TARGET
-    assert _call_name(predecessor) == CURRENT_OWNER
-    predecessor_call = _call(predecessor)
-    assert predecessor_call is not None
-    assert [ast.unparse(argument) for argument in predecessor_call.args] == [
-        "shared_model_ir_pass_context"
-    ]
-    assert predecessor_call.keywords == []
-    assert _phase_id(lowerer.body[index - 2]) == PREDECESSOR_PHASE_ID
+    assert _phase_id(predecessor) == PREDECESSOR_PHASE_ID
 
     record_call = _call(record)
     assert record_call is not None
-    assert ast.unparse(record_call.args[1]) == (
-        f"{CURRENT_INDEXED_WRAPPER}("
-        "model_ir, layout_state=session.layout_state)"
-    )
+    assert ast.unparse(record_call.args[1]) == FUTURE_OWNER_EXPRESSION
 
     assert _single_target(successor) == SUCCESSOR_TARGET
     assert _call_name(successor) == SUCCESSOR_OWNER
@@ -131,6 +125,10 @@ def test_terminal_sinet_singleton_reshape_convergence_current_contract() -> None
         "sinet_terminal_layout_recovery_context"
     ]
     assert successor_call.keywords == []
+    assert not any(
+        isinstance(node, ast.Name) and node.id == CURRENT_TARGET
+        for node in ast.walk(lowerer)
+    )
 
 
 def test_terminal_sinet_singleton_reshape_convergence_schemas_are_fixed() -> None:
@@ -177,10 +175,6 @@ def test_terminal_sinet_singleton_reshape_convergence_wrapper_is_retained() -> N
     }
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="terminal SiNet/singleton-Reshape convergence owner is not implemented",
-)
 def test_terminal_sinet_singleton_reshape_convergence_has_one_context_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -230,3 +224,54 @@ def test_terminal_sinet_singleton_reshape_convergence_has_one_context_owner() ->
         and "lower_from_onnx2tf" in ast.unparse(node)
         for node in ast.parse(OWNER_PATH.read_text(encoding="utf-8")).body
     )
+
+
+def test_terminal_sinet_singleton_reshape_convergence_runtime_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = ModelIR("terminal_sinet_singleton_reshape_convergence_runtime")
+    pass_context = ModelIRPassContext(
+        model_ir=model_ir,
+        layout_state=LayoutState.from_model_ir(model_ir),
+        diagnostics=[],
+    )
+    context = SINetTerminalLayoutRecoveryContext(
+        pass_context=pass_context,
+        preadd_resize_recovery=lambda: (),
+    )
+    terminal_results = (({"terminal": 1},), ({"reshape": 2},))
+    convergence_results = {"convergence": 3}
+    observed: list[tuple[str, object, dict[str, object]]] = []
+
+    def terminal(active_context: object) -> object:
+        observed.append((CHILD_OWNERS[0], active_context, {}))
+        return terminal_results
+
+    def convergence(active_model_ir: object, **options: object) -> object:
+        observed.append((CHILD_OWNERS[1], active_model_ir, options))
+        return convergence_results
+
+    monkeypatch.setattr(
+        terminal_sinet_singleton_reshape_convergence_orchestration,
+        CHILD_OWNERS[0],
+        terminal,
+    )
+    monkeypatch.setattr(
+        terminal_sinet_singleton_reshape_convergence_orchestration,
+        CHILD_OWNERS[1],
+        convergence,
+    )
+
+    actual = terminal_sinet_singleton_reshape_convergence_orchestration.run_terminal_sinet_singleton_reshape_convergence_cleanup(
+        context
+    )
+    assert actual[0] is terminal_results
+    assert actual[1] is convergence_results
+    assert observed == [
+        (CHILD_OWNERS[0], pass_context, {}),
+        (
+            CHILD_OWNERS[1],
+            model_ir,
+            {"layout_state": pass_context.layout_state},
+        ),
+    ]
