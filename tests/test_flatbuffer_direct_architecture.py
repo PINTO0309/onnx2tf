@@ -3523,7 +3523,28 @@ def test_elementwise_fanout_owner_has_one_lowerer_adapter() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 3
+    optional_owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "late_affine_optional_fanout_orchestration.py"
+    )
+    optional_owner_calls = [
+        node
+        for node in ast.walk(
+            ast.parse(optional_owner_path.read_text(encoding="utf-8"))
+        )
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == owner_name
+    ]
+    assert (
+        len(production_calls)
+        + _orchestrated_pass_count(wrapper_name)
+        + len(optional_owner_calls)
+        == 3
+    )
 
 
 def test_lowerer_indexed_shape_convergence_has_one_owner() -> None:
@@ -8829,13 +8850,16 @@ def test_lowerer_late_ndhwc_cost_volume_pair_reuses_one_pass_state_scope() -> No
     successor = lowerer.body[record_index + 1]
     assert isinstance(successor, ast.Assign)
     assert isinstance(successor.targets[0], ast.Name)
-    assert successor.targets[0].id == "_late_affine_concat_results"
+    assert successor.targets[0].id == "_late_affine_optional_fanout_results"
     successor_call = _statement_call(successor)
-    assert successor_call.func.id == "run_late_affine_concat_cleanup"
+    assert successor_call.func.id == "run_late_affine_optional_fanout_cleanup"
     assert [ast.unparse(argument) for argument in successor_call.args] == [
         "shared_model_ir_pass_context"
     ]
-    assert successor_call.keywords == []
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in successor_call.keywords
+    } == {"include_elementwise_fanout": "optimize_layout_transpose_chains"}
     assert not any(
         isinstance(node, ast.Name)
         and node.id
@@ -8933,15 +8957,18 @@ def test_lowerer_late_concat_layout_cluster_reuses_one_pass_state_scope() -> Non
         for statement in lowerer.body
         if isinstance(statement, ast.Assign)
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_late_affine_concat_results"
+        and statement.targets[0].id == "_late_affine_optional_fanout_results"
     )
     assignment_index = lowerer.body.index(composite)
     composite_call = _statement_call(composite)
-    assert composite_call.func.id == "run_late_affine_concat_cleanup"
+    assert composite_call.func.id == "run_late_affine_optional_fanout_cleanup"
     assert [ast.unparse(argument) for argument in composite_call.args] == [
         "shared_model_ir_pass_context"
     ]
-    assert composite_call.keywords == []
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in composite_call.keywords
+    } == {"include_elementwise_fanout": "optimize_layout_transpose_chains"}
 
     previous_boundary = lowerer.body[assignment_index - 1]
     assert isinstance(previous_boundary, ast.Expr)
@@ -8961,18 +8988,9 @@ def test_lowerer_late_concat_layout_cluster_reuses_one_pass_state_scope() -> Non
     ]
     assert outer_calls[0].keywords == []
     next_boundary = lowerer.body[assignment_index + 1]
-    assert isinstance(next_boundary, ast.If)
-    next_raw_boundary = _statement_call(next_boundary.body[0])
-    assert (
-        next_raw_boundary.func.id
-        == "_optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains"
-    )
-    next_raw_statement = next_boundary.body[0]
-    assert isinstance(next_raw_statement, ast.Assign)
-    assert isinstance(next_raw_statement.targets[0], ast.Name)
-    assert next_raw_statement.targets[0].id == (
-        "_late_concat_elementwise_fanout_stats"
-    )
+    assert isinstance(next_boundary, ast.Assign)
+    assert isinstance(next_boundary.targets[0], ast.Name)
+    assert next_boundary.targets[0].id == "_late_final_shape_boundary_results"
     assert not any(
         isinstance(node, ast.Name)
         and node.id
@@ -9186,9 +9204,10 @@ def test_lowerer_late_nchw_shuffle_gather_pair_stays_between_raw_rewrites() -> N
         "_late_final_shape_boundary_results"
     )
     previous_boundary = lowerer.body[invocation_index - 1]
-    assert isinstance(previous_boundary, ast.If)
-    assert ast.unparse(previous_boundary.test) == (
-        "optimize_layout_transpose_chains"
+    assert isinstance(previous_boundary, ast.Assign)
+    assert isinstance(previous_boundary.targets[0], ast.Name)
+    assert previous_boundary.targets[0].id == (
+        "_late_affine_optional_fanout_results"
     )
     next_boundary = lowerer.body[invocation_index + 1]
     assert isinstance(next_boundary, ast.If)

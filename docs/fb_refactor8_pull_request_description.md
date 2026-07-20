@@ -1878,3 +1878,17 @@ Focused and reference-based affected sequential validation report
 the deliberately absent future owner. Production behavior, dependencies,
 TensorFlow isolation, the 38-result inventory, and the exactly
 128-ID/128-owner phase store remain unchanged.
+
+The latest implementation adds an optional late affine/elementwise fan-out
+owner. Late affine/Concat cleanup always receives the exact shared pass
+context; elementwise fan-out receives that context's model only when layout
+optimization is enabled. Raw result identities are retained, with `None`
+representing the disabled fan-out path.
+
+Only the two observation-only lowerer assignments are replaced. Both flag
+paths, recorded predecessor, late-shape successor, compatibility wrapper,
+graph behavior, APIs, artifacts, dependencies, and TensorFlow isolation remain
+unchanged. Focused `5`, affected `427`, and standard
+`92 / 55 / 196 / 2 / 11` sequential tests pass. The phase store remains
+exactly 128 IDs and 128 owners, and the unconsumed-result inventory decreases
+from 38 to 37.

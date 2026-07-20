@@ -310,8 +310,8 @@ from onnx2tf.tflite_builder.passes.gate_layout_orchestration import (
     run_gate_layout,
     run_late_ndhwc_cost_volume_layout_cleanup,
 )
-from onnx2tf.tflite_builder.passes.late_affine_concat_orchestration import (
-    run_late_affine_concat_cleanup,
+from onnx2tf.tflite_builder.passes.late_affine_optional_fanout_orchestration import (
+    run_late_affine_optional_fanout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.late_final_shape_boundary_orchestration import (
     LateFinalShapeBoundaryContext,
@@ -4990,15 +4990,12 @@ def lower_onnx_to_ir(
             shared_model_ir_pass_context,
         ),
     )
-    _late_affine_concat_results = run_late_affine_concat_cleanup(
-        shared_model_ir_pass_context,
-    )
-    if optimize_layout_transpose_chains:
-        _late_concat_elementwise_fanout_stats = (
-            _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(
-                model_ir
-            )
+    _late_affine_optional_fanout_results = (
+        run_late_affine_optional_fanout_cleanup(
+            shared_model_ir_pass_context,
+            include_elementwise_fanout=optimize_layout_transpose_chains,
         )
+    )
     # Late layout rewrites can invalidate RESHAPE constants and recreate
     # terminal Slice/Concat adapters; converge both at the final boundary.
     _late_final_shape_boundary_results = (

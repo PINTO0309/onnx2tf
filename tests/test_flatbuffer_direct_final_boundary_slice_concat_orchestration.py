@@ -49,7 +49,7 @@ RESULT_TARGETS = (
 )
 COMPOSITE_TARGET = "_late_final_shape_boundary_results"
 OUTER_OWNER = "run_late_final_shape_boundary_cleanup"
-PREDECESSOR_TARGET = "_late_concat_elementwise_fanout_stats"
+PREDECESSOR_TARGET = "_late_affine_optional_fanout_results"
 SUCCESSOR_GUARD = "optimize_layout_transpose_chains"
 SUCCESSOR_TARGET = "_terminal_elementwise_fanout_stats"
 
@@ -102,8 +102,8 @@ def test_final_boundary_slice_concat_current_boundary_and_schema() -> None:
     ]
     assert call.keywords == []
     predecessor = lowerer.body[index - 1]
-    assert isinstance(predecessor, ast.If)
-    assert _single_target(predecessor.body[0]) == PREDECESSOR_TARGET
+    assert isinstance(predecessor, ast.Assign)
+    assert _single_target(predecessor) == PREDECESSOR_TARGET
     successor = lowerer.body[index + 1]
     assert isinstance(successor, ast.If)
     assert ast.unparse(successor.test) == SUCCESSOR_GUARD
@@ -220,8 +220,8 @@ def test_final_boundary_slice_concat_has_one_context_owner() -> None:
     ]
     assert call.keywords == []
     predecessor = lowerer.body[index - 1]
-    assert isinstance(predecessor, ast.If)
-    assert _single_target(predecessor.body[0]) == PREDECESSOR_TARGET
+    assert isinstance(predecessor, ast.Assign)
+    assert _single_target(predecessor) == PREDECESSOR_TARGET
     successor = lowerer.body[index + 1]
     assert isinstance(successor, ast.If)
     assert ast.unparse(successor.test) == SUCCESSOR_GUARD

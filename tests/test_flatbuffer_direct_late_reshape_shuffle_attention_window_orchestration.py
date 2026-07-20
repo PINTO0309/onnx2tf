@@ -53,7 +53,7 @@ RESULT_TARGETS = (
 )
 COMPOSITE_TARGET = "_late_final_shape_boundary_results"
 OUTER_OWNER = "run_late_final_shape_boundary_cleanup"
-PREDECESSOR_TARGET = "_late_concat_elementwise_fanout_stats"
+PREDECESSOR_TARGET = "_late_affine_optional_fanout_results"
 SUCCESSOR_TARGET = "_terminal_elementwise_fanout_stats"
 
 
@@ -105,11 +105,8 @@ def test_late_reshape_shuffle_attention_window_current_boundary_and_schema() -> 
     ]
     assert call.keywords == []
     predecessor = lowerer.body[index - 1]
-    assert isinstance(predecessor, ast.If)
-    assert ast.unparse(predecessor.test) == "optimize_layout_transpose_chains"
-    assert [_single_target(statement) for statement in predecessor.body] == [
-        PREDECESSOR_TARGET
-    ]
+    assert isinstance(predecessor, ast.Assign)
+    assert _single_target(predecessor) == PREDECESSOR_TARGET
     successor = lowerer.body[index + 1]
     assert isinstance(successor, ast.If)
     assert _single_target(successor.body[0]) == SUCCESSOR_TARGET
@@ -220,7 +217,7 @@ def test_late_reshape_shuffle_attention_window_has_one_context_owner() -> None:
         "late_final_shape_boundary_context"
     ]
     assert call.keywords == []
-    assert isinstance(lowerer.body[index - 1], ast.If)
+    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
     successor = lowerer.body[index + 1]
     assert isinstance(successor, ast.If)
     assert _single_target(successor.body[0]) == SUCCESSOR_TARGET

@@ -33,12 +33,18 @@ RESULT_TARGETS = (
     "_late_cost_volume_conv_affine_stats",
     "_late_concat_layout_results",
 )
-COMPOSITE_TARGET = "_late_affine_concat_results"
-PREDECESSOR_PHASE_ID = "cleanup.late.ndhwc_cost_volume"
-SUCCESSOR_TARGET = "_late_concat_elementwise_fanout_stats"
-SUCCESSOR_OWNER = (
-    "_optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains"
+LOWERER_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "late_affine_optional_fanout_orchestration.py"
 )
+LOWERER_OWNER = "run_late_affine_optional_fanout_cleanup"
+COMPOSITE_TARGET = "_late_affine_optional_fanout_results"
+PREDECESSOR_PHASE_ID = "cleanup.late.ndhwc_cost_volume"
+SUCCESSOR_TARGET = "_late_final_shape_boundary_results"
+SUCCESSOR_OWNER = "run_late_final_shape_boundary_cleanup"
 EXPECTED_SCHEMAS = (
     {
         "folded_conv_mul_add_affine_chains": 0,
@@ -118,26 +124,38 @@ def test_late_affine_concat_current_boundary_and_schema() -> None:
         if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == OWNER
+    assert _call_name(assignment) == LOWERER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
         "shared_model_ir_pass_context"
     ]
-    assert call.keywords == []
+    assert {
+        keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
+    } == {"include_elementwise_fanout": "optimize_layout_transpose_chains"}
     assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
     successor = lowerer.body[index + 1]
-    assert isinstance(successor, ast.If)
-    assert ast.unparse(successor.test) == "optimize_layout_transpose_chains"
-    assert len(successor.body) == 1
-    assert _single_target(successor.body[0]) == SUCCESSOR_TARGET
-    assert _call_name(successor.body[0]) == SUCCESSOR_OWNER
+    assert _single_target(successor) == SUCCESSOR_TARGET
+    assert _call_name(successor) == SUCCESSOR_OWNER
     assert not any(
         isinstance(node, ast.Name)
         and isinstance(node.ctx, ast.Load)
         and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
+
+    lowerer_owner = _functions(LOWERER_OWNER_PATH)[LOWERER_OWNER]
+    child_calls = [
+        node
+        for node in ast.walk(lowerer_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OWNER
+    ]
+    assert len(child_calls) == 1
+    assert [ast.unparse(argument) for argument in child_calls[0].args] == [
+        "context"
+    ]
 
     model_ir = ModelIR("late_affine_concat_schema")
     context = ModelIRPassContext(
@@ -187,23 +205,33 @@ def test_late_affine_concat_has_one_context_owner() -> None:
         if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == OWNER
+    assert _call_name(assignment) == LOWERER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
         "shared_model_ir_pass_context"
     ]
-    assert call.keywords == []
+    assert {
+        keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
+    } == {"include_elementwise_fanout": "optimize_layout_transpose_chains"}
     assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
     successor = lowerer.body[index + 1]
-    assert isinstance(successor, ast.If)
-    assert ast.unparse(successor.test) == "optimize_layout_transpose_chains"
-    assert _single_target(successor.body[0]) == SUCCESSOR_TARGET
-    assert _call_name(successor.body[0]) == SUCCESSOR_OWNER
+    assert _single_target(successor) == SUCCESSOR_TARGET
+    assert _call_name(successor) == SUCCESSOR_OWNER
     assert not any(
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
+
+    lowerer_owner = _functions(LOWERER_OWNER_PATH)[LOWERER_OWNER]
+    child_calls = [
+        node
+        for node in ast.walk(lowerer_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OWNER
+    ]
+    assert len(child_calls) == 1
 
 
 def test_late_affine_concat_runtime_order_and_identity(

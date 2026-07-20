@@ -164,7 +164,17 @@ LATE_AFFINE_CONCAT_OWNER_PATH = (
     / "late_affine_concat_orchestration.py"
 )
 LATE_AFFINE_CONCAT_OWNER = "run_late_affine_concat_cleanup"
-LATE_AFFINE_CONCAT_RESULT = "_late_affine_concat_results"
+LATE_AFFINE_OPTIONAL_FANOUT_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "late_affine_optional_fanout_orchestration.py"
+)
+LATE_AFFINE_OPTIONAL_FANOUT_OWNER = (
+    "run_late_affine_optional_fanout_cleanup"
+)
+LATE_AFFINE_CONCAT_RESULT = "_late_affine_optional_fanout_results"
 
 
 def _lowerer_body() -> list[ast.stmt]:
@@ -287,11 +297,14 @@ def _late_affine_concat_assignment(body: list[ast.stmt]) -> ast.Assign:
     )
     assert isinstance(assignment.value, ast.Call)
     assert isinstance(assignment.value.func, ast.Name)
-    assert assignment.value.func.id == LATE_AFFINE_CONCAT_OWNER
+    assert assignment.value.func.id == LATE_AFFINE_OPTIONAL_FANOUT_OWNER
     assert [ast.unparse(argument) for argument in assignment.value.args] == [
         "shared_model_ir_pass_context"
     ]
-    assert assignment.value.keywords == []
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in assignment.value.keywords
+    } == {"include_elementwise_fanout": "optimize_layout_transpose_chains"}
     return assignment
 
 
@@ -1777,8 +1790,9 @@ def test_primary_path_retains_late_cost_volume_conv_affine_result() -> None:
     )
 
     following = body[late_index + 1]
-    assert isinstance(following, ast.If)
-    assert ast.unparse(following.test) == "optimize_layout_transpose_chains"
+    assert isinstance(following, ast.Assign)
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == LATE_FINAL_SHAPE_BOUNDARY_RESULT
     assert not any(
         isinstance(node, ast.Name)
         and node.id == "_late_cost_volume_conv_affine_stats"
@@ -1826,10 +1840,11 @@ def test_primary_path_retains_late_concat_composite_results() -> None:
     )
 
     following = body[result_index + 1]
-    assert isinstance(following, ast.If)
-    assert ast.unparse(following.test) == "optimize_layout_transpose_chains"
-    assert _call_name(_statement_call(following.body[0])) == (
-        "_optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains"
+    assert isinstance(following, ast.Assign)
+    assert isinstance(following.targets[0], ast.Name)
+    assert following.targets[0].id == LATE_FINAL_SHAPE_BOUNDARY_RESULT
+    assert _call_name(_statement_call(following)) == (
+        LATE_FINAL_SHAPE_BOUNDARY_OWNER
     )
 
     layout_cleanup_statements = [
@@ -2101,52 +2116,40 @@ def test_primary_path_retains_guarded_elementwise_fanout_results() -> None:
         and len(statement.body) == 1
         and _call_name(_statement_call(statement.body[0])) == callback_name
     ]
-    assert len(guards) == 2
+    assert len(guards) == 1
+    guard = guards[0]
+    assert ast.unparse(guard.test) == "optimize_layout_transpose_chains"
+    assignment = guard.body[0]
+    assert isinstance(assignment, ast.Assign)
+    assert isinstance(assignment.targets[0], ast.Name)
+    assert assignment.targets[0].id == "_terminal_elementwise_fanout_stats"
+    call = assignment.value
+    assert isinstance(call, ast.Call)
+    assert isinstance(call.func, ast.Name)
+    assert call.func.id == callback_name
+    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
+    assert call.keywords == []
 
-    expected = (
-        (
-            "_late_concat_elementwise_fanout_stats",
-            LATE_AFFINE_CONCAT_RESULT,
-            LATE_FINAL_SHAPE_BOUNDARY_OWNER,
-        ),
-        (
-            "_terminal_elementwise_fanout_stats",
-            LATE_FINAL_SHAPE_BOUNDARY_RESULT,
-            "_run_terminal_singleton_maxpool_reshape_pass_pair",
-        ),
+    optional_owner = next(
+        node
+        for node in ast.parse(
+            LATE_AFFINE_OPTIONAL_FANOUT_OWNER_PATH.read_text(encoding="utf-8")
+        ).body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == LATE_AFFINE_OPTIONAL_FANOUT_OWNER
     )
-    for guard, (target_name, predecessor_name, successor_name) in zip(
-        guards,
-        expected,
-        strict=True,
-    ):
-        assert ast.unparse(guard.test) == "optimize_layout_transpose_chains"
-        assignment = guard.body[0]
-        assert isinstance(assignment, ast.Assign)
-        assert len(assignment.targets) == 1
-        assert isinstance(assignment.targets[0], ast.Name)
-        assert assignment.targets[0].id == target_name
-        call = assignment.value
-        assert isinstance(call, ast.Call)
-        assert isinstance(call.func, ast.Name)
-        assert call.func.id == callback_name
-        assert [ast.unparse(argument) for argument in call.args] == [
-            "model_ir"
-        ]
-        assert call.keywords == []
-
-        guard_index = body.index(guard)
-        predecessor = body[guard_index - 1]
-        if isinstance(predecessor, ast.Assign):
-            assert isinstance(predecessor.targets[0], ast.Name)
-            assert predecessor.targets[0].id == predecessor_name
-        else:
-            assert _call_name(_statement_call(predecessor)) == (
-                predecessor_name
-            )
-        assert _call_name(_statement_call(body[guard_index + 1])) == (
-            successor_name
-        )
+    optional_calls = [
+        node
+        for node in ast.walk(optional_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id
+        == "optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains"
+    ]
+    assert len(optional_calls) == 1
+    assert [ast.unparse(argument) for argument in optional_calls[0].args] == [
+        "context.model_ir"
+    ]
 
 
 def test_primary_path_retains_late_reshape_layout_composite() -> None:
@@ -2160,15 +2163,10 @@ def test_primary_path_retains_late_reshape_layout_composite() -> None:
     assert [ast.unparse(argument) for argument in calls[0].args] == ["context"]
     assert calls[0].keywords == []
 
-    preceding_guard = body[index - 1]
-    assert isinstance(preceding_guard, ast.If)
-    assert ast.unparse(preceding_guard.test) == "optimize_layout_transpose_chains"
-    preceding_assignment = preceding_guard.body[0]
+    preceding_assignment = body[index - 1]
     assert isinstance(preceding_assignment, ast.Assign)
     assert isinstance(preceding_assignment.targets[0], ast.Name)
-    assert preceding_assignment.targets[0].id == (
-        "_late_concat_elementwise_fanout_stats"
-    )
+    assert preceding_assignment.targets[0].id == LATE_AFFINE_CONCAT_RESULT
     successor = body[index + 1]
     assert isinstance(successor, ast.If)
     successor_assignment = successor.body[0]
@@ -2301,14 +2299,10 @@ def test_primary_path_retains_final_boundary_channel_layout_composite() -> None:
         "context.pass_context"
     ]
     assert calls[0].keywords == []
-    predecessor = body[index - 1]
-    assert isinstance(predecessor, ast.If)
-    predecessor_assignment = predecessor.body[0]
+    predecessor_assignment = body[index - 1]
     assert isinstance(predecessor_assignment, ast.Assign)
     assert isinstance(predecessor_assignment.targets[0], ast.Name)
-    assert predecessor_assignment.targets[0].id == (
-        "_late_concat_elementwise_fanout_stats"
-    )
+    assert predecessor_assignment.targets[0].id == LATE_AFFINE_CONCAT_RESULT
     successor = body[index + 1]
     assert isinstance(successor, ast.If)
     assert ast.unparse(successor.test) == "optimize_layout_transpose_chains"

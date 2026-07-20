@@ -6784,3 +6784,44 @@ structural expectations made stale by the new outer route. Run affected and
 standard gates sequentially under `uv`, confirm the expected inventory
 reduction from 38 to 37, then commit and push the complete unit. Do not create,
 update, reopen, or otherwise modify a pull request.
+
+## Late affine/optional elementwise fan-out implementation checkpoint
+
+`passes/late_affine_optional_fanout_orchestration.py` now provides
+`run_late_affine_optional_fanout_cleanup()`. It always calls
+`run_late_affine_concat_cleanup(context)`. When
+`include_elementwise_fanout=True`, it then calls
+`optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(
+context.model_ir)`; when false, it performs no fan-out call and returns `None`
+for that slot. Runtime injection proves both path orders, disabled-path
+non-call, context/model identity, absence of extra options, affine identity on
+both paths, and fan-out identity when enabled.
+
+The lowerer replaces only `_late_affine_concat_results` and
+`_late_concat_elementwise_fanout_stats` with
+`_late_affine_optional_fanout_results`, passing the exact
+`shared_model_ir_pass_context` and current layout-optimization flag. Recorded
+`cleanup.late.ndhwc_cost_volume` remains the direct predecessor. The former
+single-statement guard is removed, and `_late_final_shape_boundary_results`
+remains the direct successor outside the owner. The lowerer fan-out wrapper,
+public fan-out owner, affine/Concat owner, and every nested and independent
+route remain available.
+
+Thirty-six stale direct-call, target, guard, route-count, or neighbor
+expectations were updated to follow the children through the optional owner
+while retaining both paths and route totals. Sequential validation passes:
+focused `5`, fixed 25-file affected `427`, terminal-layout/efficiency `92`,
+core `55`, result contracts `196`, phase store `2`, and TensorFlow
+import-blocking, default-direct, and `-cotof` `11`. Ruff, bytecode compilation,
+and whitespace checks pass. The read-only AST audit reports 37 unconsumed
+lowerer results, zero old affine/fan-out targets, one new composite target, and
+exactly 128 phase IDs with 128 owners. No real-model conversion was repeated
+for this ownership-only extraction.
+
+At resume, refresh the 37-result inventory and select the next smallest
+source-adjacent, semantically closed observation-only boundary. Characterize
+all guards, recorded phase boundaries, option policies, exact context and
+callback identities, child schemas, and independent routes before changing
+production. Continue with sequential `uv` validation and complete checkpoint
+commits/pushes only. Do not create, update, reopen, or otherwise modify a pull
+request.

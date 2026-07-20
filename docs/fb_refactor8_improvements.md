@@ -7146,3 +7146,25 @@ reference-based affected sequential validation report
 `2 passed, 1 xfailed` and `424 passed, 1 xfailed`; the sole expected failure is
 the deliberately absent owner module. The characterized inventory remains 38,
 and the phase-result store remains exactly 128 IDs and 128 owners.
+
+## Extract late affine/optional elementwise fan-out cleanup
+
+`passes/late_affine_optional_fanout_orchestration.py` now owns the
+characterized cross-guard pair. It always forwards the exact shared
+`ModelIRPassContext` to late affine/Concat cleanup and conditionally forwards
+that context's `ModelIR` to public elementwise fan-out cleanup. The affine
+result is always returned by identity; the fan-out result is returned by
+identity when enabled and is `None` when disabled.
+
+The lowerer replaces only the two observation-only locals with
+`_late_affine_optional_fanout_results`. Recorded late NDHWC cost-volume cleanup
+remains the predecessor, and late final shape-boundary cleanup remains the
+successor. The raw fan-out compatibility wrapper and all nested affine/Concat
+and independent fan-out routes remain available.
+
+Thirty-six stale structural expectations now follow the children through the
+outer owner while retaining both flag paths and route coverage. Sequential
+validation passes: focused `5`, affected `427`, and standard
+`92 / 55 / 196 / 2 / 11`. Ruff, bytecode compilation, and whitespace checks
+pass. The phase store remains exactly 128 IDs and 128 owners, while the
+unconsumed lowerer-result inventory decreases from 38 to 37.

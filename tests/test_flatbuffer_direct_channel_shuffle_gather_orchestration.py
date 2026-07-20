@@ -543,7 +543,10 @@ def test_channel_shuffle_gather_preserves_late_base_policy_and_boundaries() -> N
         and statement.targets[0].id == COMPOSITE_TARGET
     )
     index = lowerer.body.index(composite)
-    assert isinstance(lowerer.body[index - 1], ast.If)
+    predecessor = lowerer.body[index - 1]
+    assert isinstance(predecessor, ast.Assign)
+    assert isinstance(predecessor.targets[0], ast.Name)
+    assert predecessor.targets[0].id == "_late_affine_optional_fanout_results"
     assert isinstance(lowerer.body[index + 1], ast.If)
     successor = lowerer.body[index + 1].body[0]
     assert isinstance(successor, ast.Assign)

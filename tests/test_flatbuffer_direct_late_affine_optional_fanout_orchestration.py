@@ -9,6 +9,9 @@ import pytest
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import (
+    late_affine_optional_fanout_orchestration,
+)
 from onnx2tf.tflite_builder.passes.elementwise_fanout_layout import (
     optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains,
 )
@@ -148,34 +151,24 @@ def _dict_schema(values: tuple[Any, ...]) -> tuple[tuple[str, ...], ...]:
 
 def test_late_affine_optional_fanout_current_contract() -> None:
     lowerer = _lowerer()
-    affine = next(
+    assignment = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == RESULT_TARGETS[0]
+        if _single_target(statement) == COMPOSITE_TARGET
     )
-    affine_index = lowerer.body.index(affine)
-    assert _call_name(affine) == CURRENT_CHILD_OWNERS[0]
-    affine_call = _call(affine)
-    assert affine_call is not None
-    assert [ast.unparse(argument) for argument in affine_call.args] == [
+    index = lowerer.body.index(assignment)
+    assert _call_name(assignment) == OWNER
+    call = _call(assignment)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == [
         "shared_model_ir_pass_context"
     ]
-    assert affine_call.keywords == []
-    assert _phase_id(lowerer.body[affine_index - 1]) == PREDECESSOR_PHASE_ID
+    assert {
+        keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
+    } == {"include_elementwise_fanout": GUARD}
+    assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
 
-    guard = _optional_guard(lowerer)
-    assert lowerer.body[affine_index + 1] is guard
-    assert guard.orelse == []
-    assert len(guard.body) == 1
-    fanout = guard.body[0]
-    assert _single_target(fanout) == RESULT_TARGETS[1]
-    assert _call_name(fanout) == CURRENT_CHILD_OWNERS[1]
-    fanout_call = _call(fanout)
-    assert fanout_call is not None
-    assert [ast.unparse(argument) for argument in fanout_call.args] == ["model_ir"]
-    assert fanout_call.keywords == []
-
-    successor = lowerer.body[lowerer.body.index(guard) + 1]
+    successor = lowerer.body[index + 1]
     assert _single_target(successor) == SUCCESSOR_TARGET
     assert _call_name(successor) == SUCCESSOR_OWNER
     assert not any(
@@ -212,10 +205,6 @@ def test_late_affine_optional_fanout_child_schemas() -> None:
     assert tuple(fanout_results) == FANOUT_SCHEMA
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="late affine/optional fan-out owner is not implemented",
-)
 def test_late_affine_optional_fanout_has_one_optional_context_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -279,3 +268,52 @@ def test_late_affine_optional_fanout_has_one_optional_context_owner() -> None:
         and "lower_from_onnx2tf" in ast.unparse(node)
         for node in ast.parse(OWNER_PATH.read_text(encoding="utf-8")).body
     )
+
+
+@pytest.mark.parametrize("include_elementwise_fanout", [False, True])
+def test_late_affine_optional_fanout_runtime_order_and_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    include_elementwise_fanout: bool,
+) -> None:
+    context = _context()
+    affine_results = ({"affine": 1}, ({"concat": 2},))
+    fanout_results = {"fanout": 3}
+    observed: list[tuple[str, object]] = []
+
+    def _affine(
+        active_context: ModelIRPassContext,
+    ) -> tuple[dict[str, int], tuple[dict[str, int], ...]]:
+        observed.append((CHILD_OWNERS[0], active_context))
+        return affine_results
+
+    def _fanout(active_model_ir: ModelIR) -> dict[str, int]:
+        observed.append((CHILD_OWNERS[1], active_model_ir))
+        return fanout_results
+
+    monkeypatch.setattr(
+        late_affine_optional_fanout_orchestration,
+        CHILD_OWNERS[0],
+        _affine,
+    )
+    monkeypatch.setattr(
+        late_affine_optional_fanout_orchestration,
+        CHILD_OWNERS[1],
+        _fanout,
+    )
+
+    actual = (
+        late_affine_optional_fanout_orchestration.run_late_affine_optional_fanout_cleanup(
+            context,
+            include_elementwise_fanout=include_elementwise_fanout,
+        )
+    )
+    assert actual[0] is affine_results
+    if include_elementwise_fanout:
+        assert actual[1] is fanout_results
+        assert observed == [
+            (CHILD_OWNERS[0], context),
+            (CHILD_OWNERS[1], context.model_ir),
+        ]
+    else:
+        assert actual[1] is None
+        assert observed == [(CHILD_OWNERS[0], context)]

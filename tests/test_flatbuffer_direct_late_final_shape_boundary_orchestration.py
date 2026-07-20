@@ -50,8 +50,7 @@ RESULT_TARGETS = (
     "_final_boundary_slice_concat_results",
 )
 COMPOSITE_TARGET = "_late_final_shape_boundary_results"
-PREDECESSOR_GUARD = "optimize_layout_transpose_chains"
-PREDECESSOR_TARGET = "_late_concat_elementwise_fanout_stats"
+PREDECESSOR_TARGET = "_late_affine_optional_fanout_results"
 SUCCESSOR_GUARD = "optimize_layout_transpose_chains"
 SUCCESSOR_TARGET = "_terminal_elementwise_fanout_stats"
 CONVERGENCE_KEYS = (
@@ -119,11 +118,8 @@ def test_late_final_shape_boundary_current_order_context_and_schema() -> None:
 
     predecessor = lowerer.body[index - 1]
     successor = lowerer.body[index + 1]
-    assert isinstance(predecessor, ast.If)
-    assert ast.unparse(predecessor.test) == PREDECESSOR_GUARD
-    assert [_single_target(statement) for statement in predecessor.body] == [
-        PREDECESSOR_TARGET
-    ]
+    assert isinstance(predecessor, ast.Assign)
+    assert _single_target(predecessor) == PREDECESSOR_TARGET
     assert isinstance(successor, ast.If)
     assert ast.unparse(successor.test) == SUCCESSOR_GUARD
     assert [_single_target(statement) for statement in successor.body] == [
@@ -235,7 +231,7 @@ def test_late_final_shape_boundary_has_one_context_owner() -> None:
         "late_final_shape_boundary_context"
     ]
     assert call.keywords == []
-    assert isinstance(lowerer.body[index - 1], ast.If)
+    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
     assert isinstance(lowerer.body[index + 1], ast.If)
     assert not any(
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS

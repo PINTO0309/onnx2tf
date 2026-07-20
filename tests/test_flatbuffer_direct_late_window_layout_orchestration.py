@@ -34,7 +34,7 @@ COMPOSITE_PATH = (
 COMPOSITE_OWNER = "run_late_reshape_shuffle_attention_window_cleanup"
 COMPOSITE_TARGET = "_late_final_shape_boundary_results"
 RESULT_TARGET = "_late_window_layout_results"
-PREDECESSOR_TARGET = "_late_concat_elementwise_fanout_stats"
+PREDECESSOR_TARGET = "_late_affine_optional_fanout_results"
 SUCCESSOR_TARGET = "_terminal_elementwise_fanout_stats"
 OLD_RESULT_TARGETS = (
     "_late_window_partition_stats",
@@ -102,8 +102,8 @@ def test_late_window_layout_pair_uses_one_composite_result_outside_store() -> No
         "late_final_shape_boundary_context)"
     )
     predecessor = lowerer.body[index - 1]
-    assert isinstance(predecessor, ast.If)
-    assert _single_target(predecessor.body[0]) == PREDECESSOR_TARGET
+    assert isinstance(predecessor, ast.Assign)
+    assert _single_target(predecessor) == PREDECESSOR_TARGET
     successor = lowerer.body[index + 1]
     assert isinstance(successor, ast.If)
     assert _single_target(successor.body[0]) == SUCCESSOR_TARGET
@@ -149,8 +149,8 @@ def test_late_window_layout_pair_uses_one_composite_owner() -> None:
         "late_final_shape_boundary_context)"
     )
     predecessor = lowerer.body[index - 1]
-    assert isinstance(predecessor, ast.If)
-    assert _single_target(predecessor.body[0]) == PREDECESSOR_TARGET
+    assert isinstance(predecessor, ast.Assign)
+    assert _single_target(predecessor) == PREDECESSOR_TARGET
     successor = lowerer.body[index + 1]
     assert isinstance(successor, ast.If)
     assert _single_target(successor.body[0]) == SUCCESSOR_TARGET
