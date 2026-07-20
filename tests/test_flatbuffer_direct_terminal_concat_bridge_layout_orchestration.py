@@ -37,7 +37,7 @@ COMPOSITE_OWNER = "run_final_boundary_slice_concat_cleanup"
 COMPOSITE_TARGET = "_late_final_shape_boundary_results"
 RESULT_TARGET = "_terminal_concat_bridge_layout_results"
 PREDECESSOR_TARGET = "_late_affine_optional_fanout_results"
-SUCCESSOR_TARGET = "_terminal_elementwise_fanout_stats"
+SUCCESSOR_TARGET = "_terminal_fanout_singleton_results"
 OLD_RESULT_TARGETS = (
     "_terminal_relu_split_all_outputs_stats",
     "_terminal_relu_split_conv_concat_stats",
@@ -123,10 +123,8 @@ def test_terminal_concat_bridge_cluster_uses_composite_result_outside_store() ->
     assert isinstance(predecessor, ast.Assign)
     assert _single_target(predecessor) == PREDECESSOR_TARGET
     successor = lowerer.body[index + 1]
-    assert isinstance(successor, ast.If)
-    assert ast.unparse(successor.test) == "optimize_layout_transpose_chains"
-    assert len(successor.body) == 1
-    assert _single_target(successor.body[0]) == SUCCESSOR_TARGET
+    assert isinstance(successor, ast.Assign)
+    assert _single_target(successor) == SUCCESSOR_TARGET
     assert len(_composite_calls()) == 1
     assert not any(
         isinstance(node, ast.Name) and node.id in OLD_RESULT_TARGETS
@@ -172,8 +170,8 @@ def test_terminal_concat_bridge_cluster_uses_one_composite_owner() -> None:
     assert isinstance(predecessor, ast.Assign)
     assert _single_target(predecessor) == PREDECESSOR_TARGET
     successor = lowerer.body[index + 1]
-    assert isinstance(successor, ast.If)
-    assert _single_target(successor.body[0]) == SUCCESSOR_TARGET
+    assert isinstance(successor, ast.Assign)
+    assert _single_target(successor) == SUCCESSOR_TARGET
     assert len(_composite_calls()) == 1
     assert not any(
         isinstance(node, ast.Name) and node.id in OLD_RESULT_TARGETS

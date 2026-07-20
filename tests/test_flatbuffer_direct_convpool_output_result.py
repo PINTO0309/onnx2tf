@@ -16,9 +16,7 @@ CONVPOOL_OUTPUT = (
     "_optimize_convpool_output_transpose_nhwc_passthrough_chains"
 )
 OWNER_NAME = "optimize_convpool_output_transpose_nhwc_passthrough_chains"
-TERMINAL_SINGLETON_MAXPOOL = (
-    "_run_terminal_singleton_maxpool_reshape_pass_pair"
-)
+TERMINAL_FANOUT_SINGLETON = "run_terminal_fanout_singleton_cleanup"
 SAFE_REDUCTION = "_apply_safe_transpose_reduction_lite"
 MUL_ADD_CONST = "_optimize_transpose_mul_add_const_prepost_nhwc_chains"
 DEQUANT_HARDSIGMOID = (
@@ -138,7 +136,7 @@ def test_lowerer_retains_guarded_convpool_output_result() -> None:
 
     guard_index = lowerer.body.index(guard)
     assert _call_name(lowerer.body[guard_index - 1]) == (
-        TERMINAL_SINGLETON_MAXPOOL
+        TERMINAL_FANOUT_SINGLETON
     )
     assert _call_name(lowerer.body[guard_index + 1]) == LATE_DEQUANT_COMPOSITE
 

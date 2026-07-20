@@ -23,6 +23,15 @@ from onnx2tf.tflite_builder.passes.terminal_singleton_maxpool_reshape_orchestrat
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 TERMINAL_SINGLETON_MAXPOOL_RESHAPE = "_run_terminal_singleton_maxpool_reshape_pass_pair"
+OUTER_OWNER = "run_terminal_fanout_singleton_cleanup"
+OUTER_TARGET = "_terminal_fanout_singleton_results"
+OUTER_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_fanout_singleton_orchestration.py"
+)
 
 
 def _lowerer_and_helper() -> tuple[ast.FunctionDef, ast.FunctionDef]:
@@ -171,9 +180,24 @@ def test_terminal_singleton_maxpool_reshape_invocation_is_zero_argument() -> Non
         and node.func.id == TERMINAL_SINGLETON_MAXPOOL_RESHAPE
     ]
 
-    assert len(invocations) == 1
-    assert invocations[0].args == []
-    assert invocations[0].keywords == []
+    assert invocations == []
+    owner = next(
+        node
+        for node in ast.parse(OUTER_OWNER_PATH.read_text(encoding="utf-8")).body
+        if isinstance(node, ast.FunctionDef) and node.name == OUTER_OWNER
+    )
+    owner_invocations = [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_terminal_singleton_maxpool_reshape"
+    ]
+    assert len(owner_invocations) == 1
+    assert [ast.unparse(argument) for argument in owner_invocations[0].args] == [
+        "context"
+    ]
+    assert owner_invocations[0].keywords == []
 
 
 def test_terminal_singleton_maxpool_reshape_preserves_outer_boundaries() -> None:
@@ -184,30 +208,20 @@ def test_terminal_singleton_maxpool_reshape_preserves_outer_boundaries() -> None
         if isinstance(statement, ast.Assign)
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == TERMINAL_SINGLETON_MAXPOOL_RESHAPE
+        and statement.value.func.id == OUTER_OWNER
     )
     invocation = lowerer.body[invocation_index]
     assert isinstance(invocation, ast.Assign)
     assert len(invocation.targets) == 1
     assert isinstance(invocation.targets[0], ast.Name)
     assert invocation.targets[0].id == (
-        "_terminal_singleton_maxpool_reshape_results"
+        OUTER_TARGET
     )
 
     previous = lowerer.body[invocation_index - 1]
-    assert isinstance(previous, ast.If)
-    assert isinstance(previous.test, ast.Name)
-    assert previous.test.id == "optimize_layout_transpose_chains"
-    previous_call = previous.body[0]
-    assert isinstance(previous_call, ast.Assign)
-    assert isinstance(previous_call.targets[0], ast.Name)
-    assert previous_call.targets[0].id == "_terminal_elementwise_fanout_stats"
-    assert isinstance(previous_call.value, ast.Call)
-    assert isinstance(previous_call.value.func, ast.Name)
-    assert (
-        previous_call.value.func.id
-        == "_optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains"
-    )
+    assert isinstance(previous, ast.Assign)
+    assert isinstance(previous.targets[0], ast.Name)
+    assert previous.targets[0].id == "_late_final_shape_boundary_results"
 
     following = lowerer.body[invocation_index + 1]
     assert isinstance(following, ast.If)

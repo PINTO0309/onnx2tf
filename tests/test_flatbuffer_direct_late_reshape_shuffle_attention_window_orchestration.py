@@ -54,7 +54,7 @@ RESULT_TARGETS = (
 COMPOSITE_TARGET = "_late_final_shape_boundary_results"
 OUTER_OWNER = "run_late_final_shape_boundary_cleanup"
 PREDECESSOR_TARGET = "_late_affine_optional_fanout_results"
-SUCCESSOR_TARGET = "_terminal_elementwise_fanout_stats"
+SUCCESSOR_TARGET = "_terminal_fanout_singleton_results"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -108,8 +108,8 @@ def test_late_reshape_shuffle_attention_window_current_boundary_and_schema() -> 
     assert isinstance(predecessor, ast.Assign)
     assert _single_target(predecessor) == PREDECESSOR_TARGET
     successor = lowerer.body[index + 1]
-    assert isinstance(successor, ast.If)
-    assert _single_target(successor.body[0]) == SUCCESSOR_TARGET
+    assert isinstance(successor, ast.Assign)
+    assert _single_target(successor) == SUCCESSOR_TARGET
     assert not any(
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
@@ -219,8 +219,8 @@ def test_late_reshape_shuffle_attention_window_has_one_context_owner() -> None:
     assert call.keywords == []
     assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
     successor = lowerer.body[index + 1]
-    assert isinstance(successor, ast.If)
-    assert _single_target(successor.body[0]) == SUCCESSOR_TARGET
+    assert isinstance(successor, ast.Assign)
+    assert _single_target(successor) == SUCCESSOR_TARGET
     assert not any(
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)

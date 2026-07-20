@@ -1905,3 +1905,18 @@ Focused and reference-based affected sequential validation report
 is the deliberately absent future owner. Production behavior, dependencies,
 TensorFlow isolation, the managed 37-result inventory, and the exactly
 128-ID/128-owner phase store remain unchanged.
+
+The latest implementation adds an optional terminal fan-out/singleton owner.
+Elementwise fan-out receives the exact shared context's model only when layout
+optimization is enabled; singleton MaxPool/Reshape always receives the exact
+shared context next. Raw result identities are retained, with `None`
+representing the disabled fan-out path.
+
+Only the two observation-only lowerer assignments are replaced. Both flag
+paths, the late-shape predecessor, terminal Conv/Pool/no-layout successor,
+compatibility wrappers, graph behavior, APIs, artifacts, dependencies, and
+TensorFlow isolation remain unchanged. The initially recorded 33 affected
+failures were all stale structural ownership expectations; after owner-aware
+updates, focused `5`, affected `449`, and standard `92 / 55 / 196 / 2 / 11`
+sequential tests pass. The phase store remains exactly 128 IDs and 128 owners,
+and the managed unconsumed-result inventory decreases from 37 to 36.

@@ -6878,3 +6878,52 @@ structural expectations made stale by the new outer route. Run affected and
 standard gates sequentially under `uv`, confirm the expected managed inventory
 reduction from 37 to 36, then commit and push the complete unit. Do not create,
 update, reopen, or otherwise modify a pull request.
+
+## Terminal optional fan-out/singleton implementation checkpoint
+
+`passes/terminal_fanout_singleton_orchestration.py` now provides
+`run_terminal_fanout_singleton_cleanup()`. When
+`include_elementwise_fanout=True`, it first calls
+`optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(
+context.model_ir)`; when false, it performs no fan-out call and returns `None`
+for that slot. It then always calls
+`run_terminal_singleton_maxpool_reshape(context)`. Runtime injection proves
+both path orders, disabled-path non-call, exact model/context identity,
+absence of extra options, singleton identity on both paths, and fan-out
+identity when enabled.
+
+The lowerer replaces only `_terminal_elementwise_fanout_stats` and
+`_terminal_singleton_maxpool_reshape_results` with
+`_terminal_fanout_singleton_results`, passing the exact
+`shared_model_ir_pass_context` and current layout-optimization flag. The
+former single-statement guard is removed. `_late_final_shape_boundary_results`
+remains the direct predecessor. The following terminal Conv/Pool output guard
+and its `apply_safe_transpose_reduction_lite_on_no_layout_opt` `elif` remain
+the direct successor outside the owner. Both lowerer wrappers, the public
+fan-out owner, the singleton owner, and every independent route remain
+available.
+
+The first fixed 26-file affected run was intentionally executed before test
+updates and recorded 33 failures. Every failure was a stale direct-call,
+target, route-count, or neighbor assertion caused by the ownership move; no
+runtime schema, pass behavior, phase store, or TensorFlow boundary failed.
+Eighteen structural test files were then updated to follow both children
+through the new outer owner while retaining both flag paths and route totals.
+
+Sequential validation passes: focused `5`, fixed 26-file affected `449`,
+terminal-layout/efficiency `92`, core `55`, result contracts `196`, phase
+store `2`, and TensorFlow import-blocking, default-direct, and `-cotof` `11`.
+Ruff, bytecode compilation, and whitespace checks pass. The read-only AST
+audit reports 38 raw unconsumed results, 36 managed results after the two
+intentionally retained layout-pass-set-1 recovery-prefix observations, zero
+old fan-out/singleton targets, one new composite target, and exactly 128 phase
+IDs with 128 owners. No real-model conversion was repeated for this ownership-
+only extraction.
+
+At resume, refresh the managed 36-result inventory and select the next
+smallest source-adjacent, semantically closed observation-only boundary.
+Characterize all guards, recorded phase boundaries, option policies, exact
+context and callback identities, child schemas, and independent routes before
+changing production. Continue with sequential `uv` validation and complete
+checkpoint commits/pushes only. Do not create, update, reopen, or otherwise
+modify a pull request.

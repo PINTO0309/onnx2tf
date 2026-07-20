@@ -422,7 +422,9 @@ def test_terminal_slice_concat_recovery_preserves_outer_boundaries() -> None:
     predecessor = lowerer.body[index - 1]
     assert isinstance(predecessor, ast.Assign)
     assert _single_target(predecessor) == "_late_affine_optional_fanout_results"
-    assert isinstance(lowerer.body[index + 1], ast.If)
+    assert _single_target(lowerer.body[index + 1]) == (
+        "_terminal_fanout_singleton_results"
+    )
     assert len(_composite_recovery_calls()) == 1
 
 

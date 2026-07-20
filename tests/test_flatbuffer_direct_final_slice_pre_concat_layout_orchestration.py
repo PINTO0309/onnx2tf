@@ -39,7 +39,7 @@ COMPOSITE_OWNER = "run_final_boundary_slice_concat_cleanup"
 COMPOSITE_TARGET = "_late_final_shape_boundary_results"
 RESULT_TARGET = "_final_slice_pre_concat_layout_results"
 PREDECESSOR_TARGET = "_late_affine_optional_fanout_results"
-SUCCESSOR_TARGET = "_terminal_elementwise_fanout_stats"
+SUCCESSOR_TARGET = "_terminal_fanout_singleton_results"
 OLD_RESULT_TARGETS = (
     "_final_slice_prepost_passthrough_stats",
     "_final_pre_concat_stats",
@@ -114,8 +114,8 @@ def test_final_slice_pre_concat_pair_uses_composite_result_outside_store() -> No
     assert isinstance(predecessor, ast.Assign)
     assert _single_target(predecessor) == PREDECESSOR_TARGET
     successor = lowerer.body[index + 1]
-    assert isinstance(successor, ast.If)
-    assert _single_target(successor.body[0]) == SUCCESSOR_TARGET
+    assert isinstance(successor, ast.Assign)
+    assert _single_target(successor) == SUCCESSOR_TARGET
     assert len(_composite_calls()) == 1
     assert not any(
         isinstance(node, ast.Name) and node.id in OLD_RESULT_TARGETS
@@ -160,8 +160,8 @@ def test_final_slice_pre_concat_pair_uses_one_composite_owner() -> None:
     assert isinstance(predecessor, ast.Assign)
     assert _single_target(predecessor) == PREDECESSOR_TARGET
     successor = lowerer.body[index + 1]
-    assert isinstance(successor, ast.If)
-    assert _single_target(successor.body[0]) == SUCCESSOR_TARGET
+    assert isinstance(successor, ast.Assign)
+    assert _single_target(successor) == SUCCESSOR_TARGET
     assert len(_composite_calls()) == 1
     assert not any(
         isinstance(node, ast.Name) and node.id in OLD_RESULT_TARGETS

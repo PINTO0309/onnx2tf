@@ -9,6 +9,9 @@ import pytest
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import (
+    terminal_fanout_singleton_orchestration,
+)
 from onnx2tf.tflite_builder.passes.elementwise_fanout_layout import (
     optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains,
 )
@@ -98,19 +101,6 @@ def _single_target(statement: ast.stmt) -> str | None:
     return target.id if isinstance(target, ast.Name) else None
 
 
-def _guard_with_target(
-    lowerer: ast.FunctionDef,
-    target: str,
-) -> ast.If:
-    return next(
-        statement
-        for statement in lowerer.body
-        if isinstance(statement, ast.If)
-        and ast.unparse(statement.test) == GUARD
-        and any(_single_target(candidate) == target for candidate in statement.body)
-    )
-
-
 def _context() -> ModelIRPassContext:
     model_ir = ModelIR("terminal_fanout_singleton_schema")
     return ModelIRPassContext(
@@ -127,33 +117,27 @@ def _dict_schema(values: tuple[Any, ...]) -> tuple[tuple[str, ...], ...]:
 
 def test_terminal_fanout_singleton_current_contract() -> None:
     lowerer = _lowerer()
-    fanout_guard = _guard_with_target(lowerer, RESULT_TARGETS[0])
-    fanout_guard_index = lowerer.body.index(fanout_guard)
-    assert fanout_guard.orelse == []
-    assert len(fanout_guard.body) == 1
-    fanout = fanout_guard.body[0]
-    assert _single_target(fanout) == RESULT_TARGETS[0]
-    assert _call_name(fanout) == CURRENT_CHILD_OWNERS[0]
-    fanout_call = _call(fanout)
-    assert fanout_call is not None
-    assert [ast.unparse(argument) for argument in fanout_call.args] == [
-        "model_ir"
+    assignment = next(
+        statement
+        for statement in lowerer.body
+        if _single_target(statement) == COMPOSITE_TARGET
+    )
+    index = lowerer.body.index(assignment)
+    assert _call_name(assignment) == OWNER
+    call = _call(assignment)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == [
+        "shared_model_ir_pass_context"
     ]
-    assert fanout_call.keywords == []
+    assert {
+        keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
+    } == {"include_elementwise_fanout": GUARD}
 
-    predecessor = lowerer.body[fanout_guard_index - 1]
+    predecessor = lowerer.body[index - 1]
     assert _single_target(predecessor) == PREDECESSOR_TARGET
     assert _call_name(predecessor) == PREDECESSOR_OWNER
 
-    singleton = lowerer.body[fanout_guard_index + 1]
-    assert _single_target(singleton) == RESULT_TARGETS[1]
-    assert _call_name(singleton) == CURRENT_CHILD_OWNERS[1]
-    singleton_call = _call(singleton)
-    assert singleton_call is not None
-    assert singleton_call.args == []
-    assert singleton_call.keywords == []
-
-    successor_guard = lowerer.body[fanout_guard_index + 2]
+    successor_guard = lowerer.body[index + 1]
     assert isinstance(successor_guard, ast.If)
     assert ast.unparse(successor_guard.test) == GUARD
     assert _single_target(successor_guard.body[0]) == SUCCESSOR_TARGET
@@ -216,10 +200,6 @@ def test_terminal_fanout_singleton_child_schemas_and_wrappers() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="terminal optional fan-out/singleton owner is not implemented",
-)
 def test_terminal_fanout_singleton_has_one_optional_context_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -294,3 +274,52 @@ def test_terminal_fanout_singleton_has_one_optional_context_owner() -> None:
         and "lower_from_onnx2tf" in ast.unparse(node)
         for node in ast.parse(OWNER_PATH.read_text(encoding="utf-8")).body
     )
+
+
+@pytest.mark.parametrize("include_elementwise_fanout", [False, True])
+def test_terminal_fanout_singleton_runtime_order_and_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    include_elementwise_fanout: bool,
+) -> None:
+    context = _context()
+    fanout_results = {"fanout": 1}
+    singleton_results = ({"singleton": 2}, {"reshape": 3})
+    observed: list[tuple[str, object]] = []
+
+    def _fanout(active_model_ir: ModelIR) -> dict[str, int]:
+        observed.append((CHILD_OWNERS[0], active_model_ir))
+        return fanout_results
+
+    def _singleton(
+        active_context: ModelIRPassContext,
+    ) -> tuple[dict[str, int], ...]:
+        observed.append((CHILD_OWNERS[1], active_context))
+        return singleton_results
+
+    monkeypatch.setattr(
+        terminal_fanout_singleton_orchestration,
+        CHILD_OWNERS[0],
+        _fanout,
+    )
+    monkeypatch.setattr(
+        terminal_fanout_singleton_orchestration,
+        CHILD_OWNERS[1],
+        _singleton,
+    )
+
+    actual = (
+        terminal_fanout_singleton_orchestration.run_terminal_fanout_singleton_cleanup(
+            context,
+            include_elementwise_fanout=include_elementwise_fanout,
+        )
+    )
+    assert actual[1] is singleton_results
+    if include_elementwise_fanout:
+        assert actual[0] is fanout_results
+        assert observed == [
+            (CHILD_OWNERS[0], context.model_ir),
+            (CHILD_OWNERS[1], context),
+        ]
+    else:
+        assert actual[0] is None
+        assert observed == [(CHILD_OWNERS[1], context)]

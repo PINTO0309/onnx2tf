@@ -259,6 +259,9 @@ from onnx2tf.tflite_builder.passes.terminal_sinet_singleton_reshape_orchestratio
 from onnx2tf.tflite_builder.passes.terminal_singleton_maxpool_reshape_orchestration import (
     run_terminal_singleton_maxpool_reshape,
 )
+from onnx2tf.tflite_builder.passes.terminal_fanout_singleton_orchestration import (
+    run_terminal_fanout_singleton_cleanup,
+)
 from onnx2tf.tflite_builder.passes.late_dequant_unary_fanout_orchestration import (
     run_late_dequant_unary_fanout,
 )
@@ -5003,14 +5006,11 @@ def lower_onnx_to_ir(
             late_final_shape_boundary_context,
         )
     )
-    if optimize_layout_transpose_chains:
-        _terminal_elementwise_fanout_stats = (
-            _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(
-                model_ir
-            )
+    _terminal_fanout_singleton_results = (
+        run_terminal_fanout_singleton_cleanup(
+            shared_model_ir_pass_context,
+            include_elementwise_fanout=optimize_layout_transpose_chains,
         )
-    _terminal_singleton_maxpool_reshape_results = (
-        _run_terminal_singleton_maxpool_reshape_pass_pair()
     )
     if optimize_layout_transpose_chains:
         _terminal_convpool_output_passthrough_stats = (

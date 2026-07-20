@@ -35,7 +35,7 @@ COMPOSITE_OWNER = "run_late_reshape_shuffle_attention_window_cleanup"
 COMPOSITE_TARGET = "_late_final_shape_boundary_results"
 RESULT_TARGET = "_late_window_layout_results"
 PREDECESSOR_TARGET = "_late_affine_optional_fanout_results"
-SUCCESSOR_TARGET = "_terminal_elementwise_fanout_stats"
+SUCCESSOR_TARGET = "_terminal_fanout_singleton_results"
 OLD_RESULT_TARGETS = (
     "_late_window_partition_stats",
     "_late_window_reverse_stats",
@@ -105,8 +105,8 @@ def test_late_window_layout_pair_uses_one_composite_result_outside_store() -> No
     assert isinstance(predecessor, ast.Assign)
     assert _single_target(predecessor) == PREDECESSOR_TARGET
     successor = lowerer.body[index + 1]
-    assert isinstance(successor, ast.If)
-    assert _single_target(successor.body[0]) == SUCCESSOR_TARGET
+    assert isinstance(successor, ast.Assign)
+    assert _single_target(successor) == SUCCESSOR_TARGET
     assert len(_composite_calls()) == 1
     assert not any(
         isinstance(node, ast.Name) and node.id in OLD_RESULT_TARGETS
@@ -152,8 +152,8 @@ def test_late_window_layout_pair_uses_one_composite_owner() -> None:
     assert isinstance(predecessor, ast.Assign)
     assert _single_target(predecessor) == PREDECESSOR_TARGET
     successor = lowerer.body[index + 1]
-    assert isinstance(successor, ast.If)
-    assert _single_target(successor.body[0]) == SUCCESSOR_TARGET
+    assert isinstance(successor, ast.Assign)
+    assert _single_target(successor) == SUCCESSOR_TARGET
     assert len(_composite_calls()) == 1
     assert not any(
         isinstance(node, ast.Name) and node.id in OLD_RESULT_TARGETS

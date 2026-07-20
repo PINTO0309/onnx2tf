@@ -547,11 +547,10 @@ def test_channel_shuffle_gather_preserves_late_base_policy_and_boundaries() -> N
     assert isinstance(predecessor, ast.Assign)
     assert isinstance(predecessor.targets[0], ast.Name)
     assert predecessor.targets[0].id == "_late_affine_optional_fanout_results"
-    assert isinstance(lowerer.body[index + 1], ast.If)
-    successor = lowerer.body[index + 1].body[0]
+    successor = lowerer.body[index + 1]
     assert isinstance(successor, ast.Assign)
     assert isinstance(successor.targets[0], ast.Name)
-    assert successor.targets[0].id == "_terminal_elementwise_fanout_stats"
+    assert successor.targets[0].id == "_terminal_fanout_singleton_results"
 
 
 def test_channel_shuffle_gather_preserves_argument_free_default_callback() -> None:

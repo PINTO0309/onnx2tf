@@ -7189,3 +7189,27 @@ and reference-based affected sequential validation report
 `2 passed, 1 xfailed` and `446 passed, 1 xfailed`; the sole expected failure
 is the deliberately absent owner module. The managed inventory remains 37,
 and the phase-result store remains exactly 128 IDs and 128 owners.
+
+## Extract terminal optional fan-out/singleton cleanup
+
+`passes/terminal_fanout_singleton_orchestration.py` now owns the
+characterized cross-guard pair. It conditionally forwards the exact shared
+context's `ModelIR` to elementwise fan-out cleanup, then always forwards the
+original `ModelIRPassContext` to singleton MaxPool/Reshape cleanup. The
+fan-out result is returned by identity when enabled and is `None` when
+disabled; the complete singleton result is always returned by identity.
+
+The lowerer replaces only the two observation-only locals with
+`_terminal_fanout_singleton_results`. Late final shape-boundary cleanup remains
+the predecessor. The terminal Conv/Pool output guard and its no-layout `elif`
+fallback remain the successor. Both lowerer wrappers and all independent
+child routes remain available.
+
+The first affected run deliberately recorded 33 failures, all stale direct-
+call, target, route-count, or neighbor expectations. Eighteen structural test
+files now follow the children through the outer owner while retaining both
+flag paths and route coverage. Sequential validation passes: focused `5`,
+affected `449`, and standard `92 / 55 / 196 / 2 / 11`. Ruff, bytecode
+compilation, and whitespace checks pass. The phase store remains exactly 128
+IDs and 128 owners, while the managed unconsumed-result inventory decreases
+from 37 to 36.

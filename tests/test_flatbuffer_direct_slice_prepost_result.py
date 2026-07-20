@@ -124,7 +124,9 @@ def test_final_slice_prepost_result_moves_to_final_pair_composite() -> None:
     predecessor = lowerer.body[composite_index - 1]
     assert isinstance(predecessor, ast.Assign)
     assert _single_target(predecessor) == "_late_affine_optional_fanout_results"
-    assert isinstance(lowerer.body[composite_index + 1], ast.If)
+    assert _single_target(lowerer.body[composite_index + 1]) == (
+        "_terminal_fanout_singleton_results"
+    )
     owner = _functions(FINAL_COMPOSITE_PATH)[COMPOSITE_OWNER]
     assert sum(
         isinstance(node, ast.Call)

@@ -3539,10 +3539,27 @@ def test_elementwise_fanout_owner_has_one_lowerer_adapter() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == owner_name
     ]
+    terminal_owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "terminal_fanout_singleton_orchestration.py"
+    )
+    terminal_owner_calls = [
+        node
+        for node in ast.walk(
+            ast.parse(terminal_owner_path.read_text(encoding="utf-8"))
+        )
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == owner_name
+    ]
     assert (
         len(production_calls)
         + _orchestrated_pass_count(wrapper_name)
         + len(optional_owner_calls)
+        + len(terminal_owner_calls)
         == 3
     )
 
@@ -6739,37 +6756,34 @@ def test_lowerer_terminal_singleton_maxpool_reshape_pair_reuses_scope() -> None:
     )
     assert helper_calls[0].keywords == []
 
+    owner_name = "run_terminal_fanout_singleton_cleanup"
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
         if isinstance(statement, ast.Assign)
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == helper_name
+        and statement.value.func.id == owner_name
     )
     invocation = lowerer.body[invocation_index]
     assert isinstance(invocation, ast.Assign)
     assert len(invocation.targets) == 1
     assert isinstance(invocation.targets[0], ast.Name)
     assert invocation.targets[0].id == (
-        "_terminal_singleton_maxpool_reshape_results"
+        "_terminal_fanout_singleton_results"
     )
     previous_boundary = lowerer.body[invocation_index - 1]
-    assert isinstance(previous_boundary, ast.If)
-    assert isinstance(previous_boundary.test, ast.Name)
-    assert previous_boundary.test.id == "optimize_layout_transpose_chains"
-    previous_call = previous_boundary.body[0]
-    assert isinstance(previous_call, ast.Assign)
-    assert isinstance(previous_call.targets[0], ast.Name)
-    assert previous_call.targets[0].id == (
-        "_terminal_elementwise_fanout_stats"
-    )
-    assert isinstance(previous_call.value, ast.Call)
-    assert isinstance(previous_call.value.func, ast.Name)
-    assert (
-        previous_call.value.func.id
-        == "_optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains"
-    )
+    assert isinstance(previous_boundary, ast.Assign)
+    assert isinstance(previous_boundary.targets[0], ast.Name)
+    assert previous_boundary.targets[0].id == "_late_final_shape_boundary_results"
+    assert isinstance(invocation.value, ast.Call)
+    assert [ast.unparse(argument) for argument in invocation.value.args] == [
+        "shared_model_ir_pass_context"
+    ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in invocation.value.keywords
+    } == {"include_elementwise_fanout": "optimize_layout_transpose_chains"}
     next_boundary = lowerer.body[invocation_index + 1]
     assert isinstance(next_boundary, ast.If)
     assert isinstance(next_boundary.test, ast.Name)
@@ -6786,6 +6800,30 @@ def test_lowerer_terminal_singleton_maxpool_reshape_pair_reuses_scope() -> None:
     assert (
         next_call.value.func.id
         == "_optimize_convpool_output_transpose_nhwc_passthrough_chains"
+    )
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "terminal_fanout_singleton_orchestration.py"
+    )
+    owner = next(
+        node
+        for node in ast.parse(owner_path.read_text(encoding="utf-8")).body
+        if isinstance(node, ast.FunctionDef) and node.name == owner_name
+    )
+    assert sum(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_terminal_singleton_maxpool_reshape"
+        for node in ast.walk(owner)
+    ) == 1
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == helper_name
+        for node in ast.walk(lowerer)
     )
 
 
@@ -9210,8 +9248,9 @@ def test_lowerer_late_nchw_shuffle_gather_pair_stays_between_raw_rewrites() -> N
         "_late_affine_optional_fanout_results"
     )
     next_boundary = lowerer.body[invocation_index + 1]
-    assert isinstance(next_boundary, ast.If)
-    assert ast.unparse(next_boundary.test) == "optimize_layout_transpose_chains"
+    assert isinstance(next_boundary, ast.Assign)
+    assert isinstance(next_boundary.targets[0], ast.Name)
+    assert next_boundary.targets[0].id == "_terminal_fanout_singleton_results"
     assert (
         _late_reshape_shuffle_attention_window_call_count(
             "run_channel_shuffle_gather"
