@@ -7777,3 +7777,43 @@ callback identities, complete child schemas, and independent routes before
 changing production. Continue to run all `uv` validation sequentially, then
 commit and push each complete unit. Do not create, update, reopen, or otherwise
 modify a pull request.
+
+## Post-SiNet QKV/ReLU-Split-all characterization checkpoint
+
+The refreshed inventory contains 28 raw and 26 managed unconsumed lowerer
+results after excluding exactly the two retained layout-pass-set-1 recovery
+prefix observations. The selected boundary starts with
+`_post_sinet_qkv_attention_results` and ends with the immediately following
+recorded `cleanup.post_sinet.relu_split_all_outputs` pass. The recorded
+post-SiNet BatchMatMul adjacent-flags predecessor and recorded
+ReLU/Split/Conv/Concat successor remain outside the boundary.
+
+The future `run_post_sinet_qkv_relu_split_all_cleanup()` owner receives the
+existing shared `ModelIRPassContext`. It must call `run_qkv_attention(context)`
+with the unchanged defaults (`include_layout_transpose=False`,
+`include_prefix=True`), then call
+`optimize_transpose_relu_split_all_outputs_to_nhwc_chains()` with
+`context.model_ir` and `layout_state=context.layout_state`, and return both
+complete raw results. The lowerer must supply returned element `[1]` directly
+to the unchanged ReLU/Split-all phase record. Both QKV child schemas, the
+one-key ReLU schema, compatibility wrappers, and the independent terminal QKV
+route are fixed by characterization tests.
+
+Focused sequential validation reports `3 passed, 1 xfailed`; the fixed
+10-file affected suite reports `301 passed, 1 xfailed`. The sole expected
+failure requires the intentionally absent future owner. Production is
+unchanged, the raw/managed inventory remains 28/26, and the phase store remains
+exactly 128 calls, 128 unique IDs, and 128 owner expressions. Ruff, bytecode
+compilation, and whitespace checks pass. No real-model conversion was repeated
+for this characterization.
+
+At resume, implement only the characterized two-child owner. Replace the
+post-SiNet QKV assignment and current ReLU/Split-all owner expression with
+`run_post_sinet_qkv_relu_split_all_cleanup(`
+`shared_model_ir_pass_context)[1]`, preserve both recorded neighboring phases,
+retain all child owners and compatibility wrappers, keep the terminal QKV
+route independent, and add runtime order/context/model/layout/result-identity
+coverage. Capture the fixed affected suite before updating stale assertions,
+then run affected and standard gates sequentially under `uv`, confirm the
+expected 27/25 inventory, and commit and push the implementation. Do not
+create, update, reopen, or otherwise modify a pull request.

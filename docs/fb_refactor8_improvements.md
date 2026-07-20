@@ -7698,3 +7698,29 @@ recovery-prefix observations. The removed target has zero stores, the new
 owner expression occurs once, and the phase store remains exactly 128 calls,
 128 unique IDs, and 128 owner expressions. No real-model conversion was
 repeated for this ownership-only extraction.
+
+## Characterize post-SiNet QKV/ReLU-Split-all cleanup
+
+The managed 26-result inventory next selects the unconsumed post-SiNet QKV
+attention result and its immediately following recorded ReLU/Split-all output
+cleanup. Both operations already use the shared `ModelIRPassContext`. A future
+`run_post_sinet_qkv_relu_split_all_cleanup()` owner can call
+`run_qkv_attention(context)` with its unchanged default policy
+(`include_layout_transpose=False`, `include_prefix=True`), then call the public
+ReLU/Split-all owner with `context.model_ir` and `context.layout_state`. The
+lowerer can record returned element `[1]` without retaining the
+observation-only QKV result.
+
+The boundary keeps the recorded post-SiNet BatchMatMul adjacent-flags phase as
+its immediate predecessor and the recorded ReLU/Split/Conv/Concat phase as its
+immediate successor. The strict contract fixes both QKV child schemas, the
+one-key ReLU schema, option defaults, exact context/model/layout forwarding,
+the retained lowerer wrappers, and the separate terminal QKV route.
+
+Production remains unchanged pending the two-child owner. Focused and fixed
+affected sequential characterization report `3 passed, 1 xfailed` and
+`301 passed, 1 xfailed` across 10 files; the sole expected failure requires
+the deliberately absent future owner. The raw/managed inventory remains 28/26
+and the phase store remains exactly 128 calls, 128 unique IDs, and 128 owner
+expressions. Ruff, bytecode compilation, and whitespace checks pass. No
+real-model conversion was repeated for this characterization.
