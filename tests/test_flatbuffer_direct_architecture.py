@@ -3106,11 +3106,11 @@ def test_lowerer_sinet_terminal_layout_recovery_has_one_ordered_owner() -> None:
         for statement in lowerer.body
         if isinstance(statement, ast.Assign)
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_terminal_clamp_sinet_layout_results"
+        and statement.targets[0].id == "_terminal_singleton_clamp_sinet_results"
     )
     assert isinstance(composite.value, ast.Call)
     assert isinstance(composite.value.func, ast.Name)
-    assert composite.value.func.id == "run_terminal_clamp_sinet_layout_cleanup"
+    assert composite.value.func.id == "run_terminal_singleton_clamp_sinet_cleanup"
 
 
 def test_terminal_affine_prelu_owner_has_one_lowerer_adapter() -> None:
@@ -6809,25 +6809,18 @@ def test_lowerer_terminal_clamp_unary_relu_cluster_reuses_scope() -> None:
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_terminal_clamp_sinet_layout_results"
+        and statement.targets[0].id == "_terminal_singleton_clamp_sinet_results"
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == "run_terminal_clamp_sinet_layout_cleanup"
+        and statement.value.func.id == "run_terminal_singleton_clamp_sinet_cleanup"
     )
     previous_boundary = lowerer.body[invocation_index - 1]
     assert isinstance(previous_boundary, ast.If)
     assert isinstance(previous_boundary.test, ast.Name)
     assert previous_boundary.test.id == "optimize_layout_transpose_chains"
     previous_call = previous_boundary.body[-1]
-    assert isinstance(previous_call, ast.Assign)
-    assert len(previous_call.targets) == 1
-    assert isinstance(previous_call.targets[0], ast.Name)
-    assert previous_call.targets[0].id == "_terminal_singleton_reshape_results"
-    assert isinstance(previous_call.value, ast.Call)
-    assert isinstance(previous_call.value.func, ast.Name)
-    assert (
-        previous_call.value.func.id
-        == "_run_singleton_reshape_layout_pass_cluster"
+    assert _phase_aware_call(previous_call)[1] == (
+        "cleanup.terminal.qkv_split_conv_concat_bridge"
     )
     invocation = lowerer.body[invocation_index]
     assert isinstance(invocation, ast.Assign)
@@ -6835,6 +6828,10 @@ def test_lowerer_terminal_clamp_unary_relu_cluster_reuses_scope() -> None:
     assert [ast.unparse(argument) for argument in invocation.value.args] == [
         "sinet_terminal_layout_recovery_context"
     ]
+    assert {
+        keyword.arg: ast.unparse(keyword.value)
+        for keyword in invocation.value.keywords
+    } == {"include_terminal_singleton": "optimize_layout_transpose_chains"}
     next_boundary = lowerer.body[invocation_index + 1]
     assert _phase_aware_call(next_boundary)[1] == (
         "cleanup.terminal.sinet_hardswish_se"
@@ -9435,14 +9432,32 @@ def test_lowerer_singleton_reshape_clusters_reuse_pass_state_scopes() -> None:
         "include_multi_branch_gate",
         "include_spatial_concat_post_transpose",
     ]
+    terminal_layout_multi_owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "terminal_singleton_clamp_sinet_orchestration.py"
+    )
+    terminal_layout_multi_owner = next(
+        node
+        for node in ast.parse(
+            terminal_layout_multi_owner_path.read_text(encoding="utf-8")
+        ).body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_terminal_singleton_clamp_sinet_cleanup"
+    )
     long_invocations = [
         node
-        for node in ast.walk(lowerer)
+        for node in ast.walk(terminal_layout_multi_owner)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id == long_helper_name
+        and node.func.id == "run_singleton_reshape"
     ]
     assert len(long_invocations) == 1
+    assert [
+        ast.unparse(argument) for argument in long_invocations[0].args
+    ] == ["context.pass_context"]
     assert sum(
         any(
             keyword.arg == "include_layout_transpose"

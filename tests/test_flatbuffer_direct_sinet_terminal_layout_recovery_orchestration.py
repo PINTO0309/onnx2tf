@@ -31,8 +31,8 @@ PHASE_PATH = (
 )
 SINET_PREADD_RESIZE = "_run_sinet_preadd_resize_recovery_sequence"
 SINET_TERMINAL = "_run_sinet_terminal_layout_recovery_sequence"
-COMPOSITE_OWNER = "run_terminal_clamp_sinet_layout_cleanup"
-COMPOSITE_TARGET = "_terminal_clamp_sinet_layout_results"
+COMPOSITE_OWNER = "run_terminal_singleton_clamp_sinet_cleanup"
+COMPOSITE_TARGET = "_terminal_singleton_clamp_sinet_results"
 VERY_LATE_COMPOSITE_OWNER = "run_very_late_sinet_recovery_tail_cleanup"
 VERY_LATE_COMPOSITE_TARGET = "_very_late_sinet_recovery_tail_results"
 

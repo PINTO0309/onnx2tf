@@ -47,7 +47,7 @@ RESULT_TARGETS = (
 COMPOSITE_TARGET = "_terminal_boundary_mean_attention_results"
 PREDECESSOR_PHASE_ID = "cleanup.terminal.instancenorm_dualstats"
 SUCCESSOR_PHASE_ID = "cleanup.terminal.batchmatmul_affine_input"
-AFTER_GUARD_TARGET = "_terminal_clamp_sinet_layout_results"
+AFTER_GUARD_TARGET = "_terminal_singleton_clamp_sinet_results"
 GUARD = "optimize_layout_transpose_chains"
 
 BOUNDARY_SCHEMA = (

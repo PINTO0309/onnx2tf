@@ -12,7 +12,7 @@ EXPECTED_OWNER_EXPRESSION = (
     "model_ir, layout_state=session.layout_state)"
 )
 PREDECESSOR_TARGET = "_terminal_qkv_attention_results"
-SUCCESSOR_TARGET = "_terminal_singleton_reshape_results"
+SUCCESSOR_TARGET = "_terminal_singleton_clamp_sinet_results"
 
 
 def _lowerer() -> ast.FunctionDef:
@@ -61,9 +61,7 @@ def _terminal_layout_guard(lowerer: ast.FunctionDef) -> ast.If:
         and any(
             _single_target(child) == PREDECESSOR_TARGET for child in statement.body
         )
-        and any(
-            _single_target(child) == SUCCESSOR_TARGET for child in statement.body
-        )
+        and any(_phase_id(child) == EXPECTED_PHASE_ID for child in statement.body)
     ]
     assert len(guards) == 1
     return guards[0]
@@ -85,7 +83,9 @@ def test_terminal_qkv_bridge_result_uses_phase_result_store() -> None:
     assert call is not None
     assert ast.unparse(call.args[1]) == EXPECTED_OWNER_EXPRESSION
     assert _single_target(guard.body[index - 1]) == PREDECESSOR_TARGET
-    assert _single_target(guard.body[index + 1]) == SUCCESSOR_TARGET
+    assert index == len(guard.body) - 1
+    guard_index = lowerer.body.index(guard)
+    assert _single_target(lowerer.body[guard_index + 1]) == SUCCESSOR_TARGET
     assert not any(
         isinstance(node, ast.Name) and node.id == EXPECTED_RESULT_TARGET
         for node in ast.walk(lowerer)

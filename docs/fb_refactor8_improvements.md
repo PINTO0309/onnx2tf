@@ -7103,3 +7103,27 @@ reference-based affected sequential validation report
 `2 passed, 1 xfailed` and `633 passed, 1 xfailed`; the sole expected failure is
 the deliberately absent owner module. The characterized inventory remains 39,
 and the phase-result store remains exactly 128 IDs and 128 owners.
+
+## Extract terminal singleton/Clamp-SiNet recovery
+
+`passes/terminal_singleton_clamp_sinet_orchestration.py` now owns the
+characterized cross-guard boundary. It conditionally forwards the exact
+embedded `ModelIRPassContext` to singleton reshape with terminal layout and
+multi-branch policies enabled, then always forwards the original
+callback-bearing SiNet context to Clamp/SiNet cleanup. The singleton result is
+returned by identity when enabled and is `None` when disabled; the complete
+Clamp/SiNet result is always returned by identity.
+
+The lowerer replaces only the two observation-only locals with
+`_terminal_singleton_clamp_sinet_results`. The layout-opt guard now ends with
+the recorded QKV Split/Conv/Concat bridge. The composite remains immediately
+after the guard and before the recorded SiNet HardSwish-SE phase. Existing
+singleton and SiNet wrappers and all independent recovery routes remain
+available.
+
+Seventeen stale structural assertions now follow both children through the
+outer owner while retaining both flag paths and all route coverage. Sequential
+validation passes: focused `5`, affected `636`, and standard
+`92 / 55 / 196 / 2 / 11`. Ruff, bytecode compilation, and whitespace checks
+pass. The phase store remains exactly 128 IDs and 128 owners, while the
+unconsumed lowerer-result inventory decreases from 39 to 38.

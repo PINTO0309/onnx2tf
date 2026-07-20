@@ -9,6 +9,9 @@ import pytest
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import (
+    terminal_singleton_clamp_sinet_orchestration,
+)
 from onnx2tf.tflite_builder.passes.sinet_terminal_layout_recovery_orchestration import (
     SINetTerminalLayoutRecoveryContext,
 )
@@ -180,35 +183,23 @@ def test_terminal_singleton_clamp_sinet_current_contract() -> None:
     lowerer = _lowerer()
     guard = _terminal_guard(lowerer)
     assert guard.orelse == []
-    singleton = guard.body[-1]
-    assert _single_target(singleton) == RESULT_TARGETS[0]
-    assert _call_name(singleton) == CURRENT_CHILD_OWNERS[0]
-    singleton_call = _call(singleton)
-    assert singleton_call is not None
-    assert singleton_call.args == []
-    assert {
-        keyword.arg: ast.literal_eval(keyword.value)
-        for keyword in singleton_call.keywords
-    } == {
-        "include_layout_transpose": True,
-        "include_multi_branch_gate": True,
-    }
-    assert _phase_id(guard.body[-2]) == PREDECESSOR_PHASE_ID
+    assert _phase_id(guard.body[-1]) == PREDECESSOR_PHASE_ID
 
     guard_index = lowerer.body.index(guard)
-    clamp_sinet = lowerer.body[guard_index + 1]
-    assert _single_target(clamp_sinet) == RESULT_TARGETS[1]
-    assert _call_name(clamp_sinet) == CURRENT_CHILD_OWNERS[1]
-    clamp_sinet_call = _call(clamp_sinet)
-    assert clamp_sinet_call is not None
-    assert [ast.unparse(argument) for argument in clamp_sinet_call.args] == [
+    assignment = lowerer.body[guard_index + 1]
+    assert _single_target(assignment) == COMPOSITE_TARGET
+    assert _call_name(assignment) == OWNER
+    call = _call(assignment)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == [
         "sinet_terminal_layout_recovery_context"
     ]
-    assert clamp_sinet_call.keywords == []
+    assert {
+        keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
+    } == {"include_terminal_singleton": GUARD}
     assert _phase_id(lowerer.body[guard_index + 2]) == SUCCESSOR_PHASE_ID
     assert not any(
         isinstance(node, ast.Name)
-        and isinstance(node.ctx, ast.Load)
         and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
@@ -262,10 +253,6 @@ def test_terminal_singleton_clamp_sinet_child_schemas() -> None:
     assert sinet_results[1] is preadd_results
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="terminal singleton/Clamp-SiNet owner is not implemented",
-)
 def test_terminal_singleton_clamp_sinet_has_one_optional_context_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -334,3 +321,66 @@ def test_terminal_singleton_clamp_sinet_has_one_optional_context_owner() -> None
         and "lower_from_onnx2tf" in ast.unparse(node)
         for node in ast.parse(OWNER_PATH.read_text(encoding="utf-8")).body
     )
+
+
+@pytest.mark.parametrize("include_terminal_singleton", [False, True])
+def test_terminal_singleton_clamp_sinet_runtime_order_and_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    include_terminal_singleton: bool,
+) -> None:
+    context, preadd_results = _context()
+    singleton_results = ({"singleton": 1},)
+    clamp_sinet_results = (
+        ({"clamp": 1},),
+        ({"sinet": 1}, preadd_results),
+    )
+    observed: list[tuple[str, object, dict[str, bool]]] = []
+
+    def _singleton(
+        active_context: ModelIRPassContext,
+        **options: bool,
+    ) -> tuple[dict[str, int], ...]:
+        observed.append((CHILD_OWNERS[0], active_context, options))
+        return singleton_results
+
+    def _clamp_sinet(
+        active_context: SINetTerminalLayoutRecoveryContext,
+    ) -> tuple[tuple[dict[str, int], ...], tuple[Any, ...]]:
+        observed.append((CHILD_OWNERS[1], active_context, {}))
+        return clamp_sinet_results
+
+    monkeypatch.setattr(
+        terminal_singleton_clamp_sinet_orchestration,
+        CHILD_OWNERS[0],
+        _singleton,
+    )
+    monkeypatch.setattr(
+        terminal_singleton_clamp_sinet_orchestration,
+        CHILD_OWNERS[1],
+        _clamp_sinet,
+    )
+
+    actual = (
+        terminal_singleton_clamp_sinet_orchestration.run_terminal_singleton_clamp_sinet_cleanup(
+            context,
+            include_terminal_singleton=include_terminal_singleton,
+        )
+    )
+    assert actual[1] is clamp_sinet_results
+    assert context.preadd_resize_recovery() is preadd_results
+    if include_terminal_singleton:
+        assert actual[0] is singleton_results
+        assert observed == [
+            (
+                CHILD_OWNERS[0],
+                context.pass_context,
+                {
+                    "include_layout_transpose": True,
+                    "include_multi_branch_gate": True,
+                },
+            ),
+            (CHILD_OWNERS[1], context, {}),
+        ]
+    else:
+        assert actual[0] is None
+        assert observed == [(CHILD_OWNERS[1], context, {})]

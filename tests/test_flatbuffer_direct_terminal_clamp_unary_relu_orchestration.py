@@ -37,8 +37,15 @@ LAYOUT_TRANSPOSE_PATH = (
 )
 TERMINAL_CLAMP_UNARY_RELU = "_run_terminal_clamp_unary_relu_pass_cluster"
 RESULT_TARGET = "_terminal_clamp_unary_relu_results"
-COMPOSITE_OWNER = "run_terminal_clamp_sinet_layout_cleanup"
-COMPOSITE_TARGET = "_terminal_clamp_sinet_layout_results"
+COMPOSITE_OWNER = "run_terminal_singleton_clamp_sinet_cleanup"
+COMPOSITE_TARGET = "_terminal_singleton_clamp_sinet_results"
+COMPOSITE_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_singleton_clamp_sinet_orchestration.py"
+)
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -282,16 +289,35 @@ def test_terminal_clamp_unary_relu_preserves_outer_boundaries() -> None:
     assert isinstance(previous.test, ast.Name)
     assert previous.test.id == "optimize_layout_transpose_chains"
     previous_call = previous.body[-1]
-    assert isinstance(previous_call, ast.Assign)
-    assert len(previous_call.targets) == 1
-    assert isinstance(previous_call.targets[0], ast.Name)
-    assert previous_call.targets[0].id == "_terminal_singleton_reshape_results"
-    assert isinstance(previous_call.value, ast.Call)
-    assert isinstance(previous_call.value.func, ast.Name)
-    assert previous_call.value.func.id == "_run_singleton_reshape_layout_pass_cluster"
+    assert isinstance(previous_call, ast.Expr)
+    assert ast.unparse(previous_call).startswith(
+        "session.record_phase_result("
+        "'cleanup.terminal.qkv_split_conv_concat_bridge'"
+    )
+
+    owner = _functions(COMPOSITE_PATH)[COMPOSITE_OWNER]
+    clamp_sinet_call = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_terminal_clamp_sinet_layout_cleanup"
+    )
+    assert [ast.unparse(argument) for argument in clamp_sinet_call.args] == [
+        "context"
+    ]
+    assert clamp_sinet_call.keywords == []
+
+    singleton_call = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_singleton_reshape"
+    )
     assert {
         str(keyword.arg): _expression_path(keyword.value)
-        for keyword in previous_call.value.keywords
+        for keyword in singleton_call.keywords
     } == {
         "include_layout_transpose": True,
         "include_multi_branch_gate": True,
@@ -303,6 +329,10 @@ def test_terminal_clamp_unary_relu_preserves_outer_boundaries() -> None:
     assert [ast.unparse(argument) for argument in invocation.value.args] == [
         "sinet_terminal_layout_recovery_context"
     ]
+    assert {
+        str(keyword.arg): _expression_path(keyword.value)
+        for keyword in invocation.value.keywords
+    } == {"include_terminal_singleton": "optimize_layout_transpose_chains"}
     following = lowerer.body[invocation_index + 1]
     assert ast.unparse(following).startswith(
         "session.record_phase_result('cleanup.terminal.sinet_hardswish_se'"

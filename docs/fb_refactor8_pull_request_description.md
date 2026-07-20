@@ -1852,3 +1852,17 @@ Focused and reference-based affected sequential validation report
 the deliberately absent future owner. Production behavior, dependencies,
 TensorFlow isolation, the 39-result inventory, and the exactly
 128-ID/128-owner phase store remain unchanged.
+
+The latest implementation adds an optional terminal singleton/Clamp-SiNet
+owner. Singleton reshape receives the exact pass context and fixed terminal
+layout/multi-branch policies only when layout optimization is enabled.
+Clamp/SiNet then always receives the original callback-bearing SiNet context.
+Both child results retain object identity, with `None` representing the
+disabled singleton path.
+
+Only the two observation-only lowerer assignments are replaced. Both flag
+paths, recorded phase boundaries, wrappers, callbacks, graph behavior, APIs,
+artifacts, dependencies, and TensorFlow isolation remain unchanged. Focused
+`5`, affected `636`, and standard `92 / 55 / 196 / 2 / 11` sequential tests
+pass. The phase store remains exactly 128 IDs and 128 owners, and the
+unconsumed-result inventory decreases from 39 to 38.

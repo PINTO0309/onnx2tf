@@ -247,8 +247,8 @@ from onnx2tf.tflite_builder.passes.sinet_terminal_layout_recovery_orchestration 
 from onnx2tf.tflite_builder.passes.terminal_clamp_unary_relu_orchestration import (
     run_terminal_clamp_unary_relu,
 )
-from onnx2tf.tflite_builder.passes.terminal_clamp_sinet_layout_orchestration import (
-    run_terminal_clamp_sinet_layout_cleanup,
+from onnx2tf.tflite_builder.passes.terminal_singleton_clamp_sinet_orchestration import (
+    run_terminal_singleton_clamp_sinet_cleanup,
 )
 from onnx2tf.tflite_builder.passes.very_late_sinet_recovery_tail_orchestration import (
     run_very_late_sinet_recovery_tail_cleanup,
@@ -4853,17 +4853,12 @@ def lower_onnx_to_ir(
                 layout_state=session.layout_state,
             ),
         )
-        # Run the multi-branch gate rewrite at terminal stage so earlier
-        # generic passes do not re-wrap rewritten NHWC tensors.
-        _terminal_singleton_reshape_results = (
-            _run_singleton_reshape_layout_pass_cluster(
-                include_layout_transpose=True,
-                include_multi_branch_gate=True,
-            )
-        )
-    _terminal_clamp_sinet_layout_results = (
-        run_terminal_clamp_sinet_layout_cleanup(
+    # Run the multi-branch gate rewrite at terminal stage so earlier generic
+    # passes do not re-wrap rewritten NHWC tensors.
+    _terminal_singleton_clamp_sinet_results = (
+        run_terminal_singleton_clamp_sinet_cleanup(
             sinet_terminal_layout_recovery_context,
+            include_terminal_singleton=optimize_layout_transpose_chains,
         )
     )
     session.record_phase_result(

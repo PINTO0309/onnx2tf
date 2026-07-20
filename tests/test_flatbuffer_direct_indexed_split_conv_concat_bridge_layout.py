@@ -64,6 +64,12 @@ TOP_OWNER = "run_terminal_qkv_activation_layout_shape_cleanup"
 TOP_RESULT = "_terminal_qkv_activation_layout_shape_results"
 LOWERER_OWNER = "run_terminal_affine_qkv_layout_shape_cleanup"
 LOWERER_RESULT = "_terminal_affine_qkv_layout_shape_results"
+TERMINAL_SINGLETON_CLAMP_SINET_OWNER = (
+    "run_terminal_singleton_clamp_sinet_cleanup"
+)
+TERMINAL_SINGLETON_CLAMP_SINET_RESULT = (
+    "_terminal_singleton_clamp_sinet_results"
+)
 PUBLIC_SPLIT_CONV_CONCAT_BRIDGE_OWNER = (
     "optimize_split_conv_concat_transpose_bridge_to_single_post_nchw"
 )
@@ -962,9 +968,15 @@ def test_split_conv_concat_bridge_retains_both_earlier_results() -> None:
     assert isinstance(predecessor, ast.Assign)
     assert isinstance(predecessor.targets[0], ast.Name)
     assert predecessor.targets[0].id == "_terminal_qkv_attention_results"
-    assert _call_name(terminal_guard.body[terminal_index + 1]) == (
-        "_run_singleton_reshape_layout_pass_cluster"
+    assert terminal_index == len(terminal_guard.body) - 1
+    terminal_guard_index = lowerer.body.index(terminal_guard)
+    terminal_successor = lowerer.body[terminal_guard_index + 1]
+    assert isinstance(terminal_successor, ast.Assign)
+    assert isinstance(terminal_successor.targets[0], ast.Name)
+    assert terminal_successor.targets[0].id == (
+        TERMINAL_SINGLETON_CLAMP_SINET_RESULT
     )
+    assert _call_name(terminal_successor) == TERMINAL_SINGLETON_CLAMP_SINET_OWNER
 
     post_sinet_index = next(
         index

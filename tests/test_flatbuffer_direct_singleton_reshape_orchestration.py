@@ -37,6 +37,15 @@ PHASE_PATH = (
     / "singleton_reshape_orchestration.py"
 )
 SINGLETON_RESHAPE = "_run_singleton_reshape_layout_pass_cluster"
+LAYOUT_MULTI_OWNER = "run_terminal_singleton_clamp_sinet_cleanup"
+LAYOUT_MULTI_TARGET = "_terminal_singleton_clamp_sinet_results"
+LAYOUT_MULTI_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_singleton_clamp_sinet_orchestration.py"
+)
 TERMINAL_COMPOSITE_OWNER = "run_terminal_sinet_singleton_reshape_cleanup"
 TERMINAL_COMPOSITE_TARGET = "_terminal_sinet_singleton_reshape_results"
 TERMINAL_COMPOSITE_PATH = (
@@ -427,27 +436,26 @@ def test_singleton_reshape_propagates_policy_results_to_direct_primary_callers(
     assert isinstance(delegate.value.func, ast.Name)
     assert delegate.value.func.id == "run_singleton_reshape"
 
+    layout_multi_owner = next(
+        node
+        for node in ast.parse(LAYOUT_MULTI_PATH.read_text(encoding="utf-8")).body
+        if isinstance(node, ast.FunctionDef) and node.name == LAYOUT_MULTI_OWNER
+    )
     direct_results = sorted(
         (
             node
-            for node in ast.walk(lowerer)
+            for node in ast.walk(layout_multi_owner)
             if isinstance(node, (ast.Assign, ast.Expr))
             and isinstance(node.value, ast.Call)
             and isinstance(node.value.func, ast.Name)
-            and node.value.func.id == SINGLETON_RESHAPE
+            and node.value.func.id == "run_singleton_reshape"
         ),
         key=lambda node: node.lineno,
     )
     assert len(direct_results) == 1
     assert all(isinstance(result, ast.Assign) for result in direct_results)
-    assert [
-        result.targets[0].id
-        for result in direct_results
-        if isinstance(result, ast.Assign)
-        and len(result.targets) == 1
-        and isinstance(result.targets[0], ast.Name)
-    ] == [
-        "_terminal_singleton_reshape_results",
+    assert [ast.unparse(argument) for argument in direct_results[0].value.args] == [
+        "context.pass_context"
     ]
     assert [
         {
@@ -461,6 +469,14 @@ def test_singleton_reshape_propagates_policy_results_to_direct_primary_callers(
             "include_multi_branch_gate": True,
         },
     ]
+    layout_multi_composite = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == LAYOUT_MULTI_TARGET
+    )
+    assert _direct_call_name(layout_multi_composite) == LAYOUT_MULTI_OWNER
     composite = next(
         statement
         for statement in lowerer.body
@@ -477,50 +493,57 @@ def test_singleton_reshape_propagates_policy_results_to_direct_primary_callers(
 
 def test_singleton_reshape_preserves_layout_multi_policy_and_boundaries() -> None:
     lowerer, _ = _lowerer_and_helper()
-    outer_index = next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.If)
-        and isinstance(statement.test, ast.Name)
-        and statement.test.id == "optimize_layout_transpose_chains"
-        and any(
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == SINGLETON_RESHAPE
-            for node in ast.walk(statement)
-        )
-    )
-    guard = lowerer.body[outer_index]
-    assert isinstance(guard, ast.If)
     invocation_index = next(
         index
-        for index, statement in enumerate(guard.body)
+        for index, statement in enumerate(lowerer.body)
         if isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_terminal_singleton_reshape_results"
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == SINGLETON_RESHAPE
+        and statement.targets[0].id == LAYOUT_MULTI_TARGET
     )
-    invocation = guard.body[invocation_index]
-
-    assert invocation_index == len(guard.body) - 1
+    invocation = lowerer.body[invocation_index]
     assert isinstance(invocation, ast.Assign)
-    assert isinstance(invocation.value, ast.Call)
-    assert invocation.value.args == []
+    assert _direct_call_name(invocation) == LAYOUT_MULTI_OWNER
+    assert [ast.unparse(argument) for argument in invocation.value.args] == [
+        "sinet_terminal_layout_recovery_context"
+    ]
     assert {
         str(keyword.arg): _expression_path(keyword.value)
         for keyword in invocation.value.keywords
+    } == {"include_terminal_singleton": "optimize_layout_transpose_chains"}
+
+    guard = lowerer.body[invocation_index - 1]
+    assert isinstance(guard, ast.If)
+    assert ast.unparse(guard.test) == "optimize_layout_transpose_chains"
+    assert ast.unparse(guard.body[-1]).startswith(
+        "session.record_phase_result("
+        "'cleanup.terminal.qkv_split_conv_concat_bridge'"
+    )
+
+    owner = next(
+        node
+        for node in ast.parse(LAYOUT_MULTI_PATH.read_text(encoding="utf-8")).body
+        if isinstance(node, ast.FunctionDef) and node.name == LAYOUT_MULTI_OWNER
+    )
+    singleton_call = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_singleton_reshape"
+    )
+    assert [ast.unparse(argument) for argument in singleton_call.args] == [
+        "context.pass_context"
+    ]
+    assert {
+        str(keyword.arg): _expression_path(keyword.value)
+        for keyword in singleton_call.keywords
     } == {
         "include_layout_transpose": True,
         "include_multi_branch_gate": True,
     }
-    assert _direct_call_name(guard.body[invocation_index - 1]) == (
-        "_optimize_split_conv_concat_transpose_bridge_to_single_post_nchw"
-    )
-    assert _direct_call_name(lowerer.body[outer_index + 1]) == (
-        "run_terminal_clamp_sinet_layout_cleanup"
+    assert ast.unparse(lowerer.body[invocation_index + 1]).startswith(
+        "session.record_phase_result('cleanup.terminal.sinet_hardswish_se'"
     )
 
 

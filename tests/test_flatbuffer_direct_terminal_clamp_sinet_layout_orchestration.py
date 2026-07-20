@@ -36,7 +36,15 @@ RESULT_TARGETS = (
     "_terminal_clamp_unary_relu_results",
     "_terminal_sinet_layout_recovery_results",
 )
-COMPOSITE_TARGET = "_terminal_clamp_sinet_layout_results"
+LOWERER_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "terminal_singleton_clamp_sinet_orchestration.py"
+)
+LOWERER_OWNER = "run_terminal_singleton_clamp_sinet_cleanup"
+COMPOSITE_TARGET = "_terminal_singleton_clamp_sinet_results"
 PREDECESSOR_GUARD = "optimize_layout_transpose_chains"
 SUCCESSOR_PHASE_ID = "cleanup.terminal.sinet_hardswish_se"
 
@@ -93,13 +101,15 @@ def test_terminal_clamp_sinet_layout_current_boundary_and_schema() -> None:
         if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == OWNER
+    assert _call_name(assignment) == LOWERER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
         "sinet_terminal_layout_recovery_context"
     ]
-    assert call.keywords == []
+    assert {
+        keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
+    } == {"include_terminal_singleton": PREDECESSOR_GUARD}
 
     predecessor = lowerer.body[index - 1]
     assert isinstance(predecessor, ast.If)
@@ -111,6 +121,17 @@ def test_terminal_clamp_sinet_layout_current_boundary_and_schema() -> None:
         and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
+
+    lowerer_owner = _functions(LOWERER_OWNER_PATH)[LOWERER_OWNER]
+    owner_call = next(
+        node
+        for node in ast.walk(lowerer_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OWNER
+    )
+    assert [ast.unparse(argument) for argument in owner_call.args] == ["context"]
+    assert owner_call.keywords == []
 
     context_assignment = next(
         statement
@@ -175,13 +196,15 @@ def test_terminal_clamp_sinet_layout_has_one_context_owner() -> None:
         if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == OWNER
+    assert _call_name(assignment) == LOWERER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
         "sinet_terminal_layout_recovery_context"
     ]
-    assert call.keywords == []
+    assert {
+        keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
+    } == {"include_terminal_singleton": PREDECESSOR_GUARD}
     predecessor = lowerer.body[index - 1]
     assert isinstance(predecessor, ast.If)
     assert ast.unparse(predecessor.test) == PREDECESSOR_GUARD
@@ -190,6 +213,20 @@ def test_terminal_clamp_sinet_layout_has_one_context_owner() -> None:
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
     )
+
+    lowerer_owner = _functions(LOWERER_OWNER_PATH)[LOWERER_OWNER]
+    owner_calls = [
+        node
+        for node in ast.walk(lowerer_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == OWNER
+    ]
+    assert len(owner_calls) == 1
+    assert [ast.unparse(argument) for argument in owner_calls[0].args] == [
+        "context"
+    ]
+    assert owner_calls[0].keywords == []
 
 
 def test_terminal_clamp_sinet_layout_runtime_order_and_identity(

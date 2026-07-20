@@ -6692,3 +6692,46 @@ structural expectations made stale by the new outer route. Run affected and
 standard gates sequentially under `uv`, confirm the expected inventory
 reduction from 39 to 38, then commit and push the complete unit. Do not create,
 update, reopen, or otherwise modify a pull request.
+
+## Terminal singleton/Clamp-SiNet implementation checkpoint
+
+`passes/terminal_singleton_clamp_sinet_orchestration.py` now provides
+`run_terminal_singleton_clamp_sinet_cleanup()`. When
+`include_terminal_singleton=True`, it first calls
+`run_singleton_reshape(context.pass_context,
+include_layout_transpose=True, include_multi_branch_gate=True)`. When false,
+it performs no singleton call and returns `None` for that slot. It then always
+calls `run_terminal_clamp_sinet_layout_cleanup(context)`. Runtime injection
+proves both branch orders, disabled-path non-call, exact context and option
+identity, callback preservation, singleton identity when enabled, and
+Clamp/SiNet identity on both paths.
+
+The lowerer replaces only `_terminal_singleton_reshape_results` and
+`_terminal_clamp_sinet_layout_results` with
+`_terminal_singleton_clamp_sinet_results`, passing the original
+`sinet_terminal_layout_recovery_context` and current layout-optimization flag.
+The layout-opt guard now ends at recorded
+`cleanup.terminal.qkv_split_conv_concat_bridge`; the new composite is still
+the next top-level operation. Recorded `cleanup.terminal.sinet_hardswish_se`
+remains the direct successor. The singleton wrapper, SiNet wrapper and
+callback, Clamp/SiNet owner, terminal Clamp owner, and every independent route
+remain available.
+
+Seventeen stale direct-call, target, guard, or neighbor expectations were
+updated to follow the public children through the optional owner while
+retaining both paths and route totals. Sequential validation passes: focused
+`5`, fixed 38-file affected `636`, terminal-layout/efficiency `92`, core `55`,
+result contracts `196`, phase store `2`, and TensorFlow import-blocking,
+default-direct, and `-cotof` `11`. Ruff, bytecode compilation, and whitespace
+checks pass. The read-only AST audit reports 38 unconsumed lowerer results,
+zero old singleton/Clamp-SiNet targets, one new composite target, and exactly
+128 phase IDs with 128 owners. No real-model conversion was repeated for this
+ownership-only extraction.
+
+At resume, refresh the 38-result inventory and select the next smallest
+source-adjacent, semantically closed observation-only boundary. Characterize
+all guards, recorded phase boundaries, option policies, exact context and
+callback identities, child schemas, and independent routes before changing
+production. Continue with sequential `uv` validation and complete checkpoint
+commits/pushes only. Do not create, update, reopen, or otherwise modify a pull
+request.
