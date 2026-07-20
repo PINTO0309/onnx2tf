@@ -7213,3 +7213,25 @@ affected `449`, and standard `92 / 55 / 196 / 2 / 11`. Ruff, bytecode
 compilation, and whitespace checks pass. The phase store remains exactly 128
 IDs and 128 owners, while the managed unconsumed-result inventory decreases
 from 37 to 36.
+
+## Characterize layout-pass-set-2 QLinear/pre-add recovery
+
+The managed 36-result inventory next selects the two adjacent observations at
+the start of layout recovery pass-set 2: QLinear/layout-prefix recovery and
+pre-add/attention-gate recovery. Both remain inside the existing layout-opt
+guard. They intentionally receive different immutable callback contexts that
+embed the exact same `ModelIRPassContext`; neither context is reconstructed or
+flattened.
+
+The strict contract fixes source order, both context identities, callback
+result identity within the complete child schemas, zero-keyword policies, and
+observation-only results. The pass-set-2 progress-description call remains the
+predecessor, while the recorded dequant/TransposeConv/quantize phase remains
+the successor.
+
+Production remains unchanged pending one straight-line two-context owner.
+Focused and reference-based affected sequential validation report
+`2 passed, 1 xfailed` and `302 passed, 1 xfailed`; the sole expected failure
+is the deliberately absent owner module. Phase-store validation remains
+`2 passed`, the managed inventory remains 36, and the store remains exactly
+128 IDs and 128 owners.

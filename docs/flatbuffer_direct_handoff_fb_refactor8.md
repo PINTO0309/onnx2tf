@@ -6927,3 +6927,55 @@ context and callback identities, child schemas, and independent routes before
 changing production. Continue with sequential `uv` validation and complete
 checkpoint commits/pushes only. Do not create, update, reopen, or otherwise
 modify a pull request.
+
+## Layout-pass-set-2 QLinear/pre-add characterization checkpoint
+
+The managed inventory contains 36 unconsumed lowerer results after excluding
+the two intentionally retained layout-pass-set-1 recovery-prefix observations.
+The selected boundary starts with
+`_layout_pass_set_2_qlinear_layout_recovery_results` and continues immediately
+with `_layout_pass_set_2_preadd_attention_gate_results` inside the existing
+`optimize_layout_transpose_chains` guard.
+
+The QLinear child receives `layout_recovery_context`; the pre-add child
+receives `attention_recovery_context`. These are intentionally different
+immutable callback-bearing context objects, but both embed the exact same
+`shared_model_ir_pass_context`. The characterization fixes that relationship,
+both zero-keyword policies, child source order, complete nested tuple lengths,
+and identity of boundary BatchMatMul/unary, pre-Concat, channel-shuffle, mean,
+gate, and transpose-unary callback results within those tuples. Both lowerer
+results remain observation-only.
+
+The existing `_set_post_progress_desc("layout recovery pass-set 2")` call
+remains the direct predecessor. The recorded
+`cleanup.layout_pass_set_2.dequant_transposeconv_quantize` phase remains the
+direct successor. Both stay inside the unchanged layout-opt guard. No phase
+record, progress callback, public API, artifact, graph mutation, dependency,
+or TensorFlow boundary has changed.
+
+Production remains unchanged pending
+`passes/layout_pass_set_2_qlinear_preadd_orchestration.py` and
+`run_layout_pass_set_2_qlinear_preadd_cleanup()`. The owner must accept both
+existing contexts, call
+`run_layout_pass_set_2_qlinear_layout_recovery(layout_context)` followed by
+`run_layout_pass_set_2_preadd_attention_gate_recovery(attention_context)`, and
+return both complete raw tuples by identity. The lowerer must replace only the
+two selected locals with `_layout_pass_set_2_qlinear_preadd_results`, pass both
+exact context objects without options, and preserve the guard and outer
+boundaries.
+
+Focused sequential validation reports `2 passed, 1 xfailed`; the fixed
+9-file affected suite reports `302 passed, 1 xfailed`. The sole expected
+failure requires the intentionally absent owner. Phase-store validation is
+`2 passed`; production, the managed 36-result inventory, and the exactly
+128-ID/128-owner store remain unchanged. Ruff, bytecode compilation, and
+whitespace checks pass. No real-model conversion was repeated for this
+characterization.
+
+At resume, implement only this characterized two-context owner and lowerer
+replacement, convert the strict xfail to runtime order, both context
+identities, callback retention, option, and result-identity coverage, and
+update only structural expectations made stale by the new outer route. Run
+affected and standard gates sequentially under `uv`, confirm the expected
+managed inventory reduction from 36 to 35, then commit and push the complete
+unit. Do not create, update, reopen, or otherwise modify a pull request.

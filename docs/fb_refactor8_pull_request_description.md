@@ -1920,3 +1920,16 @@ failures were all stale structural ownership expectations; after owner-aware
 updates, focused `5`, affected `449`, and standard `92 / 55 / 196 / 2 / 11`
 sequential tests pass. The phase store remains exactly 128 IDs and 128 owners,
 and the managed unconsumed-result inventory decreases from 37 to 36.
+
+The next characterization freezes adjacent QLinear/layout-prefix recovery
+and pre-add/attention-gate recovery at the start of layout pass-set 2. The
+children retain their two distinct immutable callback contexts, both of which
+embed the exact same shared pass context. Complete nested results and callback
+result identities are preserved.
+
+Focused and reference-based affected sequential validation report
+`2 passed, 1 xfailed` and `302 passed, 1 xfailed`; the sole expected failure
+is the deliberately absent future owner. Production behavior, the surrounding
+layout-opt guard and recorded successor phase, dependencies, TensorFlow
+isolation, the managed 36-result inventory, and the exactly 128-ID/128-owner
+phase store remain unchanged.
