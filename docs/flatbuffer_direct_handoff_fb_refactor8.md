@@ -7508,3 +7508,51 @@ callback identities, child schemas, and independent routes before changing
 production. Continue with sequential `uv` validation and complete checkpoint
 commits/pushes only. Do not create, update, reopen, or otherwise modify a pull
 request.
+
+## Terminal SiNet/singleton-Reshape convergence characterization checkpoint
+
+The refreshed inventory contains 31 raw and 29 managed unconsumed lowerer
+results after excluding the two intentionally retained layout-pass-set-1
+recovery-prefix observations. The selected boundary starts with
+`_terminal_sinet_singleton_reshape_results` and ends with the immediately
+following recorded `shape_topology.terminal.indexed_convergence` pass. The
+preceding terminal Dequant/HardSigmoid phase and following
+`_very_late_sinet_recovery_tail_results` assignment remain outside it.
+
+The future
+`run_terminal_sinet_singleton_reshape_convergence_cleanup()` owner receives
+the exact existing `SINetTerminalLayoutRecoveryContext`. It forwards
+`context.pass_context` to terminal SiNet/singleton-Reshape cleanup, then calls
+the public indexed-convergence owner with `context.pass_context.model_ir` and
+`context.pass_context.layout_state`. It returns both complete raw results. The
+lowerer must pass returned element `[1]` directly to the unchanged phase record
+rather than retaining another unconsumed composite local. This keeps the record
+before every very-late SiNet mutation and should reduce the raw and managed
+inventories from 31/29 to 30/28.
+
+The first 13-file affected run recorded `346 passed / 4 failed / 1 xfailed`.
+The four failures were pre-existing stale probe routes in
+`test_flatbuffer_direct_dynamic_reshape.py`: they patched obsolete
+lowerer-local functions even though the retained wrapper already delegated to
+the public indexed-convergence owner. After documenting that cause, the tests
+were updated to patch the actual public owner dependencies; all four
+stable/mutating cases pass and no production source changed.
+
+Focused sequential validation reports `3 passed, 1 xfailed`; the final fixed
+13-file affected suite reports `350 passed, 1 xfailed`. The sole expected
+failure requires the intentionally absent future owner. Phase-store validation
+is `2 passed`; the raw/managed inventory remains 31/29, and the store remains
+exactly 128 calls, 128 unique IDs, and 128 owners. Ruff, bytecode compilation,
+and whitespace checks pass. No real-model conversion was repeated for this
+characterization.
+
+At resume, implement only the characterized two-child owner. Replace the
+current terminal assignment and indexed-convergence owner expression with
+`run_terminal_sinet_singleton_reshape_convergence_cleanup(`
+`sinet_terminal_layout_recovery_context)[1]`, preserve the recorded phase ID
+and its exact predecessor/successor, retain both child owners and the lowerer
+compatibility wrapper, and add runtime order/context/layout/result-identity
+coverage. Run the fixed affected suite once before updating stale structural
+expectations, then run all affected and standard gates sequentially under
+`uv`, confirm the expected 30/28 inventory, and commit and push the complete
+unit. Do not create, update, reopen, or otherwise modify a pull request.

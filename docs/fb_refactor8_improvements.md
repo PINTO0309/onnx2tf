@@ -7507,3 +7507,35 @@ managed unconsumed lowerer results, zero old selected-target stores, one new
 composite store and load, and exactly 128 phase calls with 128 unique IDs and
 128 owners. No real-model conversion was repeated for this ownership-only
 extraction.
+
+## Characterize terminal SiNet/singleton-Reshape convergence cleanup
+
+The managed 29-result inventory next selects the unconsumed terminal
+SiNet/singleton-Reshape result and its immediately following recorded indexed
+shape-convergence pass. A future owner can run the existing terminal composite
+with the exact `SINetTerminalLayoutRecoveryContext.pass_context`, then run the
+public indexed-convergence owner with that context's exact model and
+`LayoutState`. The lowerer can record returned element `[1]` directly, without
+storing another observation-only composite result.
+
+This boundary deliberately stops before
+`run_very_late_sinet_recovery_tail_cleanup()`. The new owner therefore cannot
+move graph mutations across the unchanged
+`shape_topology.terminal.indexed_convergence` observation point. The strict
+contract fixes the preceding terminal Dequant/HardSigmoid phase, successor
+very-late SiNet owner and target, complete 6+8 terminal child schema, three-key
+indexed mapping, exact context/model/layout identity, public-owner route, and
+retained lowerer compatibility wrapper.
+
+The initial reference-based affected run exposed four pre-existing stale tests:
+their probes monkeypatched obsolete lowerer-local cleanup functions even though
+the retained wrapper already delegated to the public indexed-convergence
+module. No production source was involved. The probes now patch the actual
+public owner dependencies, and their four stable/mutating-path cases pass.
+Focused and final affected sequential validation report
+`3 passed, 1 xfailed` and `350 passed, 1 xfailed`; the sole expected failure is
+the deliberately absent future owner. Phase-store validation is `2 passed`,
+the raw/managed inventory remains 31/29, and the store remains exactly 128
+calls, 128 unique IDs, and 128 owners. Ruff, bytecode compilation, and
+whitespace checks pass. No real-model conversion was repeated for this
+characterization.

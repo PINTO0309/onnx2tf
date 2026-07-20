@@ -2095,3 +2095,21 @@ after owner-aware updates, focused `7`, affected `398`, and standard
 and 29 managed unconsumed lowerer results, zero old selected-target stores, one
 new composite store and load, and exactly 128 phase calls, unique IDs, and
 owners.
+
+The next characterization freezes terminal SiNet/singleton-Reshape cleanup
+together with its immediately following recorded indexed shape convergence.
+The future owner will reuse the exact pass context embedded in the existing
+SiNet terminal context and call the public indexed-convergence implementation;
+the lowerer will record returned element `[1]` at the unchanged phase position.
+The boundary stops before very-late SiNet recovery, preserving graph mutation
+and observation order.
+
+Four initially observed affected failures were stale tests that patched
+obsolete lowerer-local dependencies instead of the existing public
+indexed-convergence owner. Their probes now follow the actual delegation path,
+and all four stable/mutating cases pass without a production change. Focused
+and final affected sequential validation report `3 passed, 1 xfailed` and
+`350 passed, 1 xfailed`; only the intentionally absent future owner is xfailed.
+Phase-store validation remains `2 passed`, production remains unchanged, the
+raw/managed inventory remains 31/29, and the store remains exactly 128 calls,
+128 unique IDs, and 128 owners.
