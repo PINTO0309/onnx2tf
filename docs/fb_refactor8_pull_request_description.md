@@ -1947,3 +1947,15 @@ structural ownership expectations; after owner-aware updates, focused `4`,
 affected `304`, and standard `92 / 55 / 196 / 2 / 11` sequential tests pass.
 The phase store remains exactly 128 IDs and 128 owners, and the managed
 unconsumed-result inventory decreases from 36 to 35.
+
+The next characterization freezes fallback indexed binary adapters followed
+by singleton/consecutive-Reshape cleanup inside the existing norm-repair
+guard. Both children reuse the exact fallback pass context state; complete
+2+3 dictionary schemas, the existing wrapper, and the recorded topology
+successor are preserved.
+
+Focused and reference-based affected sequential validation report
+`2 passed, 1 xfailed` and `394 passed, 1 xfailed`; the sole expected failure
+is the deliberately absent future owner. Production behavior, fallback guard,
+dependencies, TensorFlow isolation, the managed 35-result inventory, and the
+exactly 128-ID/128-owner phase store remain unchanged.

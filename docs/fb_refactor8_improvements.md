@@ -7256,3 +7256,24 @@ After owner-aware updates, sequential validation passes: focused `4`, affected
 `304`, and standard `92 / 55 / 196 / 2 / 11`. Ruff, bytecode compilation,
 and whitespace checks pass. The phase store remains exactly 128 IDs and 128
 owners, while the managed unconsumed-result inventory decreases from 36 to 35.
+
+## Characterize fallback norm adapter/reshape cleanup
+
+The managed 35-result inventory next selects the three observations in the
+fallback norm-repair guard: two results from indexed binary adapter cleanup
+followed immediately by the three-slot singleton/consecutive-Reshape result.
+The already-created fallback `ModelIRPassContext` holds the exact fallback
+model, `layout_state=None`, and shared diagnostics needed by both children.
+
+The strict contract fixes the guard, two-dictionary adapter schema,
+three-dictionary reshape schema, child order, zero-keyword policies, existing
+reshape compatibility wrapper, observation-only results, and the recorded
+fallback norm topology successor. The proposed owner will reuse the exact
+fallback context instead of rebuilding state.
+
+Production remains unchanged pending one straight-line shared-context owner.
+Focused and reference-based affected sequential validation report
+`2 passed, 1 xfailed` and `394 passed, 1 xfailed`; the sole expected failure
+is the deliberately absent owner module. Phase-store validation remains
+`2 passed`, the managed inventory remains 35, and the store remains exactly
+128 IDs and 128 owners.

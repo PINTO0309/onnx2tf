@@ -7028,3 +7028,53 @@ context and callback identities, child schemas, and independent routes before
 changing production. Continue with sequential `uv` validation and complete
 checkpoint commits/pushes only. Do not create, update, reopen, or otherwise
 modify a pull request.
+
+## Fallback norm adapter/reshape characterization checkpoint
+
+The managed inventory contains 35 unconsumed lowerer results after excluding
+the two intentionally retained layout-pass-set-1 recovery-prefix observations.
+The selected boundary is inside the existing fallback norm-repair guard. Its
+first assignment destructures `_fallback_binary_adapter_stats` and
+`_fallback_singleton_adapter_stats` from
+`run_indexed_binary_layout_adapter_cleanup(fallback_ir)`. The immediately
+following `_fallback_singleton_consecutive_reshape_results` assignment calls
+the retained `_run_singleton_consecutive_reshape_pass_cluster(fallback_ir,
+None)` wrapper.
+
+The lowerer already creates `fallback_precision_unbound_context` immediately
+before the norm summary. It contains the exact `fallback_ir`,
+`layout_state=None`, and `session.diagnostics`. The characterization fixes
+reuse of that immutable context, the two-dictionary adapter schema, complete
+three-dictionary singleton/consecutive-Reshape schema, child order,
+zero-keyword policies, wrapper availability, and observation-only results.
+
+The existing norm-result predicate remains the enclosing guard. Recorded
+`shape_topology.fallback.norm` remains the direct successor inside that guard.
+No phase record, recursive fallback boundary, public API, artifact, graph
+mutation, dependency, or TensorFlow boundary has changed.
+
+Production remains unchanged pending
+`passes/fallback_norm_adapter_reshape_orchestration.py` and
+`run_fallback_norm_adapter_reshape_cleanup()`. The owner must call
+`run_indexed_binary_layout_adapter_cleanup(context.model_ir)` followed by
+`run_singleton_consecutive_reshape(context)` and return both complete raw
+results by identity. The lowerer must replace only the three selected target
+names with `_fallback_norm_adapter_reshape_results`, pass the exact existing
+fallback context without options, retain the compatibility wrapper, and
+preserve the guard and successor phase.
+
+Focused sequential validation reports `2 passed, 1 xfailed`; the fixed
+12-file affected suite reports `394 passed, 1 xfailed`. The sole expected
+failure requires the intentionally absent owner. Phase-store validation is
+`2 passed`; production, the managed 35-result inventory, and the exactly
+128-ID/128-owner store remain unchanged. Ruff, bytecode compilation, and
+whitespace checks pass. No real-model conversion was repeated for this
+characterization.
+
+At resume, implement only this characterized shared-context owner and lowerer
+replacement, convert the strict xfail to runtime order, context/model,
+option, and result-identity coverage, and update only structural expectations
+made stale by the new outer route. Run affected and standard gates
+sequentially under `uv`, confirm the expected managed inventory reduction from
+35 to 33, then commit and push the complete unit. Do not create, update,
+reopen, or otherwise modify a pull request.
