@@ -209,9 +209,12 @@ def test_lowerer_records_post_sinet_dequant_hardsigmoid_result() -> None:
     late_index = lowerer.body.index(late_assignment)
     branch = lowerer.body[late_index - 1]
     assert isinstance(branch, ast.If)
-    assert ast.unparse(branch.test) == "optimize_layout_transpose_chains"
-    assert _single_target(branch.body[0]) == (
-        "_terminal_convpool_output_passthrough_stats"
+    assert ast.unparse(branch.test) == (
+        "not optimize_layout_transpose_chains and "
+        "apply_safe_transpose_reduction_lite_on_no_layout_opt"
+    )
+    assert _single_target(branch.body[1]) == (
+        "_no_layout_fallback_affine_prepost_stats"
     )
     assert _call_name(late_assignment) == LOWERER_LATE_OWNER
     assert _phase_id(lowerer.body[late_index + 1]) == (

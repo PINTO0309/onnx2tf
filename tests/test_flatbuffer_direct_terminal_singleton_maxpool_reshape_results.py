@@ -29,8 +29,8 @@ ORCHESTRATION_PATH = (
     / "terminal_singleton_maxpool_reshape_orchestration.py"
 )
 LOWERER_HELPER = "_run_terminal_singleton_maxpool_reshape_pass_pair"
-OUTER_OWNER = "run_late_affine_final_shape_terminal_cleanup"
-RESULT_TARGET = "_late_affine_final_shape_terminal_results"
+OUTER_OWNER = "run_late_affine_final_shape_terminal_convpool_cleanup"
+RESULT_TARGET = "_late_affine_final_shape_terminal_convpool_results"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -138,7 +138,8 @@ def test_terminal_singleton_maxpool_reshape_result_contract_is_explicit() -> Non
     ) == "cleanup.late.ndhwc_cost_volume"
     assert observed_lowerer.body[index + 1].__class__ is ast.If
     assert ast.unparse(observed_lowerer.body[index + 1].test) == (
-        "optimize_layout_transpose_chains"
+        "not optimize_layout_transpose_chains and "
+        "apply_safe_transpose_reduction_lite_on_no_layout_opt"
     )
     assert sum(
         isinstance(node, ast.Call)

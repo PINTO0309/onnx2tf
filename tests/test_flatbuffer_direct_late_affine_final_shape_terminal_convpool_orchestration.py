@@ -8,6 +8,9 @@ import pytest
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import (
+    late_affine_final_shape_terminal_convpool_orchestration,
+)
 from onnx2tf.tflite_builder.passes.convpool_output_passthrough_compat import (
     optimize_convpool_output_transpose_nhwc_passthrough_chains,
 )
@@ -125,10 +128,10 @@ def test_late_affine_final_shape_terminal_convpool_current_contract() -> None:
     assignment = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == RESULT_TARGETS[0]
+        if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == CHILD_OWNERS[0]
+    assert _call_name(assignment) == OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
@@ -136,27 +139,12 @@ def test_late_affine_final_shape_terminal_convpool_current_contract() -> None:
     ]
     assert {
         keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
-    } == {"include_elementwise_fanout": LAYOUT_GUARD}
+    } == {"optimize_layout_transpose_chains": LAYOUT_GUARD}
     assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
 
-    layout_guard = lowerer.body[index + 1]
-    assert isinstance(layout_guard, ast.If)
-    assert ast.unparse(layout_guard.test) == LAYOUT_GUARD
-    assert len(layout_guard.body) == 1
-    convpool_assignment = layout_guard.body[0]
-    assert _single_target(convpool_assignment) == RESULT_TARGETS[1]
-    assert _call_name(convpool_assignment) == CURRENT_CONVPOOL_WRAPPER
-    convpool_call = _call(convpool_assignment)
-    assert convpool_call is not None
-    assert [ast.unparse(argument) for argument in convpool_call.args] == [
-        "model_ir"
-    ]
-    assert convpool_call.keywords == []
-
-    assert len(layout_guard.orelse) == 1
-    no_layout_guard = layout_guard.orelse[0]
+    no_layout_guard = lowerer.body[index + 1]
     assert isinstance(no_layout_guard, ast.If)
-    assert ast.unparse(no_layout_guard.test) == NO_LAYOUT_GUARD
+    assert ast.unparse(no_layout_guard.test) == FUTURE_NO_LAYOUT_GUARD
     assert _phase_id(no_layout_guard.body[0]) == NO_LAYOUT_PHASE_ID
     assert _single_target(no_layout_guard.body[1]) == NO_LAYOUT_TARGET
     assert _call_name(no_layout_guard.body[1]) == NO_LAYOUT_OWNER
@@ -218,10 +206,6 @@ def test_late_affine_final_shape_terminal_convpool_wrapper_is_retained() -> None
     assert call.keywords == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="late terminal optional Conv/Pool owner is not implemented",
-)
 def test_late_affine_final_shape_terminal_convpool_has_one_context_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -291,3 +275,61 @@ def test_late_affine_final_shape_terminal_convpool_has_one_context_owner() -> No
         and "lower_from_onnx2tf" in ast.unparse(node)
         for node in ast.parse(OWNER_PATH.read_text(encoding="utf-8")).body
     )
+
+
+@pytest.mark.parametrize("optimize_layout_transpose_chains", [False, True])
+def test_late_affine_final_shape_terminal_convpool_runtime_order_and_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    optimize_layout_transpose_chains: bool,
+) -> None:
+    context = _context(
+        "late_affine_final_shape_terminal_convpool_runtime_"
+        f"{optimize_layout_transpose_chains}"
+    )
+    late_results = ({"late": 1}, {"terminal": 2})
+    convpool_results = {"convpool": 3}
+    observed: list[tuple[str, object, dict[str, object]]] = []
+
+    def late(active_context: object, **options: object) -> object:
+        observed.append((CHILD_OWNERS[0], active_context, options))
+        return late_results
+
+    def convpool(active_model_ir: object) -> object:
+        observed.append((CHILD_OWNERS[1], active_model_ir, {}))
+        return convpool_results
+
+    monkeypatch.setattr(
+        late_affine_final_shape_terminal_convpool_orchestration,
+        CHILD_OWNERS[0],
+        late,
+    )
+    monkeypatch.setattr(
+        late_affine_final_shape_terminal_convpool_orchestration,
+        CHILD_OWNERS[1],
+        convpool,
+    )
+
+    actual = late_affine_final_shape_terminal_convpool_orchestration.run_late_affine_final_shape_terminal_convpool_cleanup(
+        context,
+        optimize_layout_transpose_chains=optimize_layout_transpose_chains,
+    )
+    assert actual[0] is late_results
+    assert observed[0] == (
+        CHILD_OWNERS[0],
+        context,
+        {
+            "include_elementwise_fanout": (
+                optimize_layout_transpose_chains
+            )
+        },
+    )
+    if optimize_layout_transpose_chains:
+        assert actual[1] is convpool_results
+        assert observed[1] == (
+            CHILD_OWNERS[1],
+            context.pass_context.model_ir,
+            {},
+        )
+    else:
+        assert actual[1] is None
+        assert len(observed) == 1

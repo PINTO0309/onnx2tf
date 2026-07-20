@@ -41,12 +41,12 @@ LOWERER_OWNER_PATH = (
     / "late_affine_optional_fanout_orchestration.py"
 )
 LOWERER_OWNER = "run_late_affine_optional_fanout_cleanup"
-OUTER_OWNER = "run_late_affine_final_shape_terminal_cleanup"
-COMPOSITE_TARGET = "_late_affine_final_shape_terminal_results"
+OUTER_OWNER = "run_late_affine_final_shape_terminal_convpool_cleanup"
+COMPOSITE_TARGET = "_late_affine_final_shape_terminal_convpool_results"
 PREDECESSOR_PHASE_ID = "cleanup.late.ndhwc_cost_volume"
-SUCCESSOR_TARGET = "_terminal_convpool_output_passthrough_stats"
+SUCCESSOR_TARGET = "_no_layout_fallback_affine_prepost_stats"
 SUCCESSOR_OWNER = (
-    "_optimize_convpool_output_transpose_nhwc_passthrough_chains"
+    "_optimize_transpose_mul_add_const_prepost_nhwc_chains"
 )
 EXPECTED_SCHEMAS = (
     {
@@ -135,12 +135,12 @@ def test_late_affine_concat_current_boundary_and_schema() -> None:
     ]
     assert {
         keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
-    } == {"include_elementwise_fanout": "optimize_layout_transpose_chains"}
+    } == {"optimize_layout_transpose_chains": "optimize_layout_transpose_chains"}
     assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
     successor = lowerer.body[index + 1]
     assert isinstance(successor, ast.If)
-    assert _single_target(successor.body[0]) == SUCCESSOR_TARGET
-    assert _call_name(successor.body[0]) == SUCCESSOR_OWNER
+    assert _single_target(successor.body[1]) == SUCCESSOR_TARGET
+    assert _call_name(successor.body[1]) == SUCCESSOR_OWNER
     assert not any(
         isinstance(node, ast.Name)
         and isinstance(node.ctx, ast.Load)
@@ -217,12 +217,12 @@ def test_late_affine_concat_has_one_context_owner() -> None:
     ]
     assert {
         keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
-    } == {"include_elementwise_fanout": "optimize_layout_transpose_chains"}
+    } == {"optimize_layout_transpose_chains": "optimize_layout_transpose_chains"}
     assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
     successor = lowerer.body[index + 1]
     assert isinstance(successor, ast.If)
-    assert _single_target(successor.body[0]) == SUCCESSOR_TARGET
-    assert _call_name(successor.body[0]) == SUCCESSOR_OWNER
+    assert _single_target(successor.body[1]) == SUCCESSOR_TARGET
+    assert _call_name(successor.body[1]) == SUCCESSOR_OWNER
     assert not any(
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)

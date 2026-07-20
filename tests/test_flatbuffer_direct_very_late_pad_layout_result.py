@@ -25,7 +25,10 @@ OWNER = "run_pad_layout_cleanup"
 RESULT_TARGET = "_very_late_pad_layout_stats"
 COMPOSITE_TARGET = "_late_dequant_swish_layout_tail_results"
 COMPOSITE_OWNER = "run_late_dequant_swish_layout_tail_cleanup"
-PREDECESSOR_GUARD = "optimize_layout_transpose_chains"
+PREDECESSOR_GUARD = (
+    "not optimize_layout_transpose_chains and "
+    "apply_safe_transpose_reduction_lite_on_no_layout_opt"
+)
 SUCCESSOR_PHASE_ID = "shape_reconciliation.primary.very_late_broadcast"
 RESULT_SCHEMA = {
     "optimized_transpose_pad_prepost_nhwc_chains": 0,

@@ -63,22 +63,19 @@ def _phase_result_owner(statement: ast.stmt) -> ast.Call | None:
 
 def _fallback_branch() -> ast.If:
     lowerer = _lowerer()
-    parent = next(
+    fallback = next(
         statement
         for statement in lowerer.body
         if isinstance(statement, ast.If)
-        and ast.unparse(statement.test) == "optimize_layout_transpose_chains"
+        and ast.unparse(statement.test)
+        == (
+            "not optimize_layout_transpose_chains and "
+            "apply_safe_transpose_reduction_lite_on_no_layout_opt"
+        )
         and any(
-            _call_name(child)
-            == "_optimize_convpool_output_transpose_nhwc_passthrough_chains"
+            _phase_result_owner(child) is not None
             for child in statement.body
         )
-        and len(statement.orelse) == 1
-    )
-    fallback = parent.orelse[0]
-    assert isinstance(fallback, ast.If)
-    assert ast.unparse(fallback.test) == (
-        "apply_safe_transpose_reduction_lite_on_no_layout_opt"
     )
     return fallback
 

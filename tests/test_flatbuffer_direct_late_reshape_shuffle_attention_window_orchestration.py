@@ -51,10 +51,10 @@ RESULT_TARGETS = (
     "_late_attention_layout_results",
     "_late_window_layout_results",
 )
-COMPOSITE_TARGET = "_late_affine_final_shape_terminal_results"
-OUTER_OWNER = "run_late_affine_final_shape_terminal_cleanup"
+COMPOSITE_TARGET = "_late_affine_final_shape_terminal_convpool_results"
+OUTER_OWNER = "run_late_affine_final_shape_terminal_convpool_cleanup"
 PREDECESSOR_PHASE_ID = "cleanup.late.ndhwc_cost_volume"
-SUCCESSOR_TARGET = "_terminal_convpool_output_passthrough_stats"
+SUCCESSOR_TARGET = "_no_layout_fallback_affine_prepost_stats"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -118,14 +118,17 @@ def test_late_reshape_shuffle_attention_window_current_boundary_and_schema() -> 
     assert {
         keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
     } == {
-        "include_elementwise_fanout": "optimize_layout_transpose_chains"
+        "optimize_layout_transpose_chains": "optimize_layout_transpose_chains"
     }
     predecessor = lowerer.body[index - 1]
     assert _phase_id(predecessor) == PREDECESSOR_PHASE_ID
     successor = lowerer.body[index + 1]
     assert isinstance(successor, ast.If)
-    assert ast.unparse(successor.test) == "optimize_layout_transpose_chains"
-    assert _single_target(successor.body[0]) == SUCCESSOR_TARGET
+    assert ast.unparse(successor.test) == (
+        "not optimize_layout_transpose_chains and "
+        "apply_safe_transpose_reduction_lite_on_no_layout_opt"
+    )
+    assert _single_target(successor.body[1]) == SUCCESSOR_TARGET
     assert not any(
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
@@ -235,13 +238,16 @@ def test_late_reshape_shuffle_attention_window_has_one_context_owner() -> None:
     assert {
         keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
     } == {
-        "include_elementwise_fanout": "optimize_layout_transpose_chains"
+        "optimize_layout_transpose_chains": "optimize_layout_transpose_chains"
     }
     assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
     successor = lowerer.body[index + 1]
     assert isinstance(successor, ast.If)
-    assert ast.unparse(successor.test) == "optimize_layout_transpose_chains"
-    assert _single_target(successor.body[0]) == SUCCESSOR_TARGET
+    assert ast.unparse(successor.test) == (
+        "not optimize_layout_transpose_chains and "
+        "apply_safe_transpose_reduction_lite_on_no_layout_opt"
+    )
+    assert _single_target(successor.body[1]) == SUCCESSOR_TARGET
     assert not any(
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)

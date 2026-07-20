@@ -24,8 +24,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
 TERMINAL_SINGLETON_MAXPOOL_RESHAPE = "_run_terminal_singleton_maxpool_reshape_pass_pair"
 OUTER_OWNER = "run_terminal_fanout_singleton_cleanup"
-LOWERER_OWNER = "run_late_affine_final_shape_terminal_cleanup"
-OUTER_TARGET = "_late_affine_final_shape_terminal_results"
+LOWERER_OWNER = "run_late_affine_final_shape_terminal_convpool_cleanup"
+OUTER_TARGET = "_late_affine_final_shape_terminal_convpool_results"
 OUTER_OWNER_PATH = (
     REPO_ROOT
     / "onnx2tf"
@@ -227,20 +227,22 @@ def test_terminal_singleton_maxpool_reshape_preserves_outer_boundaries() -> None
 
     following = lowerer.body[invocation_index + 1]
     assert isinstance(following, ast.If)
-    assert isinstance(following.test, ast.Name)
-    assert following.test.id == "optimize_layout_transpose_chains"
-    following_call = following.body[0]
+    assert ast.unparse(following.test) == (
+        "not optimize_layout_transpose_chains and "
+        "apply_safe_transpose_reduction_lite_on_no_layout_opt"
+    )
+    following_call = following.body[1]
     assert isinstance(following_call, ast.Assign)
     assert len(following_call.targets) == 1
     assert isinstance(following_call.targets[0], ast.Name)
     assert following_call.targets[0].id == (
-        "_terminal_convpool_output_passthrough_stats"
+        "_no_layout_fallback_affine_prepost_stats"
     )
     assert isinstance(following_call.value, ast.Call)
     assert isinstance(following_call.value.func, ast.Name)
     assert (
         following_call.value.func.id
-        == "_optimize_convpool_output_transpose_nhwc_passthrough_chains"
+        == "_optimize_transpose_mul_add_const_prepost_nhwc_chains"
     )
 
 

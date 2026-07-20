@@ -32,7 +32,7 @@ OWNER_PATH = (
     / "late_affine_optional_fanout_orchestration.py"
 )
 OWNER = "run_late_affine_optional_fanout_cleanup"
-LOWERER_OWNER = "run_late_affine_final_shape_terminal_cleanup"
+LOWERER_OWNER = "run_late_affine_final_shape_terminal_convpool_cleanup"
 CHILD_OWNERS = (
     "run_late_affine_concat_cleanup",
     "optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains",
@@ -45,13 +45,15 @@ RESULT_TARGETS = (
     "_late_affine_concat_results",
     "_late_concat_elementwise_fanout_stats",
 )
-COMPOSITE_TARGET = "_late_affine_final_shape_terminal_results"
+COMPOSITE_TARGET = "_late_affine_final_shape_terminal_convpool_results"
 PREDECESSOR_PHASE_ID = "cleanup.late.ndhwc_cost_volume"
-SUCCESSOR_TARGET = "_terminal_convpool_output_passthrough_stats"
-SUCCESSOR_OWNER = (
-    "_optimize_convpool_output_transpose_nhwc_passthrough_chains"
-)
+SUCCESSOR_TARGET = "_no_layout_fallback_affine_prepost_stats"
+SUCCESSOR_OWNER = "_optimize_transpose_mul_add_const_prepost_nhwc_chains"
 GUARD = "optimize_layout_transpose_chains"
+SUCCESSOR_GUARD = (
+    "not optimize_layout_transpose_chains and "
+    "apply_safe_transpose_reduction_lite_on_no_layout_opt"
+)
 
 AFFINE_SCHEMA = (
     (
@@ -168,13 +170,17 @@ def test_late_affine_optional_fanout_current_contract() -> None:
     ]
     assert {
         keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
-    } == {"include_elementwise_fanout": GUARD}
+    } == {"optimize_layout_transpose_chains": GUARD}
     assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
 
     successor = lowerer.body[index + 1]
     assert isinstance(successor, ast.If)
-    assert _single_target(successor.body[0]) == SUCCESSOR_TARGET
-    assert _call_name(successor.body[0]) == SUCCESSOR_OWNER
+    assert ast.unparse(successor.test) == SUCCESSOR_GUARD
+    assert _phase_id(successor.body[0]) == (
+        "layout.no_layout.safe_transpose_reduction"
+    )
+    assert _single_target(successor.body[1]) == SUCCESSOR_TARGET
+    assert _call_name(successor.body[1]) == SUCCESSOR_OWNER
     assert not any(
         isinstance(node, ast.Name)
         and isinstance(node.ctx, ast.Load)
@@ -252,12 +258,16 @@ def test_late_affine_optional_fanout_has_one_optional_context_owner() -> None:
     ]
     assert {
         keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
-    } == {"include_elementwise_fanout": GUARD}
+    } == {"optimize_layout_transpose_chains": GUARD}
     assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
     successor = lowerer.body[index + 1]
     assert isinstance(successor, ast.If)
-    assert _single_target(successor.body[0]) == SUCCESSOR_TARGET
-    assert _call_name(successor.body[0]) == SUCCESSOR_OWNER
+    assert ast.unparse(successor.test) == SUCCESSOR_GUARD
+    assert _phase_id(successor.body[0]) == (
+        "layout.no_layout.safe_transpose_reduction"
+    )
+    assert _single_target(successor.body[1]) == SUCCESSOR_TARGET
+    assert _call_name(successor.body[1]) == SUCCESSOR_OWNER
     assert not any(
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)

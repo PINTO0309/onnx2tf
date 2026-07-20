@@ -25,8 +25,8 @@ RESULT_TARGET = "_final_slice_prepost_passthrough_stats"
 PREVIOUS_TARGET = "_late_final_shape_activation_convergence_stats"
 COMPOSITE_TARGET = "_final_boundary_slice_concat_results"
 COMPOSITE_OWNER = "run_final_boundary_slice_concat_cleanup"
-OUTER_COMPOSITE_TARGET = "_late_affine_final_shape_terminal_results"
-OUTER_COMPOSITE_OWNER = "run_late_affine_final_shape_terminal_cleanup"
+OUTER_COMPOSITE_TARGET = "_late_affine_final_shape_terminal_convpool_results"
+OUTER_COMPOSITE_OWNER = "run_late_affine_final_shape_terminal_convpool_cleanup"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -128,8 +128,8 @@ def test_final_slice_prepost_result_moves_to_final_pair_composite() -> None:
     )
     successor = lowerer.body[composite_index + 1]
     assert isinstance(successor, ast.If)
-    assert _single_target(successor.body[0]) == (
-        "_terminal_convpool_output_passthrough_stats"
+    assert _single_target(successor.body[1]) == (
+        "_no_layout_fallback_affine_prepost_stats"
     )
     owner = _functions(FINAL_COMPOSITE_PATH)[COMPOSITE_OWNER]
     assert sum(

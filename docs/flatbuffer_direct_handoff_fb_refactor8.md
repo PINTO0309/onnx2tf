@@ -7363,3 +7363,54 @@ suite once before changing stale tests, then run all affected and standard
 gates sequentially under `uv`, confirm the expected managed inventory
 reduction from 31 to 30, and commit and push the complete unit. Do not create,
 update, reopen, or otherwise modify a pull request.
+
+## Late terminal optional Conv/Pool implementation checkpoint
+
+`passes/late_affine_final_shape_terminal_convpool_orchestration.py` now
+provides `run_late_affine_final_shape_terminal_convpool_cleanup()`. It first
+calls `run_late_affine_final_shape_terminal_cleanup()` with the exact existing
+`LateFinalShapeBoundaryContext` and forwards the layout option as the existing
+elementwise-fan-out policy. It then calls the public
+`optimize_convpool_output_transpose_nhwc_passthrough_chains()` owner only when
+layout optimization is enabled. Both complete raw child results are returned
+without copying, flattening, schema inspection, or result-driven control flow;
+runtime injection for both Boolean paths proves exact order, context identity,
+option forwarding, optional non-execution, and result identity.
+
+The lowerer replaces `_late_affine_final_shape_terminal_results` and
+`_terminal_convpool_output_passthrough_stats` with
+`_late_affine_final_shape_terminal_convpool_results`. Recorded
+`cleanup.late.ndhwc_cost_volume` remains the direct predecessor. The no-layout
+safe-transpose phase and `_no_layout_fallback_affine_prepost_stats` assignment
+remain direct lowerer responsibilities under the equivalent guard
+`not optimize_layout_transpose_chains and
+apply_safe_transpose_reduction_lite_on_no_layout_opt`. This preserves mutual
+exclusion and keeps the recorded phase outside the new owner. The Conv/Pool
+compatibility wrapper, all child owners, nested lowerer wrappers, callbacks,
+and independent routes remain available.
+
+The first fixed 31-file affected run was intentionally executed before stale
+test updates and recorded 61 failures across 29 files. Every failure was a
+stale direct-call, target, keyword, branch, route, or neighbor assertion caused
+by the ownership move; no runtime schema, option path, context identity, pass
+behavior, phase store, or TensorFlow boundary failed. Those structural
+expectations now follow both children through the new owner and independently
+verify the retained no-layout route.
+
+Sequential validation passes: focused `7`, fixed 31-file affected `456`,
+terminal-layout/efficiency `92`, core `55`, result contracts `196`, phase
+store `2`, and TensorFlow import-blocking, default-direct, and `-cotof` `11`.
+Ruff, bytecode compilation, and whitespace checks pass. The read-only AST
+audit reports 32 raw unconsumed results, 30 managed results after the two
+intentionally retained layout-pass-set-1 recovery-prefix observations, zero
+old selected targets, one new composite target, and exactly 128 phase IDs with
+128 owners. No real-model conversion was repeated for this ownership-only
+extraction.
+
+At resume, refresh the managed 30-result inventory and select the next
+smallest source-adjacent, semantically closed observation-only boundary.
+Characterize its guards, recorded phase boundaries, option policies, exact
+context and callback identities, child schemas, and independent routes before
+changing production. Continue with sequential `uv` validation and complete
+checkpoint commits/pushes only. Do not create, update, reopen, or otherwise
+modify a pull request.

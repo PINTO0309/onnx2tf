@@ -46,7 +46,7 @@ COMPOSITE_PATH = (
     / "late_reshape_shuffle_attention_window_orchestration.py"
 )
 COMPOSITE_OWNER = "run_late_reshape_shuffle_attention_window_cleanup"
-COMPOSITE_TARGET = "_late_affine_final_shape_terminal_results"
+COMPOSITE_TARGET = "_late_affine_final_shape_terminal_convpool_results"
 FULL_POST_OWNER_PATH = (
     REPO_ROOT
     / "onnx2tf"
@@ -550,11 +550,14 @@ def test_channel_shuffle_gather_preserves_late_base_policy_and_boundaries() -> N
     )
     successor = lowerer.body[index + 1]
     assert isinstance(successor, ast.If)
-    assert ast.unparse(successor.test) == "optimize_layout_transpose_chains"
-    assert isinstance(successor.body[0], ast.Assign)
-    assert isinstance(successor.body[0].targets[0], ast.Name)
-    assert successor.body[0].targets[0].id == (
-        "_terminal_convpool_output_passthrough_stats"
+    assert ast.unparse(successor.test) == (
+        "not optimize_layout_transpose_chains and "
+        "apply_safe_transpose_reduction_lite_on_no_layout_opt"
+    )
+    assert isinstance(successor.body[1], ast.Assign)
+    assert isinstance(successor.body[1].targets[0], ast.Name)
+    assert successor.body[1].targets[0].id == (
+        "_no_layout_fallback_affine_prepost_stats"
     )
 
 

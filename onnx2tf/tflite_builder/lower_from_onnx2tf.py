@@ -310,8 +310,8 @@ from onnx2tf.tflite_builder.passes.gate_layout_orchestration import (
 from onnx2tf.tflite_builder.passes.late_final_shape_boundary_orchestration import (
     LateFinalShapeBoundaryContext,
 )
-from onnx2tf.tflite_builder.passes.late_affine_final_shape_terminal_orchestration import (
-    run_late_affine_final_shape_terminal_cleanup,
+from onnx2tf.tflite_builder.passes.late_affine_final_shape_terminal_convpool_orchestration import (
+    run_late_affine_final_shape_terminal_convpool_cleanup,
 )
 from onnx2tf.tflite_builder.passes.terminal_affine_qkv_layout_shape_orchestration import (
     run_terminal_affine_qkv_layout_shape_cleanup,
@@ -4986,19 +4986,16 @@ def lower_onnx_to_ir(
     )
     # Late layout rewrites can invalidate RESHAPE constants and recreate
     # terminal Slice/Concat adapters; converge both at the final boundary.
-    _late_affine_final_shape_terminal_results = (
-        run_late_affine_final_shape_terminal_cleanup(
+    _late_affine_final_shape_terminal_convpool_results = (
+        run_late_affine_final_shape_terminal_convpool_cleanup(
             late_final_shape_boundary_context,
-            include_elementwise_fanout=optimize_layout_transpose_chains,
+            optimize_layout_transpose_chains=optimize_layout_transpose_chains,
         )
     )
-    if optimize_layout_transpose_chains:
-        _terminal_convpool_output_passthrough_stats = (
-            _optimize_convpool_output_transpose_nhwc_passthrough_chains(
-                model_ir
-            )
-        )
-    elif apply_safe_transpose_reduction_lite_on_no_layout_opt:
+    if (
+        not optimize_layout_transpose_chains
+        and apply_safe_transpose_reduction_lite_on_no_layout_opt
+    ):
         session.record_phase_result(
             "layout.no_layout.safe_transpose_reduction",
             _apply_safe_transpose_reduction_lite(model_ir),

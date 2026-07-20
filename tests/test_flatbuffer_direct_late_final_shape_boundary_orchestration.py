@@ -39,7 +39,7 @@ CONVERGENCE_OWNER_PATH = (
 )
 OWNER = "run_late_final_shape_boundary_cleanup"
 LOWERER_OWNER = "run_late_final_shape_terminal_fanout_cleanup"
-OUTER_OWNER = "run_late_affine_final_shape_terminal_cleanup"
+OUTER_OWNER = "run_late_affine_final_shape_terminal_convpool_cleanup"
 CONVERGENCE_OWNER = "run_indexed_final_shape_activation_convergence"
 CHILD_OWNERS = (
     "run_late_reshape_shuffle_attention_window_cleanup",
@@ -51,9 +51,9 @@ RESULT_TARGETS = (
     "_late_final_shape_activation_convergence_stats",
     "_final_boundary_slice_concat_results",
 )
-COMPOSITE_TARGET = "_late_affine_final_shape_terminal_results"
+COMPOSITE_TARGET = "_late_affine_final_shape_terminal_convpool_results"
 PREDECESSOR_PHASE_ID = "cleanup.late.ndhwc_cost_volume"
-SUCCESSOR_TARGET = "_terminal_convpool_output_passthrough_stats"
+SUCCESSOR_TARGET = "_no_layout_fallback_affine_prepost_stats"
 CONVERGENCE_KEYS = (
     "removed_dead_operators",
     "resolved_dynamic_reshape_shapes",
@@ -130,15 +130,18 @@ def test_late_final_shape_boundary_current_order_context_and_schema() -> None:
     assert {
         keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
     } == {
-        "include_elementwise_fanout": "optimize_layout_transpose_chains"
+        "optimize_layout_transpose_chains": "optimize_layout_transpose_chains"
     }
 
     predecessor = lowerer.body[index - 1]
     successor = lowerer.body[index + 1]
     assert _phase_id(predecessor) == PREDECESSOR_PHASE_ID
     assert isinstance(successor, ast.If)
-    assert ast.unparse(successor.test) == "optimize_layout_transpose_chains"
-    assert _single_target(successor.body[0]) == SUCCESSOR_TARGET
+    assert ast.unparse(successor.test) == (
+        "not optimize_layout_transpose_chains and "
+        "apply_safe_transpose_reduction_lite_on_no_layout_opt"
+    )
+    assert _single_target(successor.body[1]) == SUCCESSOR_TARGET
     assert not any(
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)
@@ -247,12 +250,12 @@ def test_late_final_shape_boundary_has_one_context_owner() -> None:
     assert {
         keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
     } == {
-        "include_elementwise_fanout": "optimize_layout_transpose_chains"
+        "optimize_layout_transpose_chains": "optimize_layout_transpose_chains"
     }
     assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
     successor = lowerer.body[index + 1]
     assert isinstance(successor, ast.If)
-    assert _single_target(successor.body[0]) == SUCCESSOR_TARGET
+    assert _single_target(successor.body[1]) == SUCCESSOR_TARGET
     assert not any(
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)

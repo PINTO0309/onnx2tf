@@ -32,10 +32,10 @@ COMPOSITE_PATH = (
     / "late_reshape_shuffle_attention_window_orchestration.py"
 )
 COMPOSITE_OWNER = "run_late_reshape_shuffle_attention_window_cleanup"
-COMPOSITE_TARGET = "_late_affine_final_shape_terminal_results"
+COMPOSITE_TARGET = "_late_affine_final_shape_terminal_convpool_results"
 RESULT_TARGET = "_late_attention_layout_results"
 PREDECESSOR_PHASE_ID = "cleanup.late.ndhwc_cost_volume"
-SUCCESSOR_TARGET = "_terminal_convpool_output_passthrough_stats"
+SUCCESSOR_TARGET = "_no_layout_fallback_affine_prepost_stats"
 OLD_RESULT_TARGETS = (
     "_late_attention_qkv_reshape_stats",
     "_late_attention_gather_cleanup_stats",
@@ -108,17 +108,20 @@ def test_late_attention_layout_cluster_uses_one_composite_result_outside_store()
     )
     index = lowerer.body.index(assignment)
     assert ast.unparse(assignment.value) == (
-        "run_late_affine_final_shape_terminal_cleanup("
+        "run_late_affine_final_shape_terminal_convpool_cleanup("
         "late_final_shape_boundary_context, "
-        "include_elementwise_fanout=optimize_layout_transpose_chains)"
+        "optimize_layout_transpose_chains=optimize_layout_transpose_chains)"
     )
     predecessor = lowerer.body[index - 1]
     assert isinstance(predecessor, ast.Expr)
     assert ast.literal_eval(predecessor.value.args[0]) == PREDECESSOR_PHASE_ID
     successor = lowerer.body[index + 1]
     assert isinstance(successor, ast.If)
-    assert ast.unparse(successor.test) == "optimize_layout_transpose_chains"
-    assert _single_target(successor.body[0]) == SUCCESSOR_TARGET
+    assert ast.unparse(successor.test) == (
+        "not optimize_layout_transpose_chains and "
+        "apply_safe_transpose_reduction_lite_on_no_layout_opt"
+    )
+    assert _single_target(successor.body[1]) == SUCCESSOR_TARGET
     assert len(_composite_calls()) == 1
     assert not any(
         isinstance(node, ast.Name) and node.id in OLD_RESULT_TARGETS
@@ -157,17 +160,20 @@ def test_late_attention_layout_cluster_uses_one_composite_owner() -> None:
     assignment = assignments[0]
     index = lowerer.body.index(assignment)
     assert ast.unparse(assignment.value) == (
-        "run_late_affine_final_shape_terminal_cleanup("
+        "run_late_affine_final_shape_terminal_convpool_cleanup("
         "late_final_shape_boundary_context, "
-        "include_elementwise_fanout=optimize_layout_transpose_chains)"
+        "optimize_layout_transpose_chains=optimize_layout_transpose_chains)"
     )
     predecessor = lowerer.body[index - 1]
     assert isinstance(predecessor, ast.Expr)
     assert ast.literal_eval(predecessor.value.args[0]) == PREDECESSOR_PHASE_ID
     successor = lowerer.body[index + 1]
     assert isinstance(successor, ast.If)
-    assert ast.unparse(successor.test) == "optimize_layout_transpose_chains"
-    assert _single_target(successor.body[0]) == SUCCESSOR_TARGET
+    assert ast.unparse(successor.test) == (
+        "not optimize_layout_transpose_chains and "
+        "apply_safe_transpose_reduction_lite_on_no_layout_opt"
+    )
+    assert _single_target(successor.body[1]) == SUCCESSOR_TARGET
     assert len(_composite_calls()) == 1
     assert not any(
         isinstance(node, ast.Name) and node.id in OLD_RESULT_TARGETS

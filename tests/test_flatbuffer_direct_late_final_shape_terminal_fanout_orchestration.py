@@ -36,7 +36,7 @@ OWNER_PATH = (
     / "late_final_shape_terminal_fanout_orchestration.py"
 )
 OWNER = "run_late_final_shape_terminal_fanout_cleanup"
-LOWERER_OWNER = "run_late_affine_final_shape_terminal_cleanup"
+LOWERER_OWNER = "run_late_affine_final_shape_terminal_convpool_cleanup"
 CHILD_OWNERS = (
     "run_late_final_shape_boundary_cleanup",
     "run_terminal_fanout_singleton_cleanup",
@@ -45,13 +45,15 @@ RESULT_TARGETS = (
     "_late_final_shape_boundary_results",
     "_terminal_fanout_singleton_results",
 )
-COMPOSITE_TARGET = "_late_affine_final_shape_terminal_results"
+COMPOSITE_TARGET = "_late_affine_final_shape_terminal_convpool_results"
 PREDECESSOR_PHASE_ID = "cleanup.late.ndhwc_cost_volume"
-SUCCESSOR_TARGET = "_terminal_convpool_output_passthrough_stats"
-SUCCESSOR_OWNER = (
-    "_optimize_convpool_output_transpose_nhwc_passthrough_chains"
-)
+SUCCESSOR_TARGET = "_no_layout_fallback_affine_prepost_stats"
+SUCCESSOR_OWNER = "_optimize_transpose_mul_add_const_prepost_nhwc_chains"
 GUARD = "optimize_layout_transpose_chains"
+SUCCESSOR_GUARD = (
+    "not optimize_layout_transpose_chains and "
+    "apply_safe_transpose_reduction_lite_on_no_layout_opt"
+)
 LATE_CONTEXT_TARGET = "late_final_shape_boundary_context"
 PASS_CONTEXT_TARGET = "shared_model_ir_pass_context"
 
@@ -138,19 +140,18 @@ def test_late_final_shape_terminal_fanout_current_contract() -> None:
     ]
     assert {
         keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
-    } == {"include_elementwise_fanout": GUARD}
+    } == {"optimize_layout_transpose_chains": GUARD}
 
     assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
     successor_guard = lowerer.body[index + 1]
     assert isinstance(successor_guard, ast.If)
-    assert ast.unparse(successor_guard.test) == GUARD
-    assert _single_target(successor_guard.body[0]) == SUCCESSOR_TARGET
-    assert _call_name(successor_guard.body[0]) == SUCCESSOR_OWNER
-    assert len(successor_guard.orelse) == 1
-    assert isinstance(successor_guard.orelse[0], ast.If)
-    assert ast.unparse(successor_guard.orelse[0].test) == (
-        "apply_safe_transpose_reduction_lite_on_no_layout_opt"
+    assert ast.unparse(successor_guard.test) == SUCCESSOR_GUARD
+    assert _phase_id(successor_guard.body[0]) == (
+        "layout.no_layout.safe_transpose_reduction"
     )
+    assert _single_target(successor_guard.body[1]) == SUCCESSOR_TARGET
+    assert _call_name(successor_guard.body[1]) == SUCCESSOR_OWNER
+    assert successor_guard.orelse == []
     assert not any(
         isinstance(node, ast.Name)
         and isinstance(node.ctx, ast.Load)
@@ -265,13 +266,16 @@ def test_late_final_shape_terminal_fanout_has_one_context_owner() -> None:
     ]
     assert {
         keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
-    } == {"include_elementwise_fanout": GUARD}
+    } == {"optimize_layout_transpose_chains": GUARD}
     assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
     successor_guard = lowerer.body[index + 1]
     assert isinstance(successor_guard, ast.If)
-    assert ast.unparse(successor_guard.test) == GUARD
-    assert _single_target(successor_guard.body[0]) == SUCCESSOR_TARGET
-    assert _call_name(successor_guard.body[0]) == SUCCESSOR_OWNER
+    assert ast.unparse(successor_guard.test) == SUCCESSOR_GUARD
+    assert _phase_id(successor_guard.body[0]) == (
+        "layout.no_layout.safe_transpose_reduction"
+    )
+    assert _single_target(successor_guard.body[1]) == SUCCESSOR_TARGET
+    assert _call_name(successor_guard.body[1]) == SUCCESSOR_OWNER
     assert not any(
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)

@@ -2043,3 +2043,21 @@ Focused and reference-based affected sequential validation report
 the deliberately absent future owner. Production behavior, dependencies,
 TensorFlow isolation, the managed 31-result inventory, and the exactly
 128-ID/128-owner phase store remain unchanged.
+
+The latest implementation adds one optional-child late-terminal owner. It
+preserves the exact late-boundary context, maps the existing layout option to
+the established elementwise-fan-out policy, and runs the public Conv/Pool
+passthrough owner only on the layout-optimized path. Both complete raw result
+objects are returned by identity; the retained lowerer compatibility wrapper
+and all independent child routes remain available.
+
+Only the two observation-only targets are replaced. The recorded late NDHWC
+cost-volume predecessor remains fixed, while the no-layout safe-transpose
+phase and affine cleanup stay in the lowerer under the equivalent combined
+negative-layout guard. Graph behavior, APIs, artifacts, dependencies, and
+TensorFlow isolation remain unchanged. The initially recorded 61 affected
+failures across 29 files were all stale structural ownership expectations;
+after owner-aware updates, focused `7`, fixed affected `456`, and standard
+`92 / 55 / 196 / 2 / 11` sequential tests pass. The AST audit reports 32 raw
+and 30 managed unconsumed lowerer results, and the phase store remains exactly
+128 IDs and 128 owners.

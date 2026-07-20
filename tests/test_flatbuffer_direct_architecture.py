@@ -6687,7 +6687,8 @@ def test_lowerer_late_dequant_unary_fanout_cluster_reuses_pass_state_scope() -> 
     previous_boundary = lowerer.body[invocation_index - 1]
     assert isinstance(previous_boundary, ast.If)
     assert ast.unparse(previous_boundary.test) == (
-        "optimize_layout_transpose_chains"
+        "not optimize_layout_transpose_chains and "
+        "apply_safe_transpose_reduction_lite_on_no_layout_opt"
     )
     next_boundary = lowerer.body[invocation_index + 1]
     assert isinstance(next_boundary, ast.Expr)
@@ -6757,7 +6758,7 @@ def test_lowerer_terminal_singleton_maxpool_reshape_pair_reuses_scope() -> None:
     assert helper_calls[0].keywords == []
 
     owner_name = "run_terminal_fanout_singleton_cleanup"
-    lowerer_owner_name = "run_late_affine_final_shape_terminal_cleanup"
+    lowerer_owner_name = "run_late_affine_final_shape_terminal_convpool_cleanup"
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
@@ -6771,7 +6772,7 @@ def test_lowerer_terminal_singleton_maxpool_reshape_pair_reuses_scope() -> None:
     assert len(invocation.targets) == 1
     assert isinstance(invocation.targets[0], ast.Name)
     assert invocation.targets[0].id == (
-        "_late_affine_final_shape_terminal_results"
+        "_late_affine_final_shape_terminal_convpool_results"
     )
     previous_boundary = lowerer.body[invocation_index - 1]
     assert isinstance(previous_boundary, ast.Expr)
@@ -6785,23 +6786,27 @@ def test_lowerer_terminal_singleton_maxpool_reshape_pair_reuses_scope() -> None:
     assert {
         keyword.arg: ast.unparse(keyword.value)
         for keyword in invocation.value.keywords
-    } == {"include_elementwise_fanout": "optimize_layout_transpose_chains"}
+    } == {
+        "optimize_layout_transpose_chains": "optimize_layout_transpose_chains"
+    }
     next_boundary = lowerer.body[invocation_index + 1]
     assert isinstance(next_boundary, ast.If)
-    assert isinstance(next_boundary.test, ast.Name)
-    assert next_boundary.test.id == "optimize_layout_transpose_chains"
-    next_call = next_boundary.body[0]
+    assert ast.unparse(next_boundary.test) == (
+        "not optimize_layout_transpose_chains and "
+        "apply_safe_transpose_reduction_lite_on_no_layout_opt"
+    )
+    next_call = next_boundary.body[1]
     assert isinstance(next_call, ast.Assign)
     assert len(next_call.targets) == 1
     assert isinstance(next_call.targets[0], ast.Name)
     assert next_call.targets[0].id == (
-        "_terminal_convpool_output_passthrough_stats"
+        "_no_layout_fallback_affine_prepost_stats"
     )
     assert isinstance(next_call.value, ast.Call)
     assert isinstance(next_call.value.func, ast.Name)
     assert (
         next_call.value.func.id
-        == "_optimize_convpool_output_transpose_nhwc_passthrough_chains"
+        == "_optimize_transpose_mul_add_const_prepost_nhwc_chains"
     )
     owner_path = (
         REPO_ROOT
@@ -8891,11 +8896,11 @@ def test_lowerer_late_ndhwc_cost_volume_pair_reuses_one_pass_state_scope() -> No
     assert isinstance(successor, ast.Assign)
     assert isinstance(successor.targets[0], ast.Name)
     assert successor.targets[0].id == (
-        "_late_affine_final_shape_terminal_results"
+        "_late_affine_final_shape_terminal_convpool_results"
     )
     successor_call = _statement_call(successor)
     assert successor_call.func.id == (
-        "run_late_affine_final_shape_terminal_cleanup"
+        "run_late_affine_final_shape_terminal_convpool_cleanup"
     )
     assert [ast.unparse(argument) for argument in successor_call.args] == [
         "late_final_shape_boundary_context"
@@ -8903,7 +8908,9 @@ def test_lowerer_late_ndhwc_cost_volume_pair_reuses_one_pass_state_scope() -> No
     assert {
         keyword.arg: ast.unparse(keyword.value)
         for keyword in successor_call.keywords
-    } == {"include_elementwise_fanout": "optimize_layout_transpose_chains"}
+    } == {
+        "optimize_layout_transpose_chains": "optimize_layout_transpose_chains"
+    }
     assert not any(
         isinstance(node, ast.Name)
         and node.id
@@ -9002,12 +9009,12 @@ def test_lowerer_late_concat_layout_cluster_reuses_one_pass_state_scope() -> Non
         if isinstance(statement, ast.Assign)
         and isinstance(statement.targets[0], ast.Name)
         and statement.targets[0].id
-        == "_late_affine_final_shape_terminal_results"
+        == "_late_affine_final_shape_terminal_convpool_results"
     )
     assignment_index = lowerer.body.index(composite)
     composite_call = _statement_call(composite)
     assert composite_call.func.id == (
-        "run_late_affine_final_shape_terminal_cleanup"
+        "run_late_affine_final_shape_terminal_convpool_cleanup"
     )
     assert [ast.unparse(argument) for argument in composite_call.args] == [
         "late_final_shape_boundary_context"
@@ -9015,7 +9022,9 @@ def test_lowerer_late_concat_layout_cluster_reuses_one_pass_state_scope() -> Non
     assert {
         keyword.arg: ast.unparse(keyword.value)
         for keyword in composite_call.keywords
-    } == {"include_elementwise_fanout": "optimize_layout_transpose_chains"}
+    } == {
+        "optimize_layout_transpose_chains": "optimize_layout_transpose_chains"
+    }
 
     previous_boundary = lowerer.body[assignment_index - 1]
     assert isinstance(previous_boundary, ast.Expr)
@@ -9036,10 +9045,10 @@ def test_lowerer_late_concat_layout_cluster_reuses_one_pass_state_scope() -> Non
     assert outer_calls[0].keywords == []
     next_boundary = lowerer.body[assignment_index + 1]
     assert isinstance(next_boundary, ast.If)
-    assert isinstance(next_boundary.body[0], ast.Assign)
-    assert isinstance(next_boundary.body[0].targets[0], ast.Name)
-    assert next_boundary.body[0].targets[0].id == (
-        "_terminal_convpool_output_passthrough_stats"
+    assert isinstance(next_boundary.body[1], ast.Assign)
+    assert isinstance(next_boundary.body[1].targets[0], ast.Name)
+    assert next_boundary.body[1].targets[0].id == (
+        "_no_layout_fallback_affine_prepost_stats"
     )
     assert not any(
         isinstance(node, ast.Name)
@@ -9238,7 +9247,7 @@ def test_lowerer_late_nchw_shuffle_gather_pair_stays_between_raw_rewrites() -> N
         for node in lowering_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
-    owner_name = "run_late_affine_final_shape_terminal_cleanup"
+    owner_name = "run_late_affine_final_shape_terminal_convpool_cleanup"
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
@@ -9251,7 +9260,7 @@ def test_lowerer_late_nchw_shuffle_gather_pair_stays_between_raw_rewrites() -> N
     assert isinstance(invocation, ast.Assign)
     assert isinstance(invocation.targets[0], ast.Name)
     assert invocation.targets[0].id == (
-        "_late_affine_final_shape_terminal_results"
+        "_late_affine_final_shape_terminal_convpool_results"
     )
     previous_boundary = lowerer.body[invocation_index - 1]
     assert isinstance(previous_boundary, ast.Expr)
@@ -9260,12 +9269,14 @@ def test_lowerer_late_nchw_shuffle_gather_pair_stays_between_raw_rewrites() -> N
     )
     next_boundary = lowerer.body[invocation_index + 1]
     assert isinstance(next_boundary, ast.If)
-    assert isinstance(next_boundary.test, ast.Name)
-    assert next_boundary.test.id == "optimize_layout_transpose_chains"
-    assert isinstance(next_boundary.body[0], ast.Assign)
-    assert isinstance(next_boundary.body[0].targets[0], ast.Name)
-    assert next_boundary.body[0].targets[0].id == (
-        "_terminal_convpool_output_passthrough_stats"
+    assert ast.unparse(next_boundary.test) == (
+        "not optimize_layout_transpose_chains and "
+        "apply_safe_transpose_reduction_lite_on_no_layout_opt"
+    )
+    assert isinstance(next_boundary.body[1], ast.Assign)
+    assert isinstance(next_boundary.body[1].targets[0], ast.Name)
+    assert next_boundary.body[1].targets[0].id == (
+        "_no_layout_fallback_affine_prepost_stats"
     )
     assert (
         _late_reshape_shuffle_attention_window_call_count(
@@ -12775,12 +12786,39 @@ def test_convpool_output_passthrough_has_one_module_owner() -> None:
         for node in lowering_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
-    production_calls = [
+    compatibility_calls = [
         node
         for node in ast.walk(lowerer)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
+    ]
+    assert compatibility_calls == []
+
+    orchestration_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "late_affine_final_shape_terminal_convpool_orchestration.py"
+    )
+    orchestration_tree = ast.parse(
+        orchestration_path.read_text(encoding="utf-8")
+    )
+    orchestration_owner = next(
+        node
+        for node in orchestration_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name
+        == "run_late_affine_final_shape_terminal_convpool_cleanup"
+    )
+    production_calls = [
+        node
+        for node in ast.walk(orchestration_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id
+        == "optimize_convpool_output_transpose_nhwc_passthrough_chains"
     ]
     assert len(production_calls) == 1
 

@@ -7414,3 +7414,34 @@ and reference-based affected sequential validation report
 the deliberately absent owner module. Phase-store validation remains
 `2 passed`, the managed inventory remains 31, and the store remains exactly
 128 IDs and 128 owners. Ruff, bytecode compilation, and whitespace checks pass.
+
+## Extract late terminal optional Conv/Pool cleanup
+
+`passes/late_affine_final_shape_terminal_convpool_orchestration.py` now owns
+the characterized late-terminal composite and its layout-opt-only Conv/Pool
+passthrough child. It forwards the exact existing
+`LateFinalShapeBoundaryContext`, maps the layout option to the established
+elementwise-fan-out policy, calls the public Conv/Pool owner only when layout
+optimization is enabled, and returns both complete raw result objects without
+copying, flattening, or result-driven control flow.
+
+The lowerer replaces only `_late_affine_final_shape_terminal_results` and
+`_terminal_convpool_output_passthrough_stats` with
+`_late_affine_final_shape_terminal_convpool_results`. Recorded late NDHWC
+cost-volume remains the direct predecessor. The no-layout safe-transpose phase
+and affine cleanup remain in the lowerer under the equivalent conjunction
+`not optimize_layout_transpose_chains and
+apply_safe_transpose_reduction_lite_on_no_layout_opt`; therefore that recorded
+phase cannot run on the layout-optimized path. The compatibility wrapper,
+child owners, graph behavior, public APIs, artifacts, dependencies, and
+TensorFlow isolation remain unchanged.
+
+The first fixed 31-file affected run deliberately recorded 61 failures across
+29 files; all were stale direct-owner, target, keyword, branch, or neighbor
+expectations caused by the ownership move. After owner-aware updates, focused
+`7`, fixed affected `456`, and standard `92 / 55 / 196 / 2 / 11` sequential
+tests pass. Ruff, bytecode compilation, and whitespace checks pass. The AST
+audit reports 32 raw and 30 managed unconsumed lowerer results, zero old
+selected targets, one new composite target, and exactly 128 phase IDs with
+128 owners. No real-model conversion was repeated for this ownership-only
+extraction.

@@ -156,10 +156,10 @@ LATE_FINAL_SHAPE_BOUNDARY_OWNER_PATH = (
 )
 LATE_FINAL_SHAPE_BOUNDARY_OWNER = "run_late_final_shape_boundary_cleanup"
 LATE_FINAL_SHAPE_TERMINAL_OWNER = (
-    "run_late_affine_final_shape_terminal_cleanup"
+    "run_late_affine_final_shape_terminal_convpool_cleanup"
 )
 LATE_FINAL_SHAPE_BOUNDARY_RESULT = (
-    "_late_affine_final_shape_terminal_results"
+    "_late_affine_final_shape_terminal_convpool_results"
 )
 LATE_AFFINE_CONCAT_OWNER_PATH = (
     REPO_ROOT
@@ -179,7 +179,7 @@ LATE_AFFINE_OPTIONAL_FANOUT_OWNER_PATH = (
 LATE_AFFINE_OPTIONAL_FANOUT_OWNER = (
     "run_late_affine_optional_fanout_cleanup"
 )
-LATE_AFFINE_CONCAT_RESULT = "_late_affine_final_shape_terminal_results"
+LATE_AFFINE_CONCAT_RESULT = "_late_affine_final_shape_terminal_convpool_results"
 TERMINAL_FANOUT_SINGLETON_OWNER_PATH = (
     REPO_ROOT
     / "onnx2tf"
@@ -189,10 +189,10 @@ TERMINAL_FANOUT_SINGLETON_OWNER_PATH = (
 )
 TERMINAL_FANOUT_SINGLETON_OWNER = "run_terminal_fanout_singleton_cleanup"
 TERMINAL_FANOUT_SINGLETON_RESULT = (
-    "_late_affine_final_shape_terminal_results"
+    "_late_affine_final_shape_terminal_convpool_results"
 )
-TERMINAL_CONVPOOL_OUTPUT_RESULT = (
-    "_terminal_convpool_output_passthrough_stats"
+NO_LAYOUT_FALLBACK_AFFINE_RESULT = (
+    "_no_layout_fallback_affine_prepost_stats"
 )
 
 
@@ -244,7 +244,7 @@ def _late_layout_composite_assignment(body: list[ast.stmt]) -> ast.Assign:
         keyword.arg: ast.unparse(keyword.value)
         for keyword in assignment.value.keywords
     } == {
-        "include_elementwise_fanout": "optimize_layout_transpose_chains"
+        "optimize_layout_transpose_chains": "optimize_layout_transpose_chains"
     }
     return assignment
 
@@ -289,7 +289,7 @@ def _final_boundary_composite_assignment(body: list[ast.stmt]) -> ast.Assign:
         keyword.arg: ast.unparse(keyword.value)
         for keyword in assignment.value.keywords
     } == {
-        "include_elementwise_fanout": "optimize_layout_transpose_chains"
+        "optimize_layout_transpose_chains": "optimize_layout_transpose_chains"
     }
     return assignment
 
@@ -333,7 +333,7 @@ def _late_affine_concat_assignment(body: list[ast.stmt]) -> ast.Assign:
     assert {
         keyword.arg: ast.unparse(keyword.value)
         for keyword in assignment.value.keywords
-    } == {"include_elementwise_fanout": "optimize_layout_transpose_chains"}
+    } == {"optimize_layout_transpose_chains": "optimize_layout_transpose_chains"}
     return assignment
 
 
@@ -1820,9 +1820,9 @@ def test_primary_path_retains_late_cost_volume_conv_affine_result() -> None:
 
     following = body[late_index + 1]
     assert isinstance(following, ast.If)
-    assert isinstance(following.body[0], ast.Assign)
-    assert isinstance(following.body[0].targets[0], ast.Name)
-    assert following.body[0].targets[0].id == TERMINAL_CONVPOOL_OUTPUT_RESULT
+    assert isinstance(following.body[1], ast.Assign)
+    assert isinstance(following.body[1].targets[0], ast.Name)
+    assert following.body[1].targets[0].id == NO_LAYOUT_FALLBACK_AFFINE_RESULT
     assert not any(
         isinstance(node, ast.Name)
         and node.id == "_late_cost_volume_conv_affine_stats"
@@ -1871,9 +1871,9 @@ def test_primary_path_retains_late_concat_composite_results() -> None:
 
     following = body[result_index + 1]
     assert isinstance(following, ast.If)
-    assert isinstance(following.body[0], ast.Assign)
-    assert isinstance(following.body[0].targets[0], ast.Name)
-    assert following.body[0].targets[0].id == TERMINAL_CONVPOOL_OUTPUT_RESULT
+    assert isinstance(following.body[1], ast.Assign)
+    assert isinstance(following.body[1].targets[0], ast.Name)
+    assert following.body[1].targets[0].id == NO_LAYOUT_FALLBACK_AFFINE_RESULT
 
     layout_cleanup_statements = [
         statement
@@ -1924,7 +1924,10 @@ def test_primary_path_retains_very_late_layout_transpose_cleanup_result() -> Non
 
     predecessor = body[very_late_index - 1]
     assert isinstance(predecessor, ast.If)
-    assert ast.unparse(predecessor.test) == "optimize_layout_transpose_chains"
+    assert ast.unparse(predecessor.test) == (
+        "not optimize_layout_transpose_chains and "
+        "apply_safe_transpose_reduction_lite_on_no_layout_opt"
+    )
 
     successor = body[very_late_index + 1]
     _assert_phase_result_record(
@@ -2150,7 +2153,7 @@ def test_primary_path_retains_guarded_elementwise_fanout_results() -> None:
     ]
     assert {
         keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
-    } == {"include_elementwise_fanout": "optimize_layout_transpose_chains"}
+    } == {"optimize_layout_transpose_chains": "optimize_layout_transpose_chains"}
 
     terminal_owner = next(
         node
@@ -2224,9 +2227,9 @@ def test_primary_path_retains_late_reshape_layout_composite() -> None:
     )
     successor = body[index + 1]
     assert isinstance(successor, ast.If)
-    assert isinstance(successor.body[0], ast.Assign)
-    assert isinstance(successor.body[0].targets[0], ast.Name)
-    assert successor.body[0].targets[0].id == TERMINAL_CONVPOOL_OUTPUT_RESULT
+    assert isinstance(successor.body[1], ast.Assign)
+    assert isinstance(successor.body[1].targets[0], ast.Name)
+    assert successor.body[1].targets[0].id == NO_LAYOUT_FALLBACK_AFFINE_RESULT
 
 
 def test_primary_path_removes_late_reshape_layout_result_locals() -> None:
@@ -2291,9 +2294,9 @@ def test_primary_path_retains_late_window_layout_composite() -> None:
 
     successor = body[index + 1]
     assert isinstance(successor, ast.If)
-    assert isinstance(successor.body[0], ast.Assign)
-    assert isinstance(successor.body[0].targets[0], ast.Name)
-    assert successor.body[0].targets[0].id == TERMINAL_CONVPOOL_OUTPUT_RESULT
+    assert isinstance(successor.body[1], ast.Assign)
+    assert isinstance(successor.body[1].targets[0], ast.Name)
+    assert successor.body[1].targets[0].id == NO_LAYOUT_FALLBACK_AFFINE_RESULT
 
 
 def test_primary_path_removes_late_window_layout_result_locals() -> None:
@@ -2359,9 +2362,9 @@ def test_primary_path_retains_final_boundary_channel_layout_composite() -> None:
     )
     successor = body[index + 1]
     assert isinstance(successor, ast.If)
-    assert isinstance(successor.body[0], ast.Assign)
-    assert isinstance(successor.body[0].targets[0], ast.Name)
-    assert successor.body[0].targets[0].id == TERMINAL_CONVPOOL_OUTPUT_RESULT
+    assert isinstance(successor.body[1], ast.Assign)
+    assert isinstance(successor.body[1].targets[0], ast.Name)
+    assert successor.body[1].targets[0].id == NO_LAYOUT_FALLBACK_AFFINE_RESULT
 
 
 def test_primary_path_retains_terminal_boundary_input_normalization_result() -> None:
@@ -2872,7 +2875,8 @@ def test_primary_path_retains_very_late_instancenorm_post_bias_result() -> None:
     )
     assert isinstance(body[index - 1], ast.If)
     assert ast.unparse(body[index - 1].test) == (
-        "optimize_layout_transpose_chains"
+        "not optimize_layout_transpose_chains and "
+        "apply_safe_transpose_reduction_lite_on_no_layout_opt"
     )
     _assert_phase_result_record(
         body[index + 1],
