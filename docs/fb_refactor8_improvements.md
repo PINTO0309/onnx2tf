@@ -7445,3 +7445,29 @@ audit reports 32 raw and 30 managed unconsumed lowerer results, zero old
 selected targets, one new composite target, and exactly 128 phase IDs with
 128 owners. No real-model conversion was repeated for this ownership-only
 extraction.
+
+## Characterize terminal singleton/Clamp-SiNet/HardSwish cleanup
+
+The managed 30-result inventory next selects the unconditional terminal
+singleton/Clamp-SiNet composite and the immediately following recorded
+HardSwish-SE cleanup. This is the smallest remaining boundary that can reduce
+the inventory without crossing a later graph mutation: a future owner can run
+the existing composite, then the public HardSwish-SE pass, and the lowerer can
+immediately record the returned HardSwish mapping under the unchanged phase
+ID before Dequant/HardSigmoid cleanup runs.
+
+The strict contract fixes the exact existing
+`SINetTerminalLayoutRecoveryContext`, both layout-option paths, the complete
+nested terminal schema, the one-key HardSwish schema, public-owner equivalence,
+the retained compatibility wrapper, the layout-guarded QKV predecessor, and
+the Dequant/HardSigmoid and terminal SiNet/singleton-Reshape successors. The
+future composite target is required to supply element `[1]` directly to
+`session.record_phase_result("cleanup.terminal.sinet_hardswish_se", ...)`, so
+the mutation order, record timing, phase ID, and 128-entry bound stay fixed.
+
+Production remains unchanged pending one two-child context owner. Focused and
+reference-based affected sequential validation report `4 passed, 1 xfailed`
+and `395 passed, 1 xfailed` across 14 files; the sole expected failure is the
+deliberately absent owner module. Phase-store validation remains `2 passed`,
+the raw/managed inventory remains 32/30, and the store remains exactly 128 IDs
+and 128 owners. Ruff, bytecode compilation, and whitespace checks pass.

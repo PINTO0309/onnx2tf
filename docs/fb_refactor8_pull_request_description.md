@@ -2061,3 +2061,18 @@ after owner-aware updates, focused `7`, fixed affected `456`, and standard
 `92 / 55 / 196 / 2 / 11` sequential tests pass. The AST audit reports 32 raw
 and 30 managed unconsumed lowerer results, and the phase store remains exactly
 128 IDs and 128 owners.
+
+The next characterization freezes the terminal singleton/Clamp-SiNet
+composite together with its immediately following recorded HardSwish-SE pass.
+The future owner will use the exact existing SiNet terminal context and public
+HardSwish implementation, while the lowerer will record returned element
+`[1]` under the unchanged HardSwish phase ID before any later graph mutation.
+Complete schemas, both layout-option paths, wrapper compatibility, adjacent
+QKV/Dequant boundaries, and the terminal SiNet/singleton-Reshape route are
+preserved.
+
+Focused and reference-based affected sequential validation report
+`4 passed, 1 xfailed` and `395 passed, 1 xfailed` across 14 files; the sole
+expected failure is the deliberately absent future owner. Production behavior,
+dependencies, TensorFlow isolation, the raw/managed 32/30 inventory, and the
+exactly 128-ID/128-owner phase store remain unchanged.

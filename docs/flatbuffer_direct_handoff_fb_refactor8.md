@@ -7414,3 +7414,52 @@ context and callback identities, child schemas, and independent routes before
 changing production. Continue with sequential `uv` validation and complete
 checkpoint commits/pushes only. Do not create, update, reopen, or otherwise
 modify a pull request.
+
+## Terminal singleton/Clamp-SiNet/HardSwish characterization checkpoint
+
+The refreshed inventory contains 32 raw and 30 managed unconsumed lowerer
+results after excluding the two intentionally retained layout-pass-set-1
+recovery-prefix observations. The selected boundary consists of the
+unconditional `_terminal_singleton_clamp_sinet_results` assignment followed
+immediately by the recorded `cleanup.terminal.sinet_hardswish_se` pass. The
+next statement remains the recorded terminal Dequant/HardSigmoid pass, and the
+following `_terminal_sinet_singleton_reshape_results` assignment is outside
+this characterization.
+
+This two-stage boundary is safe because a future owner can first call
+`run_terminal_singleton_clamp_sinet_cleanup()` with the exact existing
+`SINetTerminalLayoutRecoveryContext` and layout option, then call public
+`optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains()`
+with `context.pass_context.model_ir`. The lowerer can immediately record the
+returned HardSwish mapping from composite element `[1]` before the subsequent
+Dequant mutation. Graph mutation order, phase-record timing, phase ID, and
+bounded-store order therefore remain identical.
+
+The characterization fixes both Boolean paths, complete nested terminal and
+HardSwish schemas, exact context/model identity, compatibility-wrapper
+delegation, the layout-guarded terminal QKV predecessor, the recorded Dequant
+successor, and the terminal SiNet/singleton-Reshape boundary. The existing
+child owner and wrapper remain independently available. Production remains
+unchanged pending
+`passes/terminal_singleton_clamp_sinet_hardswish_orchestration.py` and
+`run_terminal_singleton_clamp_sinet_hardswish_cleanup()`.
+
+Focused sequential validation reports `4 passed, 1 xfailed`; the fixed
+14-file affected suite reports `395 passed, 1 xfailed`. The sole expected
+failure requires the intentionally absent owner. Phase-store validation is
+`2 passed`; production, the raw/managed 32/30 inventory, and the exactly
+128-ID/128-owner store remain unchanged. Ruff, bytecode compilation, and
+whitespace checks pass. No real-model conversion was repeated for this
+characterization.
+
+At resume, implement only this characterized two-child owner. Replace the
+current terminal result target with
+`_terminal_singleton_clamp_sinet_hardswish_results`, record element `[1]`
+under the existing HardSwish phase ID immediately after the owner returns, and
+remove only the now-unused direct child-runner import. Convert the strict
+xfail to runtime order, context, option, and result-identity coverage. Run the
+fixed affected suite once before updating stale structural expectations, then
+run all affected and standard gates sequentially under `uv`, confirm the
+expected raw/managed inventory reduction from 32/30 to 31/29, and commit and
+push the complete unit. Do not create, update, reopen, or otherwise modify a
+pull request.
