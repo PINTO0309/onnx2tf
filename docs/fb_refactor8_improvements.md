@@ -7168,3 +7168,24 @@ validation passes: focused `5`, affected `427`, and standard
 `92 / 55 / 196 / 2 / 11`. Ruff, bytecode compilation, and whitespace checks
 pass. The phase store remains exactly 128 IDs and 128 owners, while the
 unconsumed lowerer-result inventory decreases from 38 to 37.
+
+## Characterize terminal optional fan-out/singleton cleanup
+
+The managed 37-result inventory next selects the layout-opt-only terminal
+elementwise fan-out assignment followed immediately by unconditional terminal
+singleton MaxPool/Reshape cleanup. The first child receives the exact shared
+context's `ModelIR`; the second existing lowerer wrapper closes over an alias
+of that exact `ModelIRPassContext`.
+
+The strict contract fixes enabled-path order, disabled-path fan-out
+non-execution, the fan-out mapping, the complete two-slot singleton schema,
+zero-keyword child policies, both retained wrappers, and observation-only
+results. The late final shape-boundary composite remains the predecessor. The
+existing terminal Conv/Pool output guard and its no-layout `elif` fallback
+remain the successor and stay outside the proposed owner.
+
+Production remains unchanged pending one optional two-child owner. Focused
+and reference-based affected sequential validation report
+`2 passed, 1 xfailed` and `446 passed, 1 xfailed`; the sole expected failure
+is the deliberately absent owner module. The managed inventory remains 37,
+and the phase-result store remains exactly 128 IDs and 128 owners.

@@ -1892,3 +1892,16 @@ unchanged. Focused `5`, affected `427`, and standard
 `92 / 55 / 196 / 2 / 11` sequential tests pass. The phase store remains
 exactly 128 IDs and 128 owners, and the unconsumed-result inventory decreases
 from 38 to 37.
+
+The next characterization freezes optional terminal elementwise fan-out
+followed by unconditional singleton MaxPool/Reshape cleanup before changing
+production. Both operations use the exact shared pass state, while fan-out
+executes only when layout optimization is enabled. Both result schemas, both
+flag paths, retained wrappers, and the late-shape predecessor and terminal
+Conv/Pool successor are fixed.
+
+Focused and reference-based affected sequential validation report
+`2 passed, 1 xfailed` and `446 passed, 1 xfailed`; the sole expected failure
+is the deliberately absent future owner. Production behavior, dependencies,
+TensorFlow isolation, the managed 37-result inventory, and the exactly
+128-ID/128-owner phase store remain unchanged.

@@ -6825,3 +6825,56 @@ callback identities, child schemas, and independent routes before changing
 production. Continue with sequential `uv` validation and complete checkpoint
 commits/pushes only. Do not create, update, reopen, or otherwise modify a pull
 request.
+
+## Terminal optional fan-out/singleton characterization checkpoint
+
+The managed inventory contains 37 unconsumed lowerer results after excluding
+the two intentionally retained layout-pass-set-1 recovery-prefix observations.
+The selected boundary starts with `_terminal_elementwise_fanout_stats`, the
+sole statement inside its `optimize_layout_transpose_chains` guard, and
+continues with unconditional
+`_terminal_singleton_maxpool_reshape_results` immediately after that guard.
+The fan-out lowerer wrapper receives `model_ir`; the singleton wrapper uses
+`terminal_singleton_maxpool_reshape_context`, which aliases the exact
+`shared_model_ir_pass_context`.
+
+The characterization freezes the fan-out one-key mapping and complete
+two-dictionary singleton schema. It also fixes enabled-path order,
+disabled-path fan-out non-execution, zero positional options beyond the
+required state argument, zero keyword options, both observation-only results,
+and both compatibility wrappers. The proposed owner must conditionally call
+`optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(
+context.model_ir)` only when `include_elementwise_fanout=True`, then always
+call `run_terminal_singleton_maxpool_reshape(context)`. It must return either
+the raw fan-out mapping or `None`, followed by the raw singleton tuple, without
+copying or flattening either result.
+
+The existing `_late_final_shape_boundary_results` assignment remains the
+direct predecessor. The following `optimize_layout_transpose_chains` guard,
+which owns `_terminal_convpool_output_passthrough_stats`, remains the direct
+successor. Its
+`apply_safe_transpose_reduction_lite_on_no_layout_opt` `elif` branch also stays
+outside the proposed owner. No phase record, progress callback, public API,
+artifact, graph mutation, dependency, or TensorFlow boundary has changed.
+
+Production remains unchanged pending
+`passes/terminal_fanout_singleton_orchestration.py` and
+`run_terminal_fanout_singleton_cleanup()`. The lowerer must replace only the
+two selected locals with `_terminal_fanout_singleton_results`, pass the exact
+shared context and current layout-optimization flag, remove only the now-empty
+first guard, and preserve both outer boundaries and both lowerer wrappers.
+
+Focused sequential validation reports `2 passed, 1 xfailed`; the fixed
+26-file affected suite reports `446 passed, 1 xfailed`. The sole expected
+failure requires the intentionally absent owner. Production, both flag paths,
+the managed 37-result inventory, and the exactly 128-ID/128-owner phase store
+are unchanged. Ruff and whitespace checks pass. No real-model conversion was
+repeated for this characterization.
+
+At resume, implement only this characterized optional owner and lowerer
+replacement, convert the strict xfail to runtime true/false order, model,
+context, option, non-call, and result-identity coverage, and update only
+structural expectations made stale by the new outer route. Run affected and
+standard gates sequentially under `uv`, confirm the expected managed inventory
+reduction from 37 to 36, then commit and push the complete unit. Do not create,
+update, reopen, or otherwise modify a pull request.
