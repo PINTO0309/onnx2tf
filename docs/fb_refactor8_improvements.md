@@ -7347,3 +7347,24 @@ focused `6`, affected `422`, and standard `92 / 55 / 196 / 2 / 11`. Ruff,
 bytecode compilation, and whitespace checks pass. The phase store remains
 exactly 128 IDs and 128 owners, while the managed unconsumed-result inventory
 decreases from 33 to 32.
+
+## Characterize late affine/final-shape/terminal cleanup
+
+The managed 32-result inventory next selects the two adjacent unconditional
+composites immediately after the recorded late NDHWC cost-volume phase:
+late affine/optional fan-out cleanup followed by late final-shape/terminal
+fan-out cleanup. The existing late-boundary context embeds the exact shared
+`ModelIRPassContext` required by the first child, so no graph, layout, or
+diagnostic state needs to be reconstructed.
+
+The strict contract fixes source order, shared context identity, both Boolean
+layout-option paths, both complete child schemas, observation-only results,
+the recorded predecessor phase, and the terminal Conv/Pool/no-layout successor
+branch. Both current child owners and their independent routes remain fixed.
+
+Production remains unchanged pending one straight-line context owner. Focused
+and reference-based affected sequential validation report
+`3 passed, 1 xfailed` and `430 passed, 1 xfailed`; the sole expected failure is
+the deliberately absent owner module. Phase-store validation remains
+`2 passed`, the managed inventory remains 32, and the store remains exactly
+128 IDs and 128 owners. Ruff, bytecode compilation, and whitespace checks pass.

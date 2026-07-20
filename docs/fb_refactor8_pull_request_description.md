@@ -2001,3 +2001,16 @@ updates, focused `6`, affected `422`, and standard
 `92 / 55 / 196 / 2 / 11` sequential tests pass. The phase store remains
 exactly 128 IDs and 128 owners, and the managed unconsumed-result inventory
 decreases from 33 to 32.
+
+The next characterization freezes adjacent late affine/optional fan-out and
+late final-shape/terminal fan-out composites. Both reuse the exact existing
+late-boundary context and its embedded shared pass context; the same layout
+option is forwarded unchanged to both children. Complete nested schemas,
+child order, result observation policy, and neighboring phase/branch
+boundaries are preserved.
+
+Focused and reference-based affected sequential validation report
+`3 passed, 1 xfailed` and `430 passed, 1 xfailed`; the sole expected failure is
+the deliberately absent future owner. Production behavior, dependencies,
+TensorFlow isolation, the managed 32-result inventory, and the exactly
+128-ID/128-owner phase store remain unchanged.

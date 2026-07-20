@@ -7218,3 +7218,53 @@ context and callback identities, child schemas, and independent routes before
 changing production. Continue with sequential `uv` validation and complete
 checkpoint commits/pushes only. Do not create, update, reopen, or otherwise
 modify a pull request.
+
+## Late affine/final-shape/terminal characterization checkpoint
+
+The managed inventory contains 32 unconsumed lowerer results after excluding
+the two intentionally retained layout-pass-set-1 recovery-prefix observations.
+The selected boundary consists of two adjacent unconditional assignments:
+`_late_affine_optional_fanout_results` from
+`run_late_affine_optional_fanout_cleanup(shared_model_ir_pass_context,
+include_elementwise_fanout=optimize_layout_transpose_chains)`, then
+`_late_final_shape_terminal_fanout_results` from
+`run_late_final_shape_terminal_fanout_cleanup(
+late_final_shape_boundary_context,
+include_elementwise_fanout=optimize_layout_transpose_chains)`.
+
+`late_final_shape_boundary_context.pass_context` is the exact
+`shared_model_ir_pass_context`. The characterization fixes that identity,
+complete affine/Concat, final-shape/boundary, optional fan-out, and singleton
+schemas, exact child order, and both Boolean option paths. Both results remain
+observation-only. Recorded `cleanup.late.ndhwc_cost_volume` stays the direct
+predecessor, while the terminal Conv/Pool/no-layout branch stays the direct
+successor and remains outside the extraction.
+
+Production remains unchanged pending
+`passes/late_affine_final_shape_terminal_orchestration.py` and
+`run_late_affine_final_shape_terminal_cleanup()`. The owner must call
+`run_late_affine_optional_fanout_cleanup(context.pass_context,
+include_elementwise_fanout=include_elementwise_fanout)` followed by
+`run_late_final_shape_terminal_fanout_cleanup(context,
+include_elementwise_fanout=include_elementwise_fanout)` and return both raw
+results by identity. The lowerer must replace only the two selected targets
+with `_late_affine_final_shape_terminal_results`, pass the exact existing late
+context and layout option, retain both child owners and independent routes,
+and preserve both surrounding boundaries.
+
+Focused sequential validation reports `3 passed, 1 xfailed`; the fixed
+27-file affected suite reports `430 passed, 1 xfailed`. The sole expected
+failure requires the intentionally absent owner. Phase-store validation is
+`2 passed`; production, the managed 32-result inventory, and the exactly
+128-ID/128-owner store remain unchanged. Ruff, bytecode compilation, and
+whitespace checks pass. No real-model conversion was repeated for this
+characterization.
+
+At resume, implement only this characterized shared-context owner and lowerer
+replacement, convert the strict xfail to runtime order, context, option, and
+result-identity coverage, and update only structural expectations made stale
+by the new outer route. Run the affected suite once before changing stale
+tests, then run all affected and standard gates sequentially under `uv`,
+confirm the expected managed inventory reduction from 32 to 31, and commit and
+push the complete unit. Do not create, update, reopen, or otherwise modify a
+pull request.
