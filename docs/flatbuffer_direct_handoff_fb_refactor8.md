@@ -7866,3 +7866,49 @@ callback identities, complete child schemas, and independent routes before
 changing production. Continue to run all `uv` validation sequentially, then
 commit and push each complete unit. Do not create, update, reopen, or otherwise
 modify a pull request.
+
+## Terminal Slice/Concat boundary StridedSlice characterization checkpoint
+
+The refreshed inventory contains 27 raw and 25 managed unconsumed lowerer
+results after excluding exactly
+`_layout_pass_set_1_initial_attention_recovery_results` and
+`_layout_pass_set_1_post_binary_attention_recovery_results`. The selected
+boundary starts with `_terminal_slice_concat_recovery_results` and ends with
+the immediately following recorded
+`cleanup.terminal.boundary_stridedslice_qdq_concat` pass. The recorded terminal
+channel-slice Mul/Add bridge predecessor and recorded Swish residual-Concat
+closure successor remain outside the boundary.
+
+The future
+`run_terminal_slice_concat_boundary_stridedslice_cleanup()` owner receives the
+existing `TerminalSliceConcatRecoveryContext`. It must call
+`run_terminal_slice_concat_recovery(context)` first, then call
+`_optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks()` with
+`context.pass_context.model_ir` and
+`layout_state=context.pass_context.layout_state`, and return both complete raw
+results. The lowerer must supply returned element `[1]` directly to the
+unchanged boundary phase record. The complete fourteen-element recovery
+schema, complete four-counter boundary schema, lowerer compatibility wrappers,
+and the independent final-boundary terminal Slice/Concat route are fixed by
+characterization tests.
+
+Focused sequential validation reports `3 passed, 1 xfailed`; the fixed
+9-file affected suite reports `345 passed, 1 xfailed`. The sole expected
+failure requires the intentionally absent future owner. Standalone phase-store
+validation reports `2 passed`. Production is unchanged, the raw/managed
+inventory remains 27/25, and the phase store remains exactly 128 calls, 128
+unique IDs, and 128 owner expressions. Ruff, bytecode compilation, and
+whitespace checks pass. No real-model conversion was repeated for this
+characterization.
+
+At resume, implement only the characterized two-child owner. Replace the
+terminal Slice/Concat recovery assignment and current boundary owner expression
+with `run_terminal_slice_concat_boundary_stridedslice_cleanup(`
+`terminal_slice_concat_recovery_context)[1]`, preserve both recorded
+neighboring phases, retain both lowerer wrappers, and keep the final-boundary
+route independent. Add runtime order/context/model/layout/result-identity
+coverage. Capture the fixed affected suite before updating stale structural
+assertions, then run affected and standard gates sequentially under `uv`,
+confirm the expected 26/24 inventory, and commit and push the complete
+implementation. Do not create, update, reopen, or otherwise modify a pull
+request.

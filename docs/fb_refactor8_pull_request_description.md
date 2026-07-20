@@ -2228,3 +2228,19 @@ focused `5`, affected `303`, and standard `92 / 55 / 196 / 2 / 11` sequential
 tests pass. Static checks pass, the raw/managed inventory decreases from 28/26
 to 27/25, and the phase store remains exactly 128 calls, 128 unique IDs, and
 128 owner expressions.
+
+The next characterization freezes the unconsumed terminal Slice/Concat
+recovery together with its immediately following recorded boundary-input
+Transpose/StridedSlice/QDQ/Concat cleanup. The future owner will receive the
+existing `TerminalSliceConcatRecoveryContext`, run its fourteen-child recovery
+first, and forward the embedded model and `LayoutState` to the boundary pass.
+The lowerer will record returned element `[1]` at the unchanged boundary phase
+position; terminal channel-slice Mul/Add and Swish residual-Concat remain the
+direct neighboring recorded phases.
+
+Production is unchanged. Focused and fixed 9-file affected sequential
+characterization report `3 passed, 1 xfailed` and
+`345 passed, 1 xfailed`; only the deliberately absent future owner is xfailed.
+Standalone phase-store validation reports `2 passed`. Static checks pass, the
+raw/managed inventory remains 27/25, and the store remains exactly 128 calls,
+128 unique IDs, and 128 owner expressions.

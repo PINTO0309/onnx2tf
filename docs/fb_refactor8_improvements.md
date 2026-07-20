@@ -7758,3 +7758,33 @@ recovery-prefix observations. The removed target has zero stores, the new
 owner expression occurs once, and the phase store remains exactly 128 calls,
 128 unique IDs, and 128 owner expressions. No real-model conversion was
 repeated for this ownership-only extraction.
+
+## Characterize terminal Slice/Concat boundary StridedSlice cleanup
+
+The managed 25-result inventory next selects the unconsumed terminal
+Slice/Concat recovery result and its immediately following recorded boundary
+input Transpose/StridedSlice/QDQ/Concat pass. The recovery already owns its
+fourteen children through `TerminalSliceConcatRecoveryContext`, and the
+boundary pass consumes the exact model and `LayoutState` embedded in that
+context. A future
+`run_terminal_slice_concat_boundary_stridedslice_cleanup()` owner can
+therefore execute the recovery first, execute the boundary pass second, and
+return both complete results without retaining the observation-only recovery
+local in the lowerer.
+
+The boundary keeps the recorded terminal channel-slice Mul/Add bridge as its
+immediate predecessor and the recorded Swish residual-Concat closure as its
+immediate successor. Characterization fixes the recovery's complete fourteen-
+result schema, the boundary pass's complete four-counter schema, exact
+context/model/layout forwarding, both lowerer compatibility wrappers, and the
+independent later terminal Slice/Concat route through the final-boundary
+orchestrator.
+
+Production remains unchanged pending the two-child owner. Focused and fixed
+9-file affected sequential characterization report `3 passed, 1 xfailed` and
+`345 passed, 1 xfailed`; the sole expected failure requires the intentionally
+absent future owner. The standalone phase-store validation reports `2 passed`.
+Ruff, bytecode compilation, and whitespace checks pass. The raw/managed
+inventory remains 27/25, and the store remains exactly 128 calls, 128 unique
+IDs, and 128 owner expressions. No real-model conversion was repeated for
+this characterization.
