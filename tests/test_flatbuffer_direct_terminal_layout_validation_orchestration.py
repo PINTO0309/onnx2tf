@@ -156,10 +156,10 @@ LATE_FINAL_SHAPE_BOUNDARY_OWNER_PATH = (
 )
 LATE_FINAL_SHAPE_BOUNDARY_OWNER = "run_late_final_shape_boundary_cleanup"
 LATE_FINAL_SHAPE_TERMINAL_OWNER = (
-    "run_late_final_shape_terminal_fanout_cleanup"
+    "run_late_affine_final_shape_terminal_cleanup"
 )
 LATE_FINAL_SHAPE_BOUNDARY_RESULT = (
-    "_late_final_shape_terminal_fanout_results"
+    "_late_affine_final_shape_terminal_results"
 )
 LATE_AFFINE_CONCAT_OWNER_PATH = (
     REPO_ROOT
@@ -179,7 +179,7 @@ LATE_AFFINE_OPTIONAL_FANOUT_OWNER_PATH = (
 LATE_AFFINE_OPTIONAL_FANOUT_OWNER = (
     "run_late_affine_optional_fanout_cleanup"
 )
-LATE_AFFINE_CONCAT_RESULT = "_late_affine_optional_fanout_results"
+LATE_AFFINE_CONCAT_RESULT = "_late_affine_final_shape_terminal_results"
 TERMINAL_FANOUT_SINGLETON_OWNER_PATH = (
     REPO_ROOT
     / "onnx2tf"
@@ -189,7 +189,7 @@ TERMINAL_FANOUT_SINGLETON_OWNER_PATH = (
 )
 TERMINAL_FANOUT_SINGLETON_OWNER = "run_terminal_fanout_singleton_cleanup"
 TERMINAL_FANOUT_SINGLETON_RESULT = (
-    "_late_final_shape_terminal_fanout_results"
+    "_late_affine_final_shape_terminal_results"
 )
 TERMINAL_CONVPOOL_OUTPUT_RESULT = (
     "_terminal_convpool_output_passthrough_stats"
@@ -326,9 +326,9 @@ def _late_affine_concat_assignment(body: list[ast.stmt]) -> ast.Assign:
     )
     assert isinstance(assignment.value, ast.Call)
     assert isinstance(assignment.value.func, ast.Name)
-    assert assignment.value.func.id == LATE_AFFINE_OPTIONAL_FANOUT_OWNER
+    assert assignment.value.func.id == LATE_FINAL_SHAPE_TERMINAL_OWNER
     assert [ast.unparse(argument) for argument in assignment.value.args] == [
-        "shared_model_ir_pass_context"
+        "late_final_shape_boundary_context"
     ]
     assert {
         keyword.arg: ast.unparse(keyword.value)
@@ -1819,9 +1819,10 @@ def test_primary_path_retains_late_cost_volume_conv_affine_result() -> None:
     )
 
     following = body[late_index + 1]
-    assert isinstance(following, ast.Assign)
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == LATE_FINAL_SHAPE_BOUNDARY_RESULT
+    assert isinstance(following, ast.If)
+    assert isinstance(following.body[0], ast.Assign)
+    assert isinstance(following.body[0].targets[0], ast.Name)
+    assert following.body[0].targets[0].id == TERMINAL_CONVPOOL_OUTPUT_RESULT
     assert not any(
         isinstance(node, ast.Name)
         and node.id == "_late_cost_volume_conv_affine_stats"
@@ -1869,12 +1870,10 @@ def test_primary_path_retains_late_concat_composite_results() -> None:
     )
 
     following = body[result_index + 1]
-    assert isinstance(following, ast.Assign)
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == LATE_FINAL_SHAPE_BOUNDARY_RESULT
-    assert _call_name(_statement_call(following)) == (
-        LATE_FINAL_SHAPE_TERMINAL_OWNER
-    )
+    assert isinstance(following, ast.If)
+    assert isinstance(following.body[0], ast.Assign)
+    assert isinstance(following.body[0].targets[0], ast.Name)
+    assert following.body[0].targets[0].id == TERMINAL_CONVPOOL_OUTPUT_RESULT
 
     layout_cleanup_statements = [
         statement
@@ -2215,9 +2214,14 @@ def test_primary_path_retains_late_reshape_layout_composite() -> None:
     assert calls[0].keywords == []
 
     preceding_assignment = body[index - 1]
-    assert isinstance(preceding_assignment, ast.Assign)
-    assert isinstance(preceding_assignment.targets[0], ast.Name)
-    assert preceding_assignment.targets[0].id == LATE_AFFINE_CONCAT_RESULT
+    _assert_phase_result_record(
+        preceding_assignment,
+        phase_id="cleanup.late.ndhwc_cost_volume",
+        owner_expression=(
+            "run_late_ndhwc_cost_volume_layout_cleanup("
+            "shared_model_ir_pass_context)"
+        ),
+    )
     successor = body[index + 1]
     assert isinstance(successor, ast.If)
     assert isinstance(successor.body[0], ast.Assign)
@@ -2345,9 +2349,14 @@ def test_primary_path_retains_final_boundary_channel_layout_composite() -> None:
     ]
     assert calls[0].keywords == []
     predecessor_assignment = body[index - 1]
-    assert isinstance(predecessor_assignment, ast.Assign)
-    assert isinstance(predecessor_assignment.targets[0], ast.Name)
-    assert predecessor_assignment.targets[0].id == LATE_AFFINE_CONCAT_RESULT
+    _assert_phase_result_record(
+        predecessor_assignment,
+        phase_id="cleanup.late.ndhwc_cost_volume",
+        owner_expression=(
+            "run_late_ndhwc_cost_volume_layout_cleanup("
+            "shared_model_ir_pass_context)"
+        ),
+    )
     successor = body[index + 1]
     assert isinstance(successor, ast.If)
     assert isinstance(successor.body[0], ast.Assign)

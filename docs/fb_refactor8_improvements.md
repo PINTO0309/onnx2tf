@@ -7368,3 +7368,28 @@ and reference-based affected sequential validation report
 the deliberately absent owner module. Phase-store validation remains
 `2 passed`, the managed inventory remains 32, and the store remains exactly
 128 IDs and 128 owners. Ruff, bytecode compilation, and whitespace checks pass.
+
+## Extract late affine/final-shape/terminal cleanup
+
+`passes/late_affine_final_shape_terminal_orchestration.py` now owns the two
+characterized composites. It forwards the existing late-boundary context's
+exact `ModelIRPassContext` to late affine/optional fan-out cleanup, then
+forwards the original late-boundary context to final-shape/terminal cleanup.
+The same layout option is passed to both children, and both complete result
+objects are returned by identity.
+
+The lowerer replaces only `_late_affine_optional_fanout_results` and
+`_late_final_shape_terminal_fanout_results` with
+`_late_affine_final_shape_terminal_results`. Recorded late NDHWC cost-volume
+remains the predecessor and the terminal Conv/Pool/no-layout branch remains
+the successor. Both child owners, wrappers, graph behavior, public APIs,
+artifacts, dependencies, and TensorFlow isolation remain unchanged; only the
+two unused direct child imports are removed from the lowerer.
+
+The first affected run deliberately recorded 52 failures across 26 files; all
+were stale direct-owner, target, route, or neighbor expectations caused by the
+ownership move. After owner-aware updates, sequential validation passes:
+focused `6`, affected `433`, and standard `92 / 55 / 196 / 2 / 11`. Ruff,
+bytecode compilation, and whitespace checks pass. The phase store remains
+exactly 128 IDs and 128 owners, while the managed unconsumed-result inventory
+decreases from 32 to 31.

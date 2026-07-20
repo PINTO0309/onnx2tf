@@ -34,9 +34,9 @@ COMPOSITE_PATH = (
     / "final_boundary_slice_concat_orchestration.py"
 )
 COMPOSITE_OWNER = "run_final_boundary_slice_concat_cleanup"
-COMPOSITE_TARGET = "_late_final_shape_terminal_fanout_results"
+COMPOSITE_TARGET = "_late_affine_final_shape_terminal_results"
 RESULT_TARGET = "_terminal_concat_bridge_layout_results"
-PREDECESSOR_TARGET = "_late_affine_optional_fanout_results"
+PREDECESSOR_PHASE_ID = "cleanup.late.ndhwc_cost_volume"
 SUCCESSOR_TARGET = "_terminal_convpool_output_passthrough_stats"
 OLD_RESULT_TARGETS = (
     "_terminal_relu_split_all_outputs_stats",
@@ -116,13 +116,13 @@ def test_terminal_concat_bridge_cluster_uses_composite_result_outside_store() ->
     )
     index = lowerer.body.index(assignment)
     assert ast.unparse(assignment.value) == (
-        "run_late_final_shape_terminal_fanout_cleanup("
+        "run_late_affine_final_shape_terminal_cleanup("
         "late_final_shape_boundary_context, "
         "include_elementwise_fanout=optimize_layout_transpose_chains)"
     )
     predecessor = lowerer.body[index - 1]
-    assert isinstance(predecessor, ast.Assign)
-    assert _single_target(predecessor) == PREDECESSOR_TARGET
+    assert isinstance(predecessor, ast.Expr)
+    assert ast.literal_eval(predecessor.value.args[0]) == PREDECESSOR_PHASE_ID
     successor = lowerer.body[index + 1]
     assert isinstance(successor, ast.If)
     assert ast.unparse(successor.test) == "optimize_layout_transpose_chains"
@@ -165,13 +165,13 @@ def test_terminal_concat_bridge_cluster_uses_one_composite_owner() -> None:
     assignment = assignments[0]
     index = lowerer.body.index(assignment)
     assert ast.unparse(assignment.value) == (
-        "run_late_final_shape_terminal_fanout_cleanup("
+        "run_late_affine_final_shape_terminal_cleanup("
         "late_final_shape_boundary_context, "
         "include_elementwise_fanout=optimize_layout_transpose_chains)"
     )
     predecessor = lowerer.body[index - 1]
-    assert isinstance(predecessor, ast.Assign)
-    assert _single_target(predecessor) == PREDECESSOR_TARGET
+    assert isinstance(predecessor, ast.Expr)
+    assert ast.literal_eval(predecessor.value.args[0]) == PREDECESSOR_PHASE_ID
     successor = lowerer.body[index + 1]
     assert isinstance(successor, ast.If)
     assert ast.unparse(successor.test) == "optimize_layout_transpose_chains"

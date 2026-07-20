@@ -44,7 +44,7 @@ COMPOSITE_PATH = (
     / "final_boundary_slice_concat_orchestration.py"
 )
 COMPOSITE_OWNER = "run_final_boundary_slice_concat_cleanup"
-COMPOSITE_TARGET = "_late_final_shape_terminal_fanout_results"
+COMPOSITE_TARGET = "_late_affine_final_shape_terminal_results"
 RESULT_TARGETS = (
     "_terminal_slice_concat_recovery_results",
     "_final_slice_concat_recovery_results",
@@ -420,8 +420,10 @@ def test_terminal_slice_concat_recovery_preserves_outer_boundaries() -> None:
     )
     index = lowerer.body.index(composite)
     predecessor = lowerer.body[index - 1]
-    assert isinstance(predecessor, ast.Assign)
-    assert _single_target(predecessor) == "_late_affine_optional_fanout_results"
+    assert isinstance(predecessor, ast.Expr)
+    assert ast.literal_eval(predecessor.value.args[0]) == (
+        "cleanup.late.ndhwc_cost_volume"
+    )
     successor = lowerer.body[index + 1]
     assert isinstance(successor, ast.If)
     assert _single_target(successor.body[0]) == (

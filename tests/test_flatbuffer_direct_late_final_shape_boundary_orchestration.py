@@ -39,6 +39,7 @@ CONVERGENCE_OWNER_PATH = (
 )
 OWNER = "run_late_final_shape_boundary_cleanup"
 LOWERER_OWNER = "run_late_final_shape_terminal_fanout_cleanup"
+OUTER_OWNER = "run_late_affine_final_shape_terminal_cleanup"
 CONVERGENCE_OWNER = "run_indexed_final_shape_activation_convergence"
 CHILD_OWNERS = (
     "run_late_reshape_shuffle_attention_window_cleanup",
@@ -50,8 +51,8 @@ RESULT_TARGETS = (
     "_late_final_shape_activation_convergence_stats",
     "_final_boundary_slice_concat_results",
 )
-COMPOSITE_TARGET = "_late_final_shape_terminal_fanout_results"
-PREDECESSOR_TARGET = "_late_affine_optional_fanout_results"
+COMPOSITE_TARGET = "_late_affine_final_shape_terminal_results"
+PREDECESSOR_PHASE_ID = "cleanup.late.ndhwc_cost_volume"
 SUCCESSOR_TARGET = "_terminal_convpool_output_passthrough_stats"
 CONVERGENCE_KEYS = (
     "removed_dead_operators",
@@ -100,6 +101,18 @@ def _single_target(statement: ast.stmt) -> str | None:
     return target.id if isinstance(target, ast.Name) else None
 
 
+def _phase_id(statement: ast.stmt) -> str | None:
+    call = _call(statement)
+    if (
+        call is None
+        or not isinstance(call.func, ast.Attribute)
+        or ast.unparse(call.func) != "session.record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
+
+
 def test_late_final_shape_boundary_current_order_context_and_schema() -> None:
     lowerer = _lowerer()
     assignment = next(
@@ -108,7 +121,7 @@ def test_late_final_shape_boundary_current_order_context_and_schema() -> None:
         if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == LOWERER_OWNER
+    assert _call_name(assignment) == OUTER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
@@ -122,8 +135,7 @@ def test_late_final_shape_boundary_current_order_context_and_schema() -> None:
 
     predecessor = lowerer.body[index - 1]
     successor = lowerer.body[index + 1]
-    assert isinstance(predecessor, ast.Assign)
-    assert _single_target(predecessor) == PREDECESSOR_TARGET
+    assert _phase_id(predecessor) == PREDECESSOR_PHASE_ID
     assert isinstance(successor, ast.If)
     assert ast.unparse(successor.test) == "optimize_layout_transpose_chains"
     assert _single_target(successor.body[0]) == SUCCESSOR_TARGET
@@ -226,7 +238,7 @@ def test_late_final_shape_boundary_has_one_context_owner() -> None:
         if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == LOWERER_OWNER
+    assert _call_name(assignment) == OUTER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
@@ -237,7 +249,7 @@ def test_late_final_shape_boundary_has_one_context_owner() -> None:
     } == {
         "include_elementwise_fanout": "optimize_layout_transpose_chains"
     }
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
     successor = lowerer.body[index + 1]
     assert isinstance(successor, ast.If)
     assert _single_target(successor.body[0]) == SUCCESSOR_TARGET

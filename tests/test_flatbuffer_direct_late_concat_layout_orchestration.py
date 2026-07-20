@@ -31,8 +31,8 @@ OUTER_OWNER_PATH = (
     / "late_affine_concat_orchestration.py"
 )
 OUTER_OWNER = "run_late_affine_concat_cleanup"
-LOWERER_OWNER = "run_late_affine_optional_fanout_cleanup"
-LOWERER_RESULT_TARGET = "_late_affine_optional_fanout_results"
+LOWERER_OWNER = "run_late_affine_final_shape_terminal_cleanup"
+LOWERER_RESULT_TARGET = "_late_affine_final_shape_terminal_results"
 SCOPE_TARGET = "late_concat_layout_state_scope"
 PREDECESSOR_PHASE_ID = "cleanup.late.ndhwc_cost_volume"
 OLD_RESULT_TARGETS = (
@@ -105,14 +105,15 @@ def test_late_concat_layout_cluster_uses_one_composite_result_outside_store() ->
     )
     index = lowerer.body.index(assignment)
     assert ast.unparse(assignment.value) == (
-        "run_late_affine_optional_fanout_cleanup("
-        "shared_model_ir_pass_context, "
+        "run_late_affine_final_shape_terminal_cleanup("
+        "late_final_shape_boundary_context, "
         "include_elementwise_fanout=optimize_layout_transpose_chains)"
     )
     assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
     successor = lowerer.body[index + 1]
-    assert _single_target(successor) == (
-        "_late_final_shape_terminal_fanout_results"
+    assert isinstance(successor, ast.If)
+    assert _single_target(successor.body[0]) == (
+        "_terminal_convpool_output_passthrough_stats"
     )
     assert len(_outer_calls()) == 1
     assert [ast.unparse(argument) for argument in _outer_calls()[0].args] == [
@@ -156,13 +157,15 @@ def test_late_concat_layout_cluster_uses_one_composite_owner() -> None:
     assignment = assignments[0]
     index = lowerer.body.index(assignment)
     assert ast.unparse(assignment.value) == (
-        "run_late_affine_optional_fanout_cleanup("
-        "shared_model_ir_pass_context, "
+        "run_late_affine_final_shape_terminal_cleanup("
+        "late_final_shape_boundary_context, "
         "include_elementwise_fanout=optimize_layout_transpose_chains)"
     )
     assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
-    assert _single_target(lowerer.body[index + 1]) == (
-        "_late_final_shape_terminal_fanout_results"
+    successor = lowerer.body[index + 1]
+    assert isinstance(successor, ast.If)
+    assert _single_target(successor.body[0]) == (
+        "_terminal_convpool_output_passthrough_stats"
     )
     assert len(_outer_calls()) == 1
     assert not any(

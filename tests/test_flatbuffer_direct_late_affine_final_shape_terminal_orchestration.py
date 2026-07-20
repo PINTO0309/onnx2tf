@@ -9,6 +9,9 @@ import pytest
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import (
+    late_affine_final_shape_terminal_orchestration,
+)
 from onnx2tf.tflite_builder.passes.late_affine_optional_fanout_orchestration import (
     run_late_affine_optional_fanout_cleanup,
 )
@@ -167,38 +170,24 @@ def _dict_schema(values: tuple[Any, ...]) -> tuple[tuple[str, ...], ...]:
 
 def test_late_affine_final_shape_terminal_current_contract() -> None:
     lowerer = _lowerer()
-    affine_assignment = next(
+    assignment = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == RESULT_TARGETS[0]
+        if _single_target(statement) == COMPOSITE_TARGET
     )
-    index = lowerer.body.index(affine_assignment)
-    assert _call_name(affine_assignment) == CHILD_OWNERS[0]
-    affine_call = _call(affine_assignment)
-    assert affine_call is not None
-    assert [ast.unparse(argument) for argument in affine_call.args] == [
-        "shared_model_ir_pass_context"
-    ]
-    assert {
-        keyword.arg: ast.unparse(keyword.value)
-        for keyword in affine_call.keywords
-    } == {"include_elementwise_fanout": GUARD}
-    assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
-
-    final_assignment = lowerer.body[index + 1]
-    assert _single_target(final_assignment) == RESULT_TARGETS[1]
-    assert _call_name(final_assignment) == CHILD_OWNERS[1]
-    final_call = _call(final_assignment)
-    assert final_call is not None
-    assert [ast.unparse(argument) for argument in final_call.args] == [
+    index = lowerer.body.index(assignment)
+    assert _call_name(assignment) == OWNER
+    call = _call(assignment)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == [
         CONTEXT_TARGET
     ]
     assert {
         keyword.arg: ast.unparse(keyword.value)
-        for keyword in final_call.keywords
+        for keyword in call.keywords
     } == {"include_elementwise_fanout": GUARD}
-
-    successor_guard = lowerer.body[index + 2]
+    assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
+    successor_guard = lowerer.body[index + 1]
     assert isinstance(successor_guard, ast.If)
     assert ast.unparse(successor_guard.test) == GUARD
     assert _single_target(successor_guard.body[0]) == SUCCESSOR_TARGET
@@ -268,10 +257,6 @@ def test_late_affine_final_shape_terminal_child_schemas_and_contexts(
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="late affine/final-shape/terminal owner is not implemented",
-)
 def test_late_affine_final_shape_terminal_has_one_context_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -332,3 +317,51 @@ def test_late_affine_final_shape_terminal_has_one_context_owner() -> None:
         and "lower_from_onnx2tf" in ast.unparse(node)
         for node in ast.parse(OWNER_PATH.read_text(encoding="utf-8")).body
     )
+
+
+@pytest.mark.parametrize("include_elementwise_fanout", [False, True])
+def test_late_affine_final_shape_terminal_runtime_order_and_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    include_elementwise_fanout: bool,
+) -> None:
+    context = _context(
+        f"late_affine_final_shape_terminal_runtime_{include_elementwise_fanout}"
+    )
+    affine_results = ({"affine": 1}, {"fanout": 2})
+    final_results = ({"final": 3}, {"terminal": 4})
+    expected_results = (affine_results, final_results)
+    observed: list[tuple[str, object, dict[str, object]]] = []
+
+    def affine(active_context: object, **options: object) -> object:
+        observed.append((CHILD_OWNERS[0], active_context, options))
+        return affine_results
+
+    def final(active_context: object, **options: object) -> object:
+        observed.append((CHILD_OWNERS[1], active_context, options))
+        return final_results
+
+    monkeypatch.setattr(
+        late_affine_final_shape_terminal_orchestration,
+        CHILD_OWNERS[0],
+        affine,
+    )
+    monkeypatch.setattr(
+        late_affine_final_shape_terminal_orchestration,
+        CHILD_OWNERS[1],
+        final,
+    )
+
+    actual = late_affine_final_shape_terminal_orchestration.run_late_affine_final_shape_terminal_cleanup(
+        context,
+        include_elementwise_fanout=include_elementwise_fanout,
+    )
+    assert actual == expected_results
+    assert actual[0] is affine_results
+    assert actual[1] is final_results
+    expected_options = {
+        "include_elementwise_fanout": include_elementwise_fanout
+    }
+    assert observed == [
+        (CHILD_OWNERS[0], context.pass_context, expected_options),
+        (CHILD_OWNERS[1], context, expected_options),
+    ]

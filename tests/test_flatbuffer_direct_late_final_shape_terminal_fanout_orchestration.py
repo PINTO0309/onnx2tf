@@ -36,6 +36,7 @@ OWNER_PATH = (
     / "late_final_shape_terminal_fanout_orchestration.py"
 )
 OWNER = "run_late_final_shape_terminal_fanout_cleanup"
+LOWERER_OWNER = "run_late_affine_final_shape_terminal_cleanup"
 CHILD_OWNERS = (
     "run_late_final_shape_boundary_cleanup",
     "run_terminal_fanout_singleton_cleanup",
@@ -44,8 +45,8 @@ RESULT_TARGETS = (
     "_late_final_shape_boundary_results",
     "_terminal_fanout_singleton_results",
 )
-COMPOSITE_TARGET = "_late_final_shape_terminal_fanout_results"
-PREDECESSOR_TARGET = "_late_affine_optional_fanout_results"
+COMPOSITE_TARGET = "_late_affine_final_shape_terminal_results"
+PREDECESSOR_PHASE_ID = "cleanup.late.ndhwc_cost_volume"
 SUCCESSOR_TARGET = "_terminal_convpool_output_passthrough_stats"
 SUCCESSOR_OWNER = (
     "_optimize_convpool_output_transpose_nhwc_passthrough_chains"
@@ -87,6 +88,18 @@ def _single_target(statement: ast.stmt) -> str | None:
     return target.id if isinstance(target, ast.Name) else None
 
 
+def _phase_id(statement: ast.stmt) -> str | None:
+    call = _call(statement)
+    if (
+        call is None
+        or not isinstance(call.func, ast.Attribute)
+        or ast.unparse(call.func) != "session.record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
+
+
 def _context(name: str) -> LateFinalShapeBoundaryContext:
     model_ir = ModelIR(name)
     pass_context = ModelIRPassContext(
@@ -117,7 +130,7 @@ def test_late_final_shape_terminal_fanout_current_contract() -> None:
         if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == OWNER
+    assert _call_name(assignment) == LOWERER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
@@ -127,7 +140,7 @@ def test_late_final_shape_terminal_fanout_current_contract() -> None:
         keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
     } == {"include_elementwise_fanout": GUARD}
 
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
     successor_guard = lowerer.body[index + 1]
     assert isinstance(successor_guard, ast.If)
     assert ast.unparse(successor_guard.test) == GUARD
@@ -244,7 +257,7 @@ def test_late_final_shape_terminal_fanout_has_one_context_owner() -> None:
         if _single_target(statement) == COMPOSITE_TARGET
     )
     index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == OWNER
+    assert _call_name(assignment) == LOWERER_OWNER
     call = _call(assignment)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
@@ -253,7 +266,7 @@ def test_late_final_shape_terminal_fanout_has_one_context_owner() -> None:
     assert {
         keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
     } == {"include_elementwise_fanout": GUARD}
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
     successor_guard = lowerer.body[index + 1]
     assert isinstance(successor_guard, ast.If)
     assert ast.unparse(successor_guard.test) == GUARD

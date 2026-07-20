@@ -16,7 +16,7 @@ CONVPOOL_OUTPUT = (
     "_optimize_convpool_output_transpose_nhwc_passthrough_chains"
 )
 OWNER_NAME = "optimize_convpool_output_transpose_nhwc_passthrough_chains"
-TERMINAL_FANOUT_SINGLETON = "run_late_final_shape_terminal_fanout_cleanup"
+TERMINAL_FANOUT_SINGLETON = "run_late_affine_final_shape_terminal_cleanup"
 SAFE_REDUCTION = "_apply_safe_transpose_reduction_lite"
 MUL_ADD_CONST = "_optimize_transpose_mul_add_const_prepost_nhwc_chains"
 DEQUANT_HARDSIGMOID = (

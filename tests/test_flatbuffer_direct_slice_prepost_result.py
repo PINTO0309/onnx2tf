@@ -25,8 +25,8 @@ RESULT_TARGET = "_final_slice_prepost_passthrough_stats"
 PREVIOUS_TARGET = "_late_final_shape_activation_convergence_stats"
 COMPOSITE_TARGET = "_final_boundary_slice_concat_results"
 COMPOSITE_OWNER = "run_final_boundary_slice_concat_cleanup"
-OUTER_COMPOSITE_TARGET = "_late_final_shape_terminal_fanout_results"
-OUTER_COMPOSITE_OWNER = "run_late_final_shape_terminal_fanout_cleanup"
+OUTER_COMPOSITE_TARGET = "_late_affine_final_shape_terminal_results"
+OUTER_COMPOSITE_OWNER = "run_late_affine_final_shape_terminal_cleanup"
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -122,8 +122,10 @@ def test_final_slice_prepost_result_moves_to_final_pair_composite() -> None:
     assert isinstance(composite.value.func, ast.Name)
     assert composite.value.func.id == OUTER_COMPOSITE_OWNER
     predecessor = lowerer.body[composite_index - 1]
-    assert isinstance(predecessor, ast.Assign)
-    assert _single_target(predecessor) == "_late_affine_optional_fanout_results"
+    assert isinstance(predecessor, ast.Expr)
+    assert ast.literal_eval(predecessor.value.args[0]) == (
+        "cleanup.late.ndhwc_cost_volume"
+    )
     successor = lowerer.body[composite_index + 1]
     assert isinstance(successor, ast.If)
     assert _single_target(successor.body[0]) == (

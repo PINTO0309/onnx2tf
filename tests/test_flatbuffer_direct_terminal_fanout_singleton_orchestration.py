@@ -32,7 +32,7 @@ OWNER_PATH = (
     / "terminal_fanout_singleton_orchestration.py"
 )
 OWNER = "run_terminal_fanout_singleton_cleanup"
-LOWERER_OWNER = "run_late_final_shape_terminal_fanout_cleanup"
+LOWERER_OWNER = "run_late_affine_final_shape_terminal_cleanup"
 CHILD_OWNERS = (
     "optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains",
     "run_terminal_singleton_maxpool_reshape",
@@ -45,9 +45,8 @@ RESULT_TARGETS = (
     "_terminal_elementwise_fanout_stats",
     "_terminal_singleton_maxpool_reshape_results",
 )
-COMPOSITE_TARGET = "_late_final_shape_terminal_fanout_results"
-PREDECESSOR_TARGET = "_late_affine_optional_fanout_results"
-PREDECESSOR_OWNER = "run_late_affine_optional_fanout_cleanup"
+COMPOSITE_TARGET = "_late_affine_final_shape_terminal_results"
+PREDECESSOR_PHASE_ID = "cleanup.late.ndhwc_cost_volume"
 SUCCESSOR_TARGET = "_terminal_convpool_output_passthrough_stats"
 SUCCESSOR_OWNER = (
     "_optimize_convpool_output_transpose_nhwc_passthrough_chains"
@@ -102,6 +101,18 @@ def _single_target(statement: ast.stmt) -> str | None:
     return target.id if isinstance(target, ast.Name) else None
 
 
+def _phase_id(statement: ast.stmt) -> str | None:
+    call = _call(statement)
+    if (
+        call is None
+        or not isinstance(call.func, ast.Attribute)
+        or ast.unparse(call.func) != "session.record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
+
+
 def _context() -> ModelIRPassContext:
     model_ir = ModelIR("terminal_fanout_singleton_schema")
     return ModelIRPassContext(
@@ -135,8 +146,7 @@ def test_terminal_fanout_singleton_current_contract() -> None:
     } == {"include_elementwise_fanout": GUARD}
 
     predecessor = lowerer.body[index - 1]
-    assert _single_target(predecessor) == PREDECESSOR_TARGET
-    assert _call_name(predecessor) == PREDECESSOR_OWNER
+    assert _phase_id(predecessor) == PREDECESSOR_PHASE_ID
 
     successor_guard = lowerer.body[index + 1]
     assert isinstance(successor_guard, ast.If)
@@ -246,8 +256,7 @@ def test_terminal_fanout_singleton_has_one_optional_context_owner() -> None:
     assert {
         keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords
     } == {"include_elementwise_fanout": GUARD}
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
-    assert _call_name(lowerer.body[index - 1]) == PREDECESSOR_OWNER
+    assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
     successor_guard = lowerer.body[index + 1]
     assert isinstance(successor_guard, ast.If)
     assert ast.unparse(successor_guard.test) == GUARD

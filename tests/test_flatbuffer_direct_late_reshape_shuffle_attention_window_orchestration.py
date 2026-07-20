@@ -51,9 +51,9 @@ RESULT_TARGETS = (
     "_late_attention_layout_results",
     "_late_window_layout_results",
 )
-COMPOSITE_TARGET = "_late_final_shape_terminal_fanout_results"
-OUTER_OWNER = "run_late_final_shape_terminal_fanout_cleanup"
-PREDECESSOR_TARGET = "_late_affine_optional_fanout_results"
+COMPOSITE_TARGET = "_late_affine_final_shape_terminal_results"
+OUTER_OWNER = "run_late_affine_final_shape_terminal_cleanup"
+PREDECESSOR_PHASE_ID = "cleanup.late.ndhwc_cost_volume"
 SUCCESSOR_TARGET = "_terminal_convpool_output_passthrough_stats"
 
 
@@ -89,6 +89,18 @@ def _single_target(statement: ast.stmt) -> str | None:
     return target.id if isinstance(target, ast.Name) else None
 
 
+def _phase_id(statement: ast.stmt) -> str | None:
+    call = _call(statement)
+    if (
+        call is None
+        or not isinstance(call.func, ast.Attribute)
+        or ast.unparse(call.func) != "session.record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
+
+
 def test_late_reshape_shuffle_attention_window_current_boundary_and_schema() -> None:
     lowerer = _lowerer()
     assignment = next(
@@ -109,8 +121,7 @@ def test_late_reshape_shuffle_attention_window_current_boundary_and_schema() -> 
         "include_elementwise_fanout": "optimize_layout_transpose_chains"
     }
     predecessor = lowerer.body[index - 1]
-    assert isinstance(predecessor, ast.Assign)
-    assert _single_target(predecessor) == PREDECESSOR_TARGET
+    assert _phase_id(predecessor) == PREDECESSOR_PHASE_ID
     successor = lowerer.body[index + 1]
     assert isinstance(successor, ast.If)
     assert ast.unparse(successor.test) == "optimize_layout_transpose_chains"
@@ -226,7 +237,7 @@ def test_late_reshape_shuffle_attention_window_has_one_context_owner() -> None:
     } == {
         "include_elementwise_fanout": "optimize_layout_transpose_chains"
     }
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
     successor = lowerer.body[index + 1]
     assert isinstance(successor, ast.If)
     assert ast.unparse(successor.test) == "optimize_layout_transpose_chains"
