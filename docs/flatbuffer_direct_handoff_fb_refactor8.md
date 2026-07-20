@@ -7602,3 +7602,42 @@ callback identities, child schemas, and independent routes before changing
 production. Continue with sequential `uv` validation and complete checkpoint
 commits/pushes only. Do not create, update, reopen, or otherwise modify a pull
 request.
+
+## Very-late SiNet residual-affine/PReLU characterization checkpoint
+
+The refreshed inventory contains 30 raw and 28 managed unconsumed lowerer
+results after excluding the two intentionally retained layout-pass-set-1
+recovery-prefix observations. The selected boundary starts with
+`_very_late_sinet_recovery_tail_results` and ends with the immediately
+following recorded `cleanup.very_late.residual_affine_prelu` pass. The
+recorded indexed-convergence predecessor and residual-affine fan-out successor
+remain outside it.
+
+The future `run_very_late_sinet_residual_affine_prelu_cleanup()` owner receives
+the exact existing `SINetTerminalLayoutRecoveryContext`. It forwards that
+context to `run_very_late_sinet_recovery_tail_cleanup()`, then calls public
+`optimize_transpose_pre_add_mul_add_prelu_nhwc_chains()` with
+`context.pass_context.model_ir`. It returns both complete raw results. The
+lowerer must supply returned element `[1]` directly to the unchanged phase
+record rather than retaining another unconsumed local. This should reduce the
+raw and managed inventories from 30/28 to 29/27 while keeping all fan-out
+mutations after the observation point.
+
+Focused sequential validation reports `3 passed, 1 xfailed`; the fixed
+15-file affected suite reports `359 passed, 1 xfailed`. The sole expected
+failure requires the intentionally absent future owner. Phase-store validation
+is `2 passed`; production remains unchanged, the raw/managed inventory remains
+30/28, and the store remains exactly 128 calls, 128 unique IDs, and 128 owners.
+Ruff, bytecode compilation, and whitespace checks pass. No real-model
+conversion was repeated for this characterization.
+
+At resume, implement only the characterized two-child owner. Replace the
+current very-late SiNet assignment and PReLU owner expression with
+`run_very_late_sinet_residual_affine_prelu_cleanup(`
+`sinet_terminal_layout_recovery_context)[1]`, preserve the recorded phase ID
+and exact predecessor/successor, retain both child owners and the lowerer
+compatibility wrapper, and add runtime order/context/model/result-identity
+coverage. Run the fixed affected suite once before updating stale structural
+expectations, then run all affected and standard gates sequentially under
+`uv`, confirm the expected 29/27 inventory, and commit and push the complete
+unit. Do not create, update, reopen, or otherwise modify a pull request.

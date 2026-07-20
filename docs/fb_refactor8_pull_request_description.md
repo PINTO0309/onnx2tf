@@ -2131,3 +2131,17 @@ owner-aware updates, focused `5`, affected `352`, and standard
 and 28 managed unconsumed lowerer results, zero old selected-target stores, one
 new indexed owner expression, and exactly 128 phase calls, unique IDs, and
 owners.
+
+The next characterization freezes the unconsumed very-late SiNet recovery tail
+together with its immediately following recorded residual-affine/PReLU pass.
+The future owner will reuse the exact existing SiNet terminal context and call
+the public PReLU implementation with its embedded model; the lowerer will
+record returned element `[1]` at the unchanged phase position. The boundary
+stops before residual-affine fan-out, preserving graph mutation and observation
+order.
+
+Focused and reference-based affected sequential validation report
+`3 passed, 1 xfailed` and `359 passed, 1 xfailed` across 15 files. Only the
+intentionally absent future owner is xfailed. Phase-store validation remains
+`2 passed`, production remains unchanged, the raw/managed inventory remains
+30/28, and the store remains exactly 128 calls, 128 unique IDs, and 128 owners.

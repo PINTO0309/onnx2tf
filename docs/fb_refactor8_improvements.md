@@ -7572,3 +7572,30 @@ managed unconsumed lowerer results, zero old selected-target stores, one new
 indexed owner expression, and exactly 128 phase calls, 128 unique IDs, and 128
 owners. No real-model conversion was repeated for this ownership-only
 extraction.
+
+## Characterize very-late SiNet residual-affine/PReLU cleanup
+
+The managed 28-result inventory next selects the unconsumed very-late SiNet
+recovery-tail result and its immediately following recorded residual-affine/
+PReLU pass. A future owner can run the existing SiNet tail with the exact
+`SINetTerminalLayoutRecoveryContext`, then call the public residual-affine/
+PReLU owner with `context.pass_context.model_ir`. The lowerer can record
+returned element `[1]` directly without retaining another observation-only
+composite result.
+
+The boundary deliberately stops before the recorded residual-affine fan-out
+pass, so no later graph mutation crosses the unchanged
+`cleanup.very_late.residual_affine_prelu` observation point. The strict
+contract fixes the preceding indexed-convergence phase, successor fan-out
+phase, complete nested SiNet schema, one-key PReLU mapping, exact context/model
+identity, public-owner route, retained lowerer wrapper, and both independent
+child routes.
+
+Production remains unchanged pending one two-child context owner. Focused and
+reference-based affected sequential validation report
+`3 passed, 1 xfailed` and `359 passed, 1 xfailed` across 15 files; the sole
+expected failure is the deliberately absent future owner. Phase-store
+validation is `2 passed`, the raw/managed inventory remains 30/28, and the
+store remains exactly 128 calls, 128 unique IDs, and 128 owners. Ruff,
+bytecode compilation, and whitespace checks pass. No real-model conversion
+was repeated for this characterization.
