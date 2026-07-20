@@ -2527,8 +2527,37 @@ def test_lowerer_qkv_attention_pair_reuses_one_pass_state_scope() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == helper_name
     ]
-    assert len(helper_invocations) == 2
+    assert len(helper_invocations) == 1
     assert all(call.args == [] and call.keywords == [] for call in helper_invocations)
+
+    post_sinet_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "post_sinet_qkv_relu_split_all_orchestration.py"
+    )
+    post_sinet_tree = ast.parse(
+        post_sinet_path.read_text(encoding="utf-8")
+    )
+    post_sinet_owner = next(
+        node
+        for node in post_sinet_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_post_sinet_qkv_relu_split_all_cleanup"
+    )
+    post_sinet_calls = [
+        node
+        for node in ast.walk(post_sinet_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_qkv_attention"
+    ]
+    assert len(post_sinet_calls) == 1
+    assert [ast.unparse(argument) for argument in post_sinet_calls[0].args] == [
+        "context"
+    ]
+    assert post_sinet_calls[0].keywords == []
 
     summary_invocations = [
         node
@@ -18206,7 +18235,34 @@ def test_indexed_split_adapter_owners_are_bounded_and_transactional() -> None:
             and isinstance(node.func, ast.Name)
             and node.func.id == wrapper_name
         ]
-        assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 2
+        post_sinet_owner_calls = 0
+        if wrapper_name == (
+            "_optimize_transpose_relu_split_all_outputs_to_nhwc_chains"
+        ):
+            post_sinet_path = (
+                REPO_ROOT
+                / "onnx2tf"
+                / "tflite_builder"
+                / "passes"
+                / "post_sinet_qkv_relu_split_all_orchestration.py"
+            )
+            post_sinet_tree = ast.parse(
+                post_sinet_path.read_text(encoding="utf-8")
+            )
+            public_owner_name = wrapper_name.removeprefix("_")
+            post_sinet_owner_calls = sum(
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == public_owner_name
+                for node in ast.walk(post_sinet_tree)
+            )
+            assert post_sinet_owner_calls == 1
+        assert (
+            len(production_calls)
+            + _orchestrated_pass_count(wrapper_name)
+            + post_sinet_owner_calls
+            == 2
+        )
         for production_call in production_calls:
             layout_keyword = next(
                 keyword

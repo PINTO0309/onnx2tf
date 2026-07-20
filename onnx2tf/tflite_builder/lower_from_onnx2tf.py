@@ -283,6 +283,9 @@ from onnx2tf.tflite_builder.passes.absolute_final_cleanup_orchestration import (
 from onnx2tf.tflite_builder.passes.qkv_attention_orchestration import (
     run_qkv_attention,
 )
+from onnx2tf.tflite_builder.passes.post_sinet_qkv_relu_split_all_orchestration import (
+    run_post_sinet_qkv_relu_split_all_cleanup,
+)
 from onnx2tf.tflite_builder.passes.duplicate_quantized_prelu_orchestration import (
     run_duplicate_quantized_prelu,
 )
@@ -4923,15 +4926,11 @@ def lower_onnx_to_ir(
         "cleanup.post_sinet.batchmatmul_adj_flags",
         _optimize_batchmatmul_transpose_input_to_adj_flags(model_ir),
     )
-    _post_sinet_qkv_attention_results = (
-        _run_qkv_attention_layout_pass_cluster()
-    )
     session.record_phase_result(
         "cleanup.post_sinet.relu_split_all_outputs",
-        _optimize_transpose_relu_split_all_outputs_to_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-        ),
+        run_post_sinet_qkv_relu_split_all_cleanup(
+            shared_model_ir_pass_context,
+        )[1],
     )
     session.record_phase_result(
         "cleanup.post_sinet.relu_split_conv_concat",

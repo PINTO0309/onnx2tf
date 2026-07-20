@@ -303,10 +303,14 @@ def test_post_sinet_batchmatmul_results_use_phase_result_store() -> None:
         "cleanup.post_cleanup.sa_pa_mirrorpad",
     )
     successor = lowerer.body[indices[-1] + 1]
-    assert isinstance(successor, ast.Assign)
-    assert len(successor.targets) == 1
-    assert isinstance(successor.targets[0], ast.Name)
-    assert successor.targets[0].id == "_post_sinet_qkv_attention_results"
+    _assert_phase_result_record(
+        successor,
+        "cleanup.post_sinet.relu_split_all_outputs",
+    )
+    assert ast.unparse(successor.value.args[1]) == (
+        "run_post_sinet_qkv_relu_split_all_cleanup("
+        "shared_model_ir_pass_context)[1]"
+    )
     assert not any(
         isinstance(node, ast.Name)
         and node.id in POST_SINET_RESULT_TARGETS

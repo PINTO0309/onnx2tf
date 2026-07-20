@@ -37,8 +37,8 @@ POST_SINET_PHASE_IDS = (
 )
 POST_SINET_OWNER_EXPRESSIONS = (
     (
-        "_optimize_transpose_relu_split_all_outputs_to_nhwc_chains("
-        "model_ir, layout_state=session.layout_state)"
+        "run_post_sinet_qkv_relu_split_all_cleanup("
+        "shared_model_ir_pass_context)[1]"
     ),
     (
         "_optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains("
@@ -204,7 +204,9 @@ def test_lowerer_records_post_sinet_relu_split_conv_concat_result() -> None:
     assert _phase_id(first_previous) == (
         "cleanup.post_sinet.relu_split_all_outputs"
     )
-    assert _call_name(first_previous) == RELU_SPLIT_ALL
+    assert ast.unparse(first_previous.value.args[1]) == (
+        POST_SINET_OWNER_EXPRESSIONS[0]
+    )
     assert _phase_id(first_following) == (
         "cleanup.post_sinet.split_conv_concat_bridge"
     )
@@ -227,7 +229,7 @@ def test_post_sinet_relu_split_results_use_phase_result_store() -> None:
     )
     assert indices == list(range(indices[0], indices[0] + 3))
     predecessor = lowerer.body[indices[0] - 1]
-    assert _single_target(predecessor) == "_post_sinet_qkv_attention_results"
+    assert _phase_id(predecessor) == "cleanup.post_sinet.batchmatmul_adj_flags"
     successor = lowerer.body[indices[-1] + 1]
     assert _phase_id(successor) == "cleanup.post_sinet.mix_attention"
     assert not any(

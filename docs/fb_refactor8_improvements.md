@@ -7724,3 +7724,37 @@ the deliberately absent future owner. The raw/managed inventory remains 28/26
 and the phase store remains exactly 128 calls, 128 unique IDs, and 128 owner
 expressions. Ruff, bytecode compilation, and whitespace checks pass. No
 real-model conversion was repeated for this characterization.
+
+## Extract post-SiNet QKV/ReLU-Split-all cleanup
+
+`run_post_sinet_qkv_relu_split_all_cleanup()` now owns the characterized
+boundary. It receives the existing shared `ModelIRPassContext`, calls
+`run_qkv_attention(context)` with the unchanged default option policy, then
+calls the public ReLU/Split-all owner with the exact `context.model_ir` and
+`context.layout_state`. It returns both complete child results by identity.
+Runtime injection coverage fixes order, context/model/layout identity, default
+option forwarding, and result identity.
+
+The lowerer removes `_post_sinet_qkv_attention_results` and records returned
+element `[1]` directly under the unchanged
+`cleanup.post_sinet.relu_split_all_outputs` phase ID. The post-SiNet
+BatchMatMul adjacent-flags record remains the immediate predecessor and the
+ReLU/Split/Conv/Concat record remains the immediate successor. Both children,
+the retained lowerer wrappers, the independent terminal QKV route, public
+interfaces, artifacts, dependencies, and TensorFlow isolation remain intact.
+
+The first fixed 10-file affected run was intentionally captured before stale
+structural assertions were updated and reported `293 passed / 10 failed`, with
+failures across 6 files. Every failure was an obsolete top-level QKV target,
+direct ReLU wrapper, route count, phase owner, or neighboring-boundary
+expectation caused by the ownership move; runtime identity and child schemas
+remained green. After owner-aware updates, focused `5`, fixed affected `303`,
+and standard `92 / 55 / 196 / 2 / 11` sequential tests pass. Ruff, bytecode
+compilation, and whitespace checks pass.
+
+The read-only AST audit reports 27 raw and 25 managed unconsumed lowerer
+results after excluding the two intentionally retained layout-pass-set-1
+recovery-prefix observations. The removed target has zero stores, the new
+owner expression occurs once, and the phase store remains exactly 128 calls,
+128 unique IDs, and 128 owner expressions. No real-model conversion was
+repeated for this ownership-only extraction.

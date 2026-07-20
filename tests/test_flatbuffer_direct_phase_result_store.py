@@ -215,7 +215,7 @@ EXPECTED_OWNERS = (
     "_optimize_batchmatmul_affine_transpose_input_chains",
     "_optimize_batchmatmul_reshape_se_nhwc_chains",
     "_optimize_batchmatmul_transpose_input_to_adj_flags",
-    "_optimize_transpose_relu_split_all_outputs_to_nhwc_chains",
+    "run_post_sinet_qkv_relu_split_all_cleanup(shared_model_ir_pass_context)[1]",
     "_optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains",
     "_optimize_split_conv_concat_transpose_bridge_to_single_post_nchw",
     "_optimize_sinet_mix_attention_double_logistic_nhwc_chains",
@@ -281,7 +281,9 @@ EXPECTED_MODEL_ARGUMENTS = (
     None,
     *("model_ir",) * 2,
     None,
-    *("model_ir",) * 10,
+    *("model_ir",) * 4,
+    None,
+    *("model_ir",) * 5,
     "shared_model_ir_pass_context",
     *("model_ir",) * 8,
     *("fallback_ir",) * 14,
@@ -472,8 +474,8 @@ def test_one_hundred_twenty_eight_observations_use_the_bounded_session_store() -
         ast.literal_eval(_statement_call(node).args[0]) for node in records
     ) == EXPECTED_PHASE_IDS
     owners = tuple(_statement_call(node).args[1] for node in records)
-    assert sum(isinstance(owner, ast.Call) for owner in owners) == 124
-    assert sum(isinstance(owner, ast.Subscript) for owner in owners) == 4
+    assert sum(isinstance(owner, ast.Call) for owner in owners) == 123
+    assert sum(isinstance(owner, ast.Subscript) for owner in owners) == 5
     assert tuple(
         owner.func.id
         if isinstance(owner, ast.Call) and isinstance(owner.func, ast.Name)

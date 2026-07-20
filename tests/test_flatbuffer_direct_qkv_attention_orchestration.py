@@ -42,6 +42,19 @@ TERMINAL_QKV_OWNER_PATH = (
 )
 TERMINAL_QKV_OWNER = "run_terminal_qkv_shape_attention_cleanup"
 TERMINAL_QKV_RESULT = "_terminal_qkv_shape_attention_results"
+POST_SINET_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "post_sinet_qkv_relu_split_all_orchestration.py"
+)
+POST_SINET_OWNER = "run_post_sinet_qkv_relu_split_all_cleanup"
+POST_SINET_PHASE_ID = "cleanup.post_sinet.relu_split_all_outputs"
+POST_SINET_OWNER_EXPRESSION = (
+    "run_post_sinet_qkv_relu_split_all_cleanup("
+    "shared_model_ir_pass_context)[1]"
+)
 OUTER_OWNER_PATH = (
     REPO_ROOT
     / "onnx2tf"
@@ -86,6 +99,22 @@ def _terminal_qkv_owner_calls(function_name: str) -> list[ast.Call]:
         for node in tree.body
         if isinstance(node, ast.FunctionDef)
         and node.name == TERMINAL_QKV_OWNER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name
+    ]
+
+
+def _post_sinet_owner_calls(function_name: str) -> list[ast.Call]:
+    tree = ast.parse(POST_SINET_OWNER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == POST_SINET_OWNER
     )
     return [
         node
@@ -168,6 +197,21 @@ def _assert_phase_result_record(statement: ast.stmt, phase_id: str) -> None:
     assert record.func.attr == "record_phase_result"
     assert len(record.args) == 2
     assert ast.literal_eval(record.args[0]) == phase_id
+
+
+def _phase_id(statement: ast.stmt) -> str | None:
+    if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
+        return None
+    call = statement.value
+    if (
+        not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != "session"
+        or call.func.attr != "record_phase_result"
+        or len(call.args) != 2
+    ):
+        return None
+    return ast.literal_eval(call.args[0])
 
 
 def _context() -> QKVAttentionContext:
@@ -512,10 +556,16 @@ def test_qkv_attention_preserves_both_invocation_forms() -> None:
         and node.func.id == QKV_ATTENTION
     ]
 
-    assert len(invocations) == 2
+    assert len(invocations) == 1
     default_invocations = [call for call in invocations if call.keywords == []]
-    assert len(default_invocations) == 2
+    assert len(default_invocations) == 1
     assert all(call.args == [] for call in default_invocations)
+
+    (post_sinet_invocation,) = _post_sinet_owner_calls("run_qkv_attention")
+    assert [
+        _expression_path(argument) for argument in post_sinet_invocation.args
+    ] == ["context"]
+    assert post_sinet_invocation.keywords == []
 
     (late_invocation,) = _terminal_qkv_owner_calls(
         "run_qkv_attention_summary"
@@ -567,25 +617,23 @@ def test_qkv_attention_preserves_both_default_boundaries() -> None:
         == "_optimize_split_conv_concat_transpose_bridge_to_single_post_nchw"
     )
 
-    top_level_index = next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_post_sinet_qkv_attention_results"
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == QKV_ATTENTION
-        and statement.value.keywords == []
+    post_sinet_record = next(
+        statement
+        for statement in lowerer.body
+        if _phase_id(statement) == POST_SINET_PHASE_ID
     )
-    assert (
-        _call_name(lowerer.body[top_level_index - 1])
-        == "_optimize_batchmatmul_transpose_input_to_adj_flags"
+    top_level_index = lowerer.body.index(post_sinet_record)
+    assert isinstance(post_sinet_record, ast.Expr)
+    assert ast.unparse(post_sinet_record.value.args[1]) == (
+        POST_SINET_OWNER_EXPRESSION
     )
-    assert (
-        _call_name(lowerer.body[top_level_index + 1])
-        == "_optimize_transpose_relu_split_all_outputs_to_nhwc_chains"
+    _assert_phase_result_record(
+        lowerer.body[top_level_index - 1],
+        "cleanup.post_sinet.batchmatmul_adj_flags",
+    )
+    _assert_phase_result_record(
+        lowerer.body[top_level_index + 1],
+        "cleanup.post_sinet.relu_split_conv_concat",
     )
 
 
@@ -626,26 +674,24 @@ def test_qkv_attention_retains_both_default_policy_results() -> None:
         "_optimize_split_conv_concat_transpose_bridge_to_single_post_nchw"
     )
 
-    post_sinet_index = next(
-        index
-        for index, statement in enumerate(lowerer.body)
-        if _call_name(statement) == QKV_ATTENTION
+    post_sinet = next(
+        statement
+        for statement in lowerer.body
+        if _phase_id(statement) == POST_SINET_PHASE_ID
     )
-    post_sinet = lowerer.body[post_sinet_index]
-    assert isinstance(post_sinet, ast.Assign)
-    assert len(post_sinet.targets) == 1
-    assert isinstance(post_sinet.targets[0], ast.Name)
-    assert post_sinet.targets[0].id == "_post_sinet_qkv_attention_results"
-    assert isinstance(post_sinet.value, ast.Call)
-    assert post_sinet.value.args == []
-    assert post_sinet.value.keywords == []
+    post_sinet_index = lowerer.body.index(post_sinet)
+    assert isinstance(post_sinet, ast.Expr)
+    assert ast.unparse(post_sinet.value.args[1]) == (
+        POST_SINET_OWNER_EXPRESSION
+    )
     predecessor = lowerer.body[post_sinet_index - 1]
     _assert_phase_result_record(
         predecessor,
         "cleanup.post_sinet.batchmatmul_adj_flags",
     )
-    assert _call_name(lowerer.body[post_sinet_index + 1]) == (
-        "_optimize_transpose_relu_split_all_outputs_to_nhwc_chains"
+    _assert_phase_result_record(
+        lowerer.body[post_sinet_index + 1],
+        "cleanup.post_sinet.relu_split_conv_concat",
     )
 
     all_calls = [
@@ -655,7 +701,13 @@ def test_qkv_attention_retains_both_default_policy_results() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == QKV_ATTENTION
     ]
-    assert len(all_calls) == 2
+    assert len(all_calls) == 1
+    post_sinet_calls = _post_sinet_owner_calls("run_qkv_attention")
+    assert len(post_sinet_calls) == 1
+    assert [
+        _expression_path(argument) for argument in post_sinet_calls[0].args
+    ] == ["context"]
+    assert post_sinet_calls[0].keywords == []
     late_result = next(
         statement
         for statement in lowerer.body

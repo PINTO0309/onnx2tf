@@ -2210,3 +2210,21 @@ characterization report `3 passed, 1 xfailed` and
 `301 passed, 1 xfailed`; only the deliberately absent future owner is xfailed.
 Static checks pass, the raw/managed inventory remains 28/26, and the phase
 store remains exactly 128 calls, 128 unique IDs, and 128 owner expressions.
+
+The latest extraction gives post-SiNet QKV attention and its adjacent
+ReLU/Split-all output cleanup one explicit shared-context owner. It preserves
+the existing QKV default policy, forwards the exact `ModelIRPassContext` to
+QKV cleanup, forwards the same model and `LayoutState` to the public ReLU
+owner, and returns both complete results by identity. The lowerer records
+element `[1]` directly at the unchanged ReLU/Split-all phase, between the same
+BatchMatMul adjacent-flags and ReLU/Split/Conv/Concat phases.
+
+The implementation preserves both children, lowerer compatibility wrappers,
+the independent terminal QKV route, public interfaces, artifacts,
+dependencies, and TensorFlow isolation. The deliberately captured initial
+affected run reported `293 passed / 10 failed`; all failures were stale
+structure assertions caused by the ownership move. After owner-aware updates,
+focused `5`, affected `303`, and standard `92 / 55 / 196 / 2 / 11` sequential
+tests pass. Static checks pass, the raw/managed inventory decreases from 28/26
+to 27/25, and the phase store remains exactly 128 calls, 128 unique IDs, and
+128 owner expressions.

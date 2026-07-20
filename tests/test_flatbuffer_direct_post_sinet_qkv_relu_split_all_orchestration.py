@@ -8,6 +8,9 @@ import pytest
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import (
+    post_sinet_qkv_relu_split_all_orchestration,
+)
 from onnx2tf.tflite_builder.passes.qkv_attention_orchestration import (
     run_qkv_attention,
 )
@@ -126,26 +129,14 @@ def test_post_sinet_qkv_relu_split_all_current_contract() -> None:
     lowerer = _lowerer()
     record = _phase_record(lowerer)
     index = lowerer.body.index(record)
-    current = lowerer.body[index - 1]
-
-    assert _single_target(current) == CURRENT_TARGET
-    assert _call_name(current) == CURRENT_QKV_OWNER
-    current_call = _call(current)
-    assert current_call is not None
-    assert current_call.args == []
-    assert current_call.keywords == []
-    assert _phase_id(lowerer.body[index - 2]) == PREDECESSOR_PHASE_ID
+    assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
 
     record_call = _call(record)
     assert record_call is not None
-    assert ast.unparse(record_call.args[1]) == (
-        f"{CURRENT_RELU_WRAPPER}(model_ir, "
-        "layout_state=session.layout_state)"
-    )
+    assert ast.unparse(record_call.args[1]) == FUTURE_OWNER_EXPRESSION
     assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
     assert not any(
         isinstance(node, ast.Name)
-        and isinstance(node.ctx, ast.Load)
         and node.id == CURRENT_TARGET
         for node in ast.walk(lowerer)
     )
@@ -211,15 +202,11 @@ def test_post_sinet_qkv_relu_split_all_wrappers_and_terminal_route_are_retained(
         and isinstance(node.func, ast.Name)
         and node.func.id == CURRENT_QKV_OWNER
     ]
-    assert len(direct_qkv_calls) == 2
+    assert len(direct_qkv_calls) == 1
     assert all(call.args == [] for call in direct_qkv_calls)
     assert all(call.keywords == [] for call in direct_qkv_calls)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="post-SiNet QKV/ReLU-Split-all owner is not implemented",
-)
 def test_post_sinet_qkv_relu_split_all_has_one_context_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -264,3 +251,41 @@ def test_post_sinet_qkv_relu_split_all_has_one_context_owner() -> None:
         and "lower_from_onnx2tf" in ast.unparse(node)
         for node in ast.parse(OWNER_PATH.read_text(encoding="utf-8")).body
     )
+
+
+def test_post_sinet_qkv_relu_split_all_runtime_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context()
+    qkv_results = ({"qkv_0": 1}, {"qkv_1": 2})
+    relu_results = {"relu": 3}
+    observed: list[tuple[str, object, object | None]] = []
+
+    def qkv(active_context: object) -> object:
+        observed.append((CHILD_OWNERS[0], active_context, None))
+        return qkv_results
+
+    def relu(active_model_ir: object, *, layout_state: object) -> object:
+        observed.append((CHILD_OWNERS[1], active_model_ir, layout_state))
+        return relu_results
+
+    monkeypatch.setattr(
+        post_sinet_qkv_relu_split_all_orchestration,
+        CHILD_OWNERS[0],
+        qkv,
+    )
+    monkeypatch.setattr(
+        post_sinet_qkv_relu_split_all_orchestration,
+        CHILD_OWNERS[1],
+        relu,
+    )
+
+    actual = post_sinet_qkv_relu_split_all_orchestration.run_post_sinet_qkv_relu_split_all_cleanup(
+        context
+    )
+    assert actual[0] is qkv_results
+    assert actual[1] is relu_results
+    assert observed == [
+        (CHILD_OWNERS[0], context, None),
+        (CHILD_OWNERS[1], context.model_ir, context.layout_state),
+    ]

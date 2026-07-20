@@ -7817,3 +7817,52 @@ coverage. Capture the fixed affected suite before updating stale assertions,
 then run affected and standard gates sequentially under `uv`, confirm the
 expected 27/25 inventory, and commit and push the implementation. Do not
 create, update, reopen, or otherwise modify a pull request.
+
+## Post-SiNet QKV/ReLU-Split-all implementation checkpoint
+
+`passes/post_sinet_qkv_relu_split_all_orchestration.py` now provides
+`run_post_sinet_qkv_relu_split_all_cleanup()`. It receives the exact shared
+`ModelIRPassContext`, calls `run_qkv_attention()` with that context and its
+unchanged defaults, then calls
+`optimize_transpose_relu_split_all_outputs_to_nhwc_chains()` with the same
+context's exact model and `LayoutState`. It returns both complete raw results
+by identity. Runtime injection proves fixed order, context/model/layout
+identity, implicit default-option forwarding, and result identity without
+result-driven control flow.
+
+The lowerer removes `_post_sinet_qkv_attention_results` and supplies the new
+owner's element `[1]` directly to the unchanged
+`cleanup.post_sinet.relu_split_all_outputs` record. The recorded post-SiNet
+BatchMatMul adjacent-flags phase remains its direct predecessor and the
+recorded ReLU/Split/Conv/Concat phase remains its direct successor. Both child
+owners, the retained lowerer compatibility wrappers, the independent terminal
+QKV route, public APIs, artifacts, dependencies, and TensorFlow isolation
+remain unchanged.
+
+The first fixed 10-file affected run was deliberately executed before stale
+expectations were changed and recorded `293 passed / 10 failed`, with failures
+across 6 files. All failures were stale top-level target, direct-wrapper,
+route-count, owner-expression, or neighboring-boundary assertions caused by
+the ownership move. No runtime identity, schema, phase-count, or TensorFlow
+failure was found. Sequential validation now passes: focused `5`, fixed
+affected `303`, terminal-layout/efficiency `92`, core `55`, result contracts
+`196`, phase store `2`, and TensorFlow import-blocking, default-direct, and
+`-cotof` `11`. Ruff, bytecode compilation, and whitespace checks pass.
+
+The read-only AST audit reports 27 raw unconsumed results and 25 managed
+results after excluding exactly
+`_layout_pass_set_1_initial_attention_recovery_results` and
+`_layout_pass_set_1_post_binary_attention_recovery_results`. The removed
+post-SiNet QKV target has zero stores, the new ReLU owner expression occurs
+once, and the phase store remains exactly 128 calls, 128 unique IDs, and 128
+owner expressions. No real-model conversion was repeated for this
+ownership-only extraction. The temporary initial affected-run report was
+removed from `/tmp` after its failure classification was preserved here.
+
+At resume, refresh the managed 25-result inventory and choose the next smallest
+source-adjacent, semantically closed observation-only boundary. Characterize
+its guards, recorded phase neighbors, option policy, exact context and
+callback identities, complete child schemas, and independent routes before
+changing production. Continue to run all `uv` validation sequentially, then
+commit and push each complete unit. Do not create, update, reopen, or otherwise
+modify a pull request.
