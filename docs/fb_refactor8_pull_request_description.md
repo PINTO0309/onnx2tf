@@ -1959,3 +1959,17 @@ Focused and reference-based affected sequential validation report
 is the deliberately absent future owner. Production behavior, fallback guard,
 dependencies, TensorFlow isolation, the managed 35-result inventory, and the
 exactly 128-ID/128-owner phase store remain unchanged.
+
+The latest implementation adds a shared-context fallback norm adapter/reshape
+owner. It preserves indexed binary adapter cleanup, singleton/consecutive-
+Reshape cleanup, their exact fallback model/context state, fixed order, and
+both complete raw result identities.
+
+Only the three observation-only lowerer targets are replaced. The norm guard,
+recorded topology successor, compatibility wrapper, graph behavior, APIs,
+artifacts, dependencies, and TensorFlow isolation remain unchanged. The
+initially recorded 11 affected failures were all stale structural ownership
+expectations; after owner-aware updates, focused `4`, affected `396`, and
+standard `92 / 55 / 196 / 2 / 11` sequential tests pass. The phase store
+remains exactly 128 IDs and 128 owners, and the managed unconsumed-result
+inventory decreases from 35 to 33.

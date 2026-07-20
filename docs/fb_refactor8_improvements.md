@@ -7277,3 +7277,25 @@ Focused and reference-based affected sequential validation report
 is the deliberately absent owner module. Phase-store validation remains
 `2 passed`, the managed inventory remains 35, and the store remains exactly
 128 IDs and 128 owners.
+
+## Extract fallback norm adapter/reshape cleanup
+
+`passes/fallback_norm_adapter_reshape_orchestration.py` now owns the
+characterized fallback pair. It forwards the exact fallback context's
+`ModelIR` to indexed binary adapter cleanup, then forwards the original
+`ModelIRPassContext` to singleton/consecutive-Reshape cleanup. Both complete
+nested results are returned by identity.
+
+The lowerer replaces only the three observation-only targets with
+`_fallback_norm_adapter_reshape_results`. The norm-result guard and recorded
+fallback topology successor remain unchanged. The singleton lowerer wrapper,
+indexed adapter summary routes, and all independent child owners remain
+available; only the unused direct indexed-runner import is removed.
+
+The first affected run deliberately recorded 11 failures across six files;
+all were stale direct-call, target, guard-length, route-count, or neighbor
+expectations. After owner-aware updates, sequential validation passes:
+focused `4`, affected `396`, and standard `92 / 55 / 196 / 2 / 11`. Ruff,
+bytecode compilation, and whitespace checks pass. The phase store remains
+exactly 128 IDs and 128 owners, while the managed unconsumed-result inventory
+decreases from 35 to 33.

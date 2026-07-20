@@ -8,6 +8,9 @@ import pytest
 
 from onnx2tf.tflite_builder.core.model_ir_pass_context import ModelIRPassContext
 from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.passes import (
+    fallback_norm_adapter_reshape_orchestration,
+)
 from onnx2tf.tflite_builder.passes.binary_layout_adapter import (
     run_indexed_binary_layout_adapter_cleanup,
 )
@@ -150,29 +153,18 @@ def test_fallback_norm_adapter_reshape_current_contract() -> None:
     lowerer = _lowerer()
     guard = _guard(lowerer)
     assert guard.orelse == []
-    assert len(guard.body) == 3
+    assert len(guard.body) == 2
 
-    adapter = guard.body[0]
-    assert _assignment_targets(adapter) == RESULT_TARGETS[:2]
-    assert _call_name(adapter) == CHILD_OWNERS[0]
-    adapter_call = _call(adapter)
-    assert adapter_call is not None
-    assert [ast.unparse(argument) for argument in adapter_call.args] == [
-        "fallback_ir"
+    assignment = guard.body[0]
+    assert _single_target(assignment) == COMPOSITE_TARGET
+    assert _call_name(assignment) == OWNER
+    call = _call(assignment)
+    assert call is not None
+    assert [ast.unparse(argument) for argument in call.args] == [
+        CONTEXT_TARGET
     ]
-    assert adapter_call.keywords == []
-
-    reshape = guard.body[1]
-    assert _single_target(reshape) == RESULT_TARGETS[2]
-    assert _call_name(reshape) == CURRENT_RESHAPE_WRAPPER
-    reshape_call = _call(reshape)
-    assert reshape_call is not None
-    assert [ast.unparse(argument) for argument in reshape_call.args] == [
-        "fallback_ir",
-        "None",
-    ]
-    assert reshape_call.keywords == []
-    assert _phase_id(guard.body[2]) == SUCCESSOR_PHASE_ID
+    assert call.keywords == []
+    assert _phase_id(guard.body[1]) == SUCCESSOR_PHASE_ID
 
     context_assignment = next(
         node
@@ -227,10 +219,6 @@ def test_fallback_norm_adapter_reshape_child_schemas_and_wrapper() -> None:
     assert wrapper_call.keywords == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="fallback norm adapter/reshape owner is not implemented",
-)
 def test_fallback_norm_adapter_reshape_has_one_context_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -279,3 +267,45 @@ def test_fallback_norm_adapter_reshape_has_one_context_owner() -> None:
         and "lower_from_onnx2tf" in ast.unparse(node)
         for node in ast.parse(OWNER_PATH.read_text(encoding="utf-8")).body
     )
+
+
+def test_fallback_norm_adapter_reshape_runtime_order_and_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context()
+    adapter_results = ({"binary": 1}, {"singleton": 2})
+    reshape_results = (
+        {"channel": 3},
+        {"fanout": 4},
+        {"reshape": 5},
+    )
+    observed: list[tuple[str, object]] = []
+
+    def _adapter(active_model_ir: ModelIR) -> object:
+        observed.append((CHILD_OWNERS[0], active_model_ir))
+        return adapter_results
+
+    def _reshape(active_context: ModelIRPassContext) -> object:
+        observed.append((CHILD_OWNERS[1], active_context))
+        return reshape_results
+
+    monkeypatch.setattr(
+        fallback_norm_adapter_reshape_orchestration,
+        CHILD_OWNERS[0],
+        _adapter,
+    )
+    monkeypatch.setattr(
+        fallback_norm_adapter_reshape_orchestration,
+        CHILD_OWNERS[1],
+        _reshape,
+    )
+
+    actual = fallback_norm_adapter_reshape_orchestration.run_fallback_norm_adapter_reshape_cleanup(
+        context
+    )
+    assert actual[0] is adapter_results
+    assert actual[1] is reshape_results
+    assert observed == [
+        (CHILD_OWNERS[0], context.model_ir),
+        (CHILD_OWNERS[1], context),
+    ]

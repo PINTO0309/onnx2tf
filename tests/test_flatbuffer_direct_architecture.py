@@ -9614,12 +9614,35 @@ def test_lowerer_singleton_reshape_clusters_reuse_pass_state_scopes() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == short_helper_name
     ]
+    fallback_owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "fallback_norm_adapter_reshape_orchestration.py"
+    )
+    fallback_owner = next(
+        node
+        for node in ast.parse(
+            fallback_owner_path.read_text(encoding="utf-8")
+        ).body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_fallback_norm_adapter_reshape_cleanup"
+    )
+    fallback_singleton_calls = [
+        node
+        for node in ast.walk(fallback_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_singleton_consecutive_reshape"
+    ]
     assert (
         len(short_invocations)
         + _orchestrated_pass_count(short_helper_name)
         + _very_late_layout_tail_call_count(
             "run_singleton_consecutive_reshape"
         )
+        + len(fallback_singleton_calls)
         == 3
     )
     assert (
@@ -9644,7 +9667,11 @@ def test_lowerer_singleton_reshape_clusters_reuse_pass_state_scopes() -> None:
         and isinstance(call.args[1], ast.Constant)
         and call.args[1].value is None
         for call in short_invocations
-    ) == 1
+    ) == 0
+    assert len(fallback_singleton_calls) == 1
+    assert [
+        ast.unparse(argument) for argument in fallback_singleton_calls[0].args
+    ] == ["context"]
 
 
 def test_reporting_implementation_stays_out_of_lowering_module() -> None:

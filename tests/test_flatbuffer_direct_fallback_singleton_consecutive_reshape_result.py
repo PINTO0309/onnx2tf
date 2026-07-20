@@ -15,8 +15,16 @@ from onnx2tf.tflite_builder.passes.singleton_consecutive_reshape_orchestration i
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOWERER_PATH = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
-OWNER = "_run_singleton_consecutive_reshape_pass_cluster"
 RESULT_TARGET = "_fallback_singleton_consecutive_reshape_results"
+OUTER_OWNER = "run_fallback_norm_adapter_reshape_cleanup"
+OUTER_TARGET = "_fallback_norm_adapter_reshape_results"
+OUTER_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "fallback_norm_adapter_reshape_orchestration.py"
+)
 GUARD_EXPRESSION = (
     "int(fallback_norm_stats.get("
     "'optimized_transpose_norm_subgraph_pad_prepost_nhwc_chains', 0)) > 0"
@@ -69,14 +77,14 @@ def _fallback_location() -> tuple[ast.FunctionDef, ast.If, int]:
         if isinstance(node, ast.If)
         and ast.unparse(node.test) == GUARD_EXPRESSION
         and any(
-            _call_name(statement) == OWNER
+            _call_name(statement) == OUTER_OWNER
             for statement in node.body
         )
     )
     index = next(
         index
         for index, statement in enumerate(guard.body)
-        if _call_name(statement) == OWNER
+        if _call_name(statement) == OUTER_OWNER
     )
     return lowerer, guard, index
 
@@ -110,27 +118,13 @@ def test_fallback_singleton_consecutive_schema_and_scope_are_explicit() -> None:
 def test_fallback_singleton_consecutive_guard_and_boundaries_are_explicit() -> None:
     lowerer, guard, index = _fallback_location()
     invocation = guard.body[index]
-    assert _single_target(invocation) == RESULT_TARGET
+    assert _single_target(invocation) == OUTER_TARGET
     call = _statement_call(invocation)
     assert call is not None
     assert [ast.unparse(argument) for argument in call.args] == [
-        "fallback_ir",
-        "None",
+        "fallback_precision_unbound_context",
     ]
     assert call.keywords == []
-    previous = guard.body[index - 1]
-    assert _call_name(previous) == "run_indexed_binary_layout_adapter_cleanup"
-    assert isinstance(previous, ast.Assign)
-    assert len(previous.targets) == 1
-    assert isinstance(previous.targets[0], ast.Tuple)
-    assert [
-        element.id
-        for element in previous.targets[0].elts
-        if isinstance(element, ast.Name)
-    ] == [
-        "_fallback_binary_adapter_stats",
-        "_fallback_singleton_adapter_stats",
-    ]
     assert ast.unparse(guard.body[index + 1]) == (
         "session.record_phase_result('shape_topology.fallback.norm', "
         "run_static_shape_topology_reconciliation(fallback_ir))"
@@ -141,19 +135,34 @@ def test_fallback_singleton_consecutive_guard_and_boundaries_are_explicit() -> N
         for node in ast.walk(lowerer)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id == OWNER
+        and node.func.id == OUTER_OWNER
         and [ast.unparse(argument) for argument in node.args]
-        == ["fallback_ir", "None"]
+        == ["fallback_precision_unbound_context"]
     ]
     assert fallback_calls == [call]
+    owner = next(
+        node
+        for node in ast.parse(OUTER_OWNER_PATH.read_text(encoding="utf-8")).body
+        if isinstance(node, ast.FunctionDef) and node.name == OUTER_OWNER
+    )
+    singleton_calls = [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_singleton_consecutive_reshape"
+    ]
+    assert len(singleton_calls) == 1
+    assert [ast.unparse(argument) for argument in singleton_calls[0].args] == [
+        "context"
+    ]
 
 
 def test_fallback_singleton_consecutive_result_is_retained_for_observation() -> None:
     lowerer, guard, index = _fallback_location()
-    assert _single_target(guard.body[index]) == RESULT_TARGET
+    assert _single_target(guard.body[index]) == OUTER_TARGET
     assert not any(
         isinstance(node, ast.Name)
         and node.id == RESULT_TARGET
-        and isinstance(node.ctx, ast.Load)
         for node in ast.walk(lowerer)
     )

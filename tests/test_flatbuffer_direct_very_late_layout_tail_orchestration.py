@@ -33,6 +33,14 @@ OUTER_OWNER_PATH = (
 )
 OWNER = "run_very_late_layout_tail_cleanup"
 OUTER_OWNER = "run_late_swish_layout_tail_cleanup"
+FALLBACK_NORM_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "fallback_norm_adapter_reshape_orchestration.py"
+)
+FALLBACK_NORM_OWNER = "run_fallback_norm_adapter_reshape_cleanup"
 LOWERER_OWNER = "run_late_dequant_swish_layout_tail_cleanup"
 CHILD_OWNERS = (
     "run_late_conv1d_decoder_layout_cleanup",
@@ -166,12 +174,7 @@ def test_singleton_consecutive_wrapper_independent_route_is_fixed() -> None:
         ),
         key=lambda node: (node.lineno, node.col_offset),
     )
-    assert len(calls) == 1
-    assert [ast.unparse(argument) for argument in calls[0].args] == [
-        "fallback_ir",
-        "None",
-    ]
-    assert all(call.keywords == [] for call in calls)
+    assert calls == []
     wrapper = next(
         node
         for node in lowerer.body
@@ -183,6 +186,19 @@ def test_singleton_consecutive_wrapper_independent_route_is_fixed() -> None:
     assert isinstance(call, ast.Call)
     assert isinstance(call.func, ast.Name)
     assert call.func.id == CHILD_OWNERS[2]
+    fallback_owner = _functions(FALLBACK_NORM_OWNER_PATH)[FALLBACK_NORM_OWNER]
+    fallback_calls = [
+        node
+        for node in ast.walk(fallback_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == CHILD_OWNERS[2]
+    ]
+    assert len(fallback_calls) == 1
+    assert [ast.unparse(argument) for argument in fallback_calls[0].args] == [
+        "context"
+    ]
+    assert fallback_calls[0].keywords == []
 
 
 def test_very_late_layout_tail_has_one_context_owner() -> None:

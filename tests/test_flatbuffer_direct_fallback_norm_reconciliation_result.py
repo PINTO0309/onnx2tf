@@ -134,14 +134,14 @@ def test_fallback_norm_reconciliation_schema_and_mutation_are_explicit() -> None
 
 def test_fallback_norm_reconciliation_boundary_is_explicit() -> None:
     guard = _fallback_norm_guard()
-    assert len(guard.body) == 3
+    assert len(guard.body) == 2
     assert _call_name(guard.body[0]) == (
-        "run_indexed_binary_layout_adapter_cleanup"
+        "run_fallback_norm_adapter_reshape_cleanup"
     )
-    assert _call_name(guard.body[1]) == (
-        "_run_singleton_consecutive_reshape_pass_cluster"
+    assert _single_target(guard.body[0]) == (
+        "_fallback_norm_adapter_reshape_results"
     )
-    reconciliation = guard.body[2]
+    reconciliation = guard.body[1]
     record = _statement_call(reconciliation)
     assert record is not None
     assert ast.literal_eval(record.args[0]) == PHASE_ID
@@ -155,7 +155,7 @@ def test_fallback_norm_reconciliation_boundary_is_explicit() -> None:
 
 def test_fallback_norm_reconciliation_retains_complete_observation() -> None:
     guard = _fallback_norm_guard()
-    reconciliation = guard.body[2]
+    reconciliation = guard.body[1]
     record = _statement_call(reconciliation)
     assert record is not None
     assert ast.literal_eval(record.args[0]) == PHASE_ID

@@ -350,8 +350,10 @@ from onnx2tf.tflite_builder.passes.binary_layout_adapter import (
     repair_rank4_channelwise_broadcast_constants_to_runtime_layout as _repair_rank4_channelwise_broadcast_constants_to_runtime_layout_pass,
     repair_rank4_binary_layout_mismatch_with_transpose_adapter as _repair_rank4_binary_layout_mismatch_with_transpose_adapter_pass,
     repair_rank4_binary_singleton_broadcast_layout_mismatch as _repair_rank4_binary_singleton_broadcast_layout_mismatch_pass,
-    run_indexed_binary_layout_adapter_cleanup,
     run_indexed_binary_layout_adapter_summary,
+)
+from onnx2tf.tflite_builder.passes.fallback_norm_adapter_reshape_orchestration import (
+    run_fallback_norm_adapter_reshape_cleanup,
 )
 from onnx2tf.tflite_builder.passes.binary_layout_convergence import (
     run_indexed_binary_layout_convergence,
@@ -5184,14 +5186,9 @@ def lower_onnx_to_ir(
             diagnostics=session.diagnostics,
         )
         if int(fallback_norm_stats.get("optimized_transpose_norm_subgraph_pad_prepost_nhwc_chains", 0)) > 0:
-            (
-                _fallback_binary_adapter_stats,
-                _fallback_singleton_adapter_stats,
-            ) = run_indexed_binary_layout_adapter_cleanup(fallback_ir)
-            _fallback_singleton_consecutive_reshape_results = (
-                _run_singleton_consecutive_reshape_pass_cluster(
-                    fallback_ir,
-                    None,
+            _fallback_norm_adapter_reshape_results = (
+                run_fallback_norm_adapter_reshape_cleanup(
+                    fallback_precision_unbound_context
                 )
             )
             session.record_phase_result(

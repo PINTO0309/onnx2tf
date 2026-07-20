@@ -7078,3 +7078,49 @@ made stale by the new outer route. Run affected and standard gates
 sequentially under `uv`, confirm the expected managed inventory reduction from
 35 to 33, then commit and push the complete unit. Do not create, update,
 reopen, or otherwise modify a pull request.
+
+## Fallback norm adapter/reshape implementation checkpoint
+
+`passes/fallback_norm_adapter_reshape_orchestration.py` now provides
+`run_fallback_norm_adapter_reshape_cleanup()`. It calls
+`run_indexed_binary_layout_adapter_cleanup(context.model_ir)` followed by
+`run_singleton_consecutive_reshape(context)` and returns both complete raw
+child tuples without copying, flattening, schema inspection, or result-driven
+control flow. Runtime injection proves exact order, model/context identity,
+absence of keyword options, and both result identities.
+
+The lowerer replaces `_fallback_binary_adapter_stats`,
+`_fallback_singleton_adapter_stats`, and
+`_fallback_singleton_consecutive_reshape_results` with
+`_fallback_norm_adapter_reshape_results`. It passes the existing
+`fallback_precision_unbound_context` directly. The norm-result predicate stays
+as the enclosing guard, and recorded `shape_topology.fallback.norm` remains
+the direct successor. The nested singleton wrapper, public indexed adapter
+runner and summary, shared-late and late-binary repair routes, singleton owner,
+callbacks, and independent routes remain available. Only the now-unused
+direct indexed-runner import was removed from the lowerer.
+
+The first fixed 12-file affected run was intentionally executed before test
+updates and recorded 11 failures across six files. Every failure was a stale
+direct-call, target, guard-length, route-count, or neighbor assertion caused
+by the ownership move; no runtime schema, fallback context, pass behavior,
+phase store, or TensorFlow boundary failed. Those structural expectations now
+follow both children through the outer owner.
+
+Sequential validation passes: focused `4`, fixed 12-file affected `396`,
+terminal-layout/efficiency `92`, core `55`, result contracts `196`, phase
+store `2`, and TensorFlow import-blocking, default-direct, and `-cotof` `11`.
+Ruff, bytecode compilation, and whitespace checks pass. The read-only AST
+audit reports 35 raw unconsumed results, 33 managed results after the two
+intentionally retained layout-pass-set-1 recovery-prefix observations, zero
+old fallback adapter/reshape targets, one new composite target, and exactly
+128 phase IDs with 128 owners. No real-model conversion was repeated for this
+ownership-only extraction.
+
+At resume, refresh the managed 33-result inventory and select the next
+smallest source-adjacent, semantically closed observation-only boundary.
+Characterize all guards, recorded phase boundaries, option policies, exact
+context and callback identities, child schemas, and independent routes before
+changing production. Continue with sequential `uv` validation and complete
+checkpoint commits/pushes only. Do not create, update, reopen, or otherwise
+modify a pull request.

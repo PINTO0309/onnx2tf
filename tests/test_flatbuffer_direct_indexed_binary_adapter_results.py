@@ -46,6 +46,13 @@ LATE_BINARY_REPAIR_OWNER_PATH = (
     / "passes"
     / "late_binary_repair_orchestration.py"
 )
+FALLBACK_NORM_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "fallback_norm_adapter_reshape_orchestration.py"
+)
 EXACT_OWNER = "repair_rank4_binary_layout_mismatch_with_transpose_adapter"
 SINGLETON_OWNER = "repair_rank4_binary_singleton_broadcast_layout_mismatch"
 EXACT_WRAPPER = f"_{EXACT_OWNER}"
@@ -56,11 +63,6 @@ EXPECTED_PAIR_TARGETS = (
     ("shared_binary_adapter_stats", "shared_singleton_adapter_stats"),
     ("late_binary_adapter_stats", "late_singleton_adapter_stats"),
     ("_fallback_binary_adapter_stats", "_fallback_singleton_adapter_stats"),
-)
-EXPECTED_MODEL_ARGUMENTS = (
-    "model_ir",
-    "model_ir",
-    "fallback_ir",
 )
 RESULT_SCHEMA = (
     {"inserted_rank4_binary_layout_fix_transpose": 0},
@@ -189,6 +191,19 @@ def _summary_runner_calls() -> list[ast.Call]:
     ]
 
 
+def _fallback_norm_runner_calls() -> list[ast.Call]:
+    owner = _functions(FALLBACK_NORM_OWNER_PATH)[
+        "run_fallback_norm_adapter_reshape_cleanup"
+    ]
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == RUNNER
+    ]
+
+
 def _tensor(
     name: str,
     shape: tuple[int, ...],
@@ -293,26 +308,16 @@ def test_binary_adapter_owner_schemas_and_indexed_contracts_are_explicit() -> No
     shared_late_calls = _shared_late_runner_calls()
     late_binary_calls = _late_binary_repair_runner_calls()
     summary_calls = _summary_runner_calls()
+    fallback_calls = _fallback_norm_runner_calls()
     assert (
         len(locations)
         + len(shared_late_calls)
         + len(late_binary_calls)
         + len(summary_calls)
+        + len(fallback_calls)
         == 4
     )
-    assert tuple(
-        _assignment_targets(block[index]) for block, index in locations
-    ) == EXPECTED_PAIR_TARGETS[2:]
-    for (block, index), model_argument in zip(
-        locations,
-        EXPECTED_MODEL_ARGUMENTS[2:],
-    ):
-        call = _statement_call(block[index])
-        assert call is not None
-        assert [ast.unparse(argument) for argument in call.args] == [
-            model_argument
-        ]
-        assert call.keywords == []
+    assert locations == []
     assert len(shared_late_calls) == 1
     assert [
         ast.unparse(argument) for argument in shared_late_calls[0].args
@@ -327,6 +332,11 @@ def test_binary_adapter_owner_schemas_and_indexed_contracts_are_explicit() -> No
     assert [ast.unparse(argument) for argument in summary_calls[0].args] == [
         "model_ir"
     ]
+    assert len(fallback_calls) == 1
+    assert [ast.unparse(argument) for argument in fallback_calls[0].args] == [
+        "context.model_ir"
+    ]
+    assert fallback_calls[0].keywords == []
 
 
 def test_binary_adapter_compatibility_wrappers_preserve_current_contract() -> None:
@@ -395,27 +405,16 @@ def test_indexed_binary_adapter_runner_reuses_one_index_and_retains_results(
     shared_late_calls = _shared_late_runner_calls()
     late_binary_calls = _late_binary_repair_runner_calls()
     summary_calls = _summary_runner_calls()
+    fallback_calls = _fallback_norm_runner_calls()
     assert (
         len(locations)
         + len(shared_late_calls)
         + len(late_binary_calls)
         + len(summary_calls)
+        + len(fallback_calls)
         == 4
     )
-    assert tuple(
-        _assignment_targets(block[index])
-        for block, index in locations
-    ) == EXPECTED_PAIR_TARGETS[2:]
-    for (block, index), model_argument in zip(
-        locations,
-        EXPECTED_MODEL_ARGUMENTS[2:],
-    ):
-        call = _statement_call(block[index])
-        assert call is not None
-        assert [ast.unparse(argument) for argument in call.args] == [
-            model_argument
-        ]
-        assert call.keywords == []
+    assert locations == []
     assert len(shared_late_calls) == 1
     assert [
         ast.unparse(argument) for argument in shared_late_calls[0].args
@@ -430,6 +429,11 @@ def test_indexed_binary_adapter_runner_reuses_one_index_and_retains_results(
     assert [ast.unparse(argument) for argument in summary_calls[0].args] == [
         "model_ir"
     ]
+    assert len(fallback_calls) == 1
+    assert [ast.unparse(argument) for argument in fallback_calls[0].args] == [
+        "context.model_ir"
+    ]
+    assert fallback_calls[0].keywords == []
     assert _raw_pair_locations(lowerer) == []
     for target in EXPECTED_PAIR_TARGETS[2]:
         assert not any(

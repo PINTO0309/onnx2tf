@@ -44,6 +44,15 @@ VERY_LATE_TAIL_OWNER_PATH = (
     / "very_late_layout_tail_orchestration.py"
 )
 VERY_LATE_TAIL_OWNER = "run_very_late_layout_tail_cleanup"
+FALLBACK_NORM_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "fallback_norm_adapter_reshape_orchestration.py"
+)
+FALLBACK_NORM_OWNER = "run_fallback_norm_adapter_reshape_cleanup"
+FALLBACK_NORM_RESULT = "_fallback_norm_adapter_reshape_results"
 LOWERER_TAIL_OWNER = "run_late_dequant_swish_layout_tail_cleanup"
 LOWERER_TAIL_RESULT = "_late_dequant_swish_layout_tail_results"
 SINGLETON_CONSECUTIVE = "_run_singleton_consecutive_reshape_pass_cluster"
@@ -127,6 +136,22 @@ def _very_late_tail_singleton_calls() -> list[ast.Call]:
         for node in tree.body
         if isinstance(node, ast.FunctionDef)
         and node.name == VERY_LATE_TAIL_OWNER
+    )
+    return [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_singleton_consecutive_reshape"
+    ]
+
+
+def _fallback_norm_singleton_calls() -> list[ast.Call]:
+    tree = ast.parse(FALLBACK_NORM_OWNER_PATH.read_text(encoding="utf-8"))
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == FALLBACK_NORM_OWNER
     )
     return [
         node
@@ -369,7 +394,7 @@ def test_singleton_consecutive_preserves_all_three_target_forms() -> None:
     assert [
         tuple(_expression_path(argument) for argument in invocation.args)
         for invocation in invocations
-    ] == [("fallback_ir", None)]
+    ] == []
     assert all(invocation.keywords == [] for invocation in invocations)
     very_late_calls = _very_late_tail_singleton_calls()
     assert len(very_late_calls) == 1
@@ -383,6 +408,12 @@ def test_singleton_consecutive_preserves_all_three_target_forms() -> None:
         _expression_path(argument) for argument in shared_late_calls[0].args
     ] == ["context"]
     assert shared_late_calls[0].keywords == []
+    fallback_calls = _fallback_norm_singleton_calls()
+    assert len(fallback_calls) == 1
+    assert [
+        _expression_path(argument) for argument in fallback_calls[0].args
+    ] == ["context"]
+    assert fallback_calls[0].keywords == []
 
 
 def test_singleton_consecutive_retains_very_late_main_results() -> None:
@@ -404,24 +435,18 @@ def test_singleton_consecutive_retains_very_late_main_results() -> None:
         "run_singleton_consecutive_reshape(context)"
     )
 
-    fallback_calls = [
-        node
-        for node in ast.walk(lowerer)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == SINGLETON_CONSECUTIVE
-        and [_expression_path(argument) for argument in node.args]
-        == ["fallback_ir", None]
-    ]
+    fallback_calls = _fallback_norm_singleton_calls()
     assert len(fallback_calls) == 1
-    fallback_call = fallback_calls[0]
+    assert [
+        _expression_path(argument) for argument in fallback_calls[0].args
+    ] == ["context"]
     assert any(
         isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
         and statement.targets[0].id
-        == "_fallback_singleton_consecutive_reshape_results"
-        and statement.value is fallback_call
+        == FALLBACK_NORM_RESULT
+        and _statement_call_name(statement) == FALLBACK_NORM_OWNER
         for statement in ast.walk(lowerer)
     )
 
@@ -465,7 +490,7 @@ def test_singleton_consecutive_preserves_fallback_guard_and_boundaries() -> None
             isinstance(statement, (ast.Assign, ast.Expr))
             and isinstance(statement.value, ast.Call)
             and isinstance(statement.value.func, ast.Name)
-            and statement.value.func.id == SINGLETON_CONSECUTIVE
+            and statement.value.func.id == FALLBACK_NORM_OWNER
             for statement in node.body
         )
     )
@@ -475,7 +500,7 @@ def test_singleton_consecutive_preserves_fallback_guard_and_boundaries() -> None
         if isinstance(statement, (ast.Assign, ast.Expr))
         and isinstance(statement.value, ast.Call)
         and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == SINGLETON_CONSECUTIVE
+        and statement.value.func.id == FALLBACK_NORM_OWNER
     )
 
     invocation = fallback_guard.body[invocation_index]
@@ -483,16 +508,18 @@ def test_singleton_consecutive_preserves_fallback_guard_and_boundaries() -> None
     assert len(invocation.targets) == 1
     assert isinstance(invocation.targets[0], ast.Name)
     assert invocation.targets[0].id == (
-        "_fallback_singleton_consecutive_reshape_results"
+        FALLBACK_NORM_RESULT
     )
 
     assert ast.unparse(fallback_guard.test) == (
         "int(fallback_norm_stats.get("
         "'optimized_transpose_norm_subgraph_pad_prepost_nhwc_chains', 0)) > 0"
     )
-    assert _statement_call_name(fallback_guard.body[invocation_index - 1]) == (
-        "run_indexed_binary_layout_adapter_cleanup"
-    )
+    assert [
+        _expression_path(argument)
+        for argument in invocation.value.args
+    ] == ["fallback_precision_unbound_context"]
+    assert invocation.value.keywords == []
     reconciliation = fallback_guard.body[invocation_index + 1]
     assert isinstance(reconciliation, ast.Expr)
     assert ast.unparse(reconciliation) == (
