@@ -7599,3 +7599,41 @@ validation is `2 passed`, the raw/managed inventory remains 30/28, and the
 store remains exactly 128 calls, 128 unique IDs, and 128 owners. Ruff,
 bytecode compilation, and whitespace checks pass. No real-model conversion
 was repeated for this characterization.
+
+## Extract very-late SiNet residual-affine/PReLU cleanup
+
+The characterized boundary is now owned by
+`run_very_late_sinet_residual_affine_prelu_cleanup()`. The owner receives the
+existing `SINetTerminalLayoutRecoveryContext`, runs
+`run_very_late_sinet_recovery_tail_cleanup()` first, then calls the public
+`optimize_transpose_pre_add_mul_add_prelu_nhwc_chains()` implementation with
+the exact `context.pass_context.model_ir`. It returns both complete child
+results without copying or interpreting them. Runtime injection coverage fixes
+the child order, context/model identity, and result identity.
+
+The lowerer no longer stores the observation-only
+`_very_late_sinet_recovery_tail_results` local. It records returned element
+`[1]` directly under the unchanged
+`cleanup.very_late.residual_affine_prelu` phase ID. The indexed-convergence
+record remains the immediate predecessor and residual-affine fan-out remains
+the immediate successor, so neither graph mutation order nor the observation
+boundary changes. Both child owners, the lowerer compatibility wrapper,
+independent attention and SiNet routes, public APIs, artifacts, dependency
+boundaries, and TensorFlow isolation remain intact.
+
+The first fixed 15-file affected run was intentionally captured before stale
+structural assertions were updated and reported `339 passed / 22 failed`, with
+failures across 12 files. Every failure was an obsolete direct target, wrapper
+call, phase owner, route, or neighboring-boundary expectation caused by the
+ownership move; no runtime, schema, phase-count, or TensorFlow regression was
+found. After owner-aware updates, the focused contract reports `5 passed`, the
+fixed affected suite reports `361 passed`, and the standard sequential gates
+report `92 / 55 / 196 / 2 / 11`. Ruff, bytecode compilation, and whitespace
+checks pass.
+
+The read-only AST audit reports 29 raw and 27 managed unconsumed lowerer
+results after excluding the two intentionally retained layout-pass-set-1
+recovery-prefix observations. The removed target has zero stores, the new
+owner expression occurs once, and the phase store remains exactly 128 calls,
+128 unique IDs, and 128 owner expressions. No real-model conversion was
+repeated for this ownership-only extraction.

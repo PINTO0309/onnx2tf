@@ -207,7 +207,7 @@ EXPECTED_OWNERS = (
     "_terminal_singleton_clamp_sinet_hardswish_results[1]",
     "_optimize_transpose_dequant_hardsigmoid_quantize_bridges",
     "run_terminal_sinet_singleton_reshape_convergence_cleanup(sinet_terminal_layout_recovery_context)[1]",
-    "_optimize_transpose_pre_add_mul_add_prelu_nhwc_chains",
+    "run_very_late_sinet_residual_affine_prelu_cleanup(sinet_terminal_layout_recovery_context)[1]",
     "_optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains",
     "run_indexed_prune_reconcile_cleanup",
     "_optimize_transpose_csp_attention_nhwc_chains",
@@ -278,7 +278,8 @@ EXPECTED_MODEL_ARGUMENTS = (
     None,
     "model_ir",
     None,
-    *("model_ir",) * 14,
+    None,
+    *("model_ir",) * 13,
     "shared_model_ir_pass_context",
     *("model_ir",) * 8,
     *("fallback_ir",) * 14,
@@ -469,8 +470,8 @@ def test_one_hundred_twenty_eight_observations_use_the_bounded_session_store() -
         ast.literal_eval(_statement_call(node).args[0]) for node in records
     ) == EXPECTED_PHASE_IDS
     owners = tuple(_statement_call(node).args[1] for node in records)
-    assert sum(isinstance(owner, ast.Call) for owner in owners) == 126
-    assert sum(isinstance(owner, ast.Subscript) for owner in owners) == 2
+    assert sum(isinstance(owner, ast.Call) for owner in owners) == 125
+    assert sum(isinstance(owner, ast.Subscript) for owner in owners) == 3
     assert tuple(
         owner.func.id
         if isinstance(owner, ast.Call) and isinstance(owner.func, ast.Name)

@@ -7641,3 +7641,52 @@ coverage. Run the fixed affected suite once before updating stale structural
 expectations, then run all affected and standard gates sequentially under
 `uv`, confirm the expected 29/27 inventory, and commit and push the complete
 unit. Do not create, update, reopen, or otherwise modify a pull request.
+
+## Very-late SiNet residual-affine/PReLU implementation checkpoint
+
+`passes/very_late_sinet_residual_affine_prelu_orchestration.py` now provides
+`run_very_late_sinet_residual_affine_prelu_cleanup()`. It receives the exact
+existing `SINetTerminalLayoutRecoveryContext`, calls
+`run_very_late_sinet_recovery_tail_cleanup()` with that context, then calls the
+public `optimize_transpose_pre_add_mul_add_prelu_nhwc_chains()` owner with
+`context.pass_context.model_ir`. It returns both complete raw results by
+identity. Runtime injection proves fixed order, context/model identity, and
+result identity without introducing result-driven control flow.
+
+The lowerer removes `_very_late_sinet_recovery_tail_results` and supplies the
+new owner's element `[1]` directly to the unchanged
+`cleanup.very_late.residual_affine_prelu` record. The recorded terminal
+indexed-convergence phase remains its direct predecessor and the recorded
+residual-affine fan-out phase remains its direct successor. Both child owners,
+the lowerer compatibility wrapper, independent attention and SiNet routes,
+public APIs, artifacts, dependency boundaries, and TensorFlow isolation remain
+unchanged.
+
+The first fixed 15-file affected run was deliberately executed before stale
+expectations were changed and recorded `339 passed / 22 failed`, with failures
+across 12 files. All failures were stale target, direct-wrapper, owner, route,
+phase-expression, or adjacent-boundary assertions caused by the ownership
+move. No runtime identity, child schema, mutation-order, phase-count, or
+TensorFlow failure was found. Sequential validation now passes: focused `5`,
+fixed affected `361`, terminal-layout/efficiency `92`, core `55`, result
+contracts `196`, phase store `2`, and TensorFlow import-blocking,
+default-direct, and `-cotof` `11`. Ruff, bytecode compilation, and whitespace
+checks pass.
+
+The read-only AST audit reports 29 raw unconsumed results and 27 managed
+results after excluding exactly
+`_layout_pass_set_1_initial_attention_recovery_results` and
+`_layout_pass_set_1_post_binary_attention_recovery_results`. The removed
+very-late SiNet target has zero stores, the new PReLU owner expression occurs
+once, and the phase store remains exactly 128 calls, 128 unique IDs, and 128
+owner expressions. No real-model conversion was repeated for this
+ownership-only extraction. The temporary initial affected-run report was
+removed from `/tmp` after its failure classification was preserved here.
+
+At resume, refresh the managed 27-result inventory and choose the next smallest
+source-adjacent, semantically closed observation-only boundary. Characterize
+its guards, recorded phase neighbors, option policy, exact context and
+callback identities, complete child schemas, and independent routes before
+changing production. Continue to run all `uv` validation sequentially, then
+commit and push each complete unit. Do not create, update, reopen, or otherwise
+modify a pull request.

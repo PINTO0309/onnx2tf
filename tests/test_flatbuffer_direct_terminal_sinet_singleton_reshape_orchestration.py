@@ -40,7 +40,11 @@ SUCCESSOR_OWNER_EXPRESSION = (
     "run_terminal_sinet_singleton_reshape_convergence_cleanup("
     "sinet_terminal_layout_recovery_context)[1]"
 )
-SUCCESSOR_TARGET = "_very_late_sinet_recovery_tail_results"
+VERY_LATE_PHASE_ID = "cleanup.very_late.residual_affine_prelu"
+VERY_LATE_OWNER_EXPRESSION = (
+    "run_very_late_sinet_residual_affine_prelu_cleanup("
+    "sinet_terminal_layout_recovery_context)[1]"
+)
 SINGLETON_POLICY = {
     "include_duplicate_fanout": True,
     "include_spatial_concat_post_transpose": False,
@@ -103,7 +107,11 @@ def test_terminal_sinet_singleton_reshape_current_boundary_and_schema() -> None:
     assert call is not None
     assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
     assert ast.unparse(call.args[1]) == SUCCESSOR_OWNER_EXPRESSION
-    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    very_late_record = lowerer.body[index + 1]
+    assert _phase_id(very_late_record) == VERY_LATE_PHASE_ID
+    very_late_call = _call(very_late_record)
+    assert very_late_call is not None
+    assert ast.unparse(very_late_call.args[1]) == VERY_LATE_OWNER_EXPRESSION
     assert not any(
         isinstance(node, ast.Name) and node.id == CURRENT_TARGET
         for node in ast.walk(lowerer)
@@ -186,7 +194,11 @@ def test_terminal_sinet_singleton_reshape_has_one_shared_context_owner() -> None
     assert call is not None
     assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
     assert ast.unparse(call.args[1]) == SUCCESSOR_OWNER_EXPRESSION
-    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
+    very_late_record = lowerer.body[index + 1]
+    assert _phase_id(very_late_record) == VERY_LATE_PHASE_ID
+    very_late_call = _call(very_late_record)
+    assert very_late_call is not None
+    assert ast.unparse(very_late_call.args[1]) == VERY_LATE_OWNER_EXPRESSION
     assert not any(
         isinstance(node, ast.Name) and node.id == CURRENT_TARGET
         for node in ast.walk(lowerer)

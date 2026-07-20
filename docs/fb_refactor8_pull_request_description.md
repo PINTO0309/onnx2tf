@@ -2145,3 +2145,22 @@ Focused and reference-based affected sequential validation report
 intentionally absent future owner is xfailed. Phase-store validation remains
 `2 passed`, production remains unchanged, the raw/managed inventory remains
 30/28, and the store remains exactly 128 calls, 128 unique IDs, and 128 owners.
+
+The latest extraction gives the very-late SiNet recovery tail and its adjacent
+residual-affine/PReLU cleanup one explicit context owner. The owner preserves
+the exact existing order, forwards the existing terminal SiNet context to the
+tail, forwards its embedded `ModelIR` to the public PReLU implementation, and
+returns both complete raw results by identity. The lowerer records element
+`[1]` directly at the unchanged PReLU phase and removes the unconsumed
+very-late SiNet local; indexed convergence remains immediately before it and
+residual-affine fan-out remains immediately after it.
+
+The implementation does not change either child pass, the retained lowerer
+compatibility wrapper, independent attention and SiNet call routes, public
+interfaces, artifacts, dependencies, or TensorFlow isolation. The deliberately
+captured first affected run reported `339 passed / 22 failed`; all 22 failures
+were stale structure assertions caused by the ownership move. After those
+assertions were made owner-aware, focused `5`, affected `361`, and standard
+`92 / 55 / 196 / 2 / 11` sequential tests pass. Static checks pass, the
+raw/managed unconsumed inventory decreases from 30/28 to 29/27, and the phase
+store remains exactly 128 calls, 128 unique IDs, and 128 owner expressions.

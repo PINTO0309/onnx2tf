@@ -11,6 +11,9 @@ from onnx2tf.tflite_builder.ir import ModelIR
 from onnx2tf.tflite_builder.passes.residual_affine_prelu_layout import (
     optimize_transpose_pre_add_mul_add_prelu_nhwc_chains,
 )
+from onnx2tf.tflite_builder.passes import (
+    very_late_sinet_residual_affine_prelu_orchestration,
+)
 from onnx2tf.tflite_builder.passes.sinet_terminal_layout_recovery_orchestration import (
     SINetTerminalLayoutRecoveryContext,
 )
@@ -35,7 +38,6 @@ CHILD_OWNERS = (
     "run_very_late_sinet_recovery_tail_cleanup",
     "optimize_transpose_pre_add_mul_add_prelu_nhwc_chains",
 )
-CURRENT_OWNER = "run_very_late_sinet_recovery_tail_cleanup"
 CURRENT_TARGET = "_very_late_sinet_recovery_tail_results"
 CURRENT_PRELU_WRAPPER = (
     "_optimize_transpose_pre_add_mul_add_prelu_nhwc_chains"
@@ -68,20 +70,6 @@ def _call(statement: ast.stmt) -> ast.Call | None:
     if not isinstance(statement, (ast.Assign, ast.Expr, ast.Return)):
         return None
     return statement.value if isinstance(statement.value, ast.Call) else None
-
-
-def _call_name(statement: ast.stmt) -> str | None:
-    call = _call(statement)
-    if call is None or not isinstance(call.func, ast.Name):
-        return None
-    return call.func.id
-
-
-def _single_target(statement: ast.stmt) -> str | None:
-    if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
-        return None
-    target = statement.targets[0]
-    return target.id if isinstance(target, ast.Name) else None
 
 
 def _phase_id(statement: ast.stmt) -> str | None:
@@ -125,22 +113,16 @@ def test_very_late_sinet_residual_affine_prelu_current_contract() -> None:
     index = lowerer.body.index(record)
     predecessor = lowerer.body[index - 1]
 
-    assert _single_target(predecessor) == CURRENT_TARGET
-    assert _call_name(predecessor) == CURRENT_OWNER
-    predecessor_call = _call(predecessor)
-    assert predecessor_call is not None
-    assert [ast.unparse(argument) for argument in predecessor_call.args] == [
-        "sinet_terminal_layout_recovery_context"
-    ]
-    assert predecessor_call.keywords == []
-    assert _phase_id(lowerer.body[index - 2]) == PREDECESSOR_PHASE_ID
+    assert _phase_id(predecessor) == PREDECESSOR_PHASE_ID
 
     record_call = _call(record)
     assert record_call is not None
-    assert ast.unparse(record_call.args[1]) == (
-        f"{CURRENT_PRELU_WRAPPER}(model_ir)"
-    )
+    assert ast.unparse(record_call.args[1]) == FUTURE_OWNER_EXPRESSION
     assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
+    assert not any(
+        isinstance(node, ast.Name) and node.id == CURRENT_TARGET
+        for node in ast.walk(lowerer)
+    )
 
 
 def test_very_late_sinet_residual_affine_prelu_schemas_are_fixed() -> None:
@@ -174,10 +156,6 @@ def test_very_late_sinet_residual_affine_prelu_wrapper_is_retained() -> None:
     assert call.keywords == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="very-late SiNet residual-affine/PReLU owner is not implemented",
-)
 def test_very_late_sinet_residual_affine_prelu_has_one_context_owner() -> None:
     assert OWNER_PATH.exists()
     owner = _functions(OWNER_PATH)[OWNER]
@@ -219,3 +197,41 @@ def test_very_late_sinet_residual_affine_prelu_has_one_context_owner() -> None:
         and "lower_from_onnx2tf" in ast.unparse(node)
         for node in ast.parse(OWNER_PATH.read_text(encoding="utf-8")).body
     )
+
+
+def test_very_late_sinet_residual_affine_prelu_runtime_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context()
+    sinet_results = (({"sinet": 1},), ({"preadd": 2},))
+    prelu_results = {"prelu": 3}
+    observed: list[tuple[str, object]] = []
+
+    def sinet(active_context: object) -> object:
+        observed.append((CHILD_OWNERS[0], active_context))
+        return sinet_results
+
+    def prelu(active_model_ir: object) -> object:
+        observed.append((CHILD_OWNERS[1], active_model_ir))
+        return prelu_results
+
+    monkeypatch.setattr(
+        very_late_sinet_residual_affine_prelu_orchestration,
+        CHILD_OWNERS[0],
+        sinet,
+    )
+    monkeypatch.setattr(
+        very_late_sinet_residual_affine_prelu_orchestration,
+        CHILD_OWNERS[1],
+        prelu,
+    )
+
+    actual = very_late_sinet_residual_affine_prelu_orchestration.run_very_late_sinet_residual_affine_prelu_cleanup(
+        context
+    )
+    assert actual[0] is sinet_results
+    assert actual[1] is prelu_results
+    assert observed == [
+        (CHILD_OWNERS[0], context),
+        (CHILD_OWNERS[1], context.pass_context.model_ir),
+    ]

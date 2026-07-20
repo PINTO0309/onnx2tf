@@ -64,6 +64,11 @@ TERMINAL_PHASE_OWNER_EXPRESSION = (
     "run_terminal_sinet_singleton_reshape_convergence_cleanup("
     "sinet_terminal_layout_recovery_context)[1]"
 )
+VERY_LATE_PHASE_ID = "cleanup.very_late.residual_affine_prelu"
+VERY_LATE_OWNER_EXPRESSION = (
+    "run_very_late_sinet_residual_affine_prelu_cleanup("
+    "sinet_terminal_layout_recovery_context)[1]"
+)
 POLICIES = tuple(product((False, True), repeat=4))
 
 
@@ -605,8 +610,11 @@ def test_singleton_reshape_preserves_duplicate_spatial_policy_and_boundaries() -
     assert _direct_call_name(lowerer.body[terminal_index - 1]) == (
         "_optimize_transpose_dequant_hardsigmoid_quantize_bridges"
     )
-    assert _direct_call_name(lowerer.body[terminal_index + 1]) == (
-        "run_very_late_sinet_recovery_tail_cleanup"
+    very_late_record = lowerer.body[terminal_index + 1]
+    assert _phase_id(very_late_record) == VERY_LATE_PHASE_ID
+    assert isinstance(very_late_record, ast.Expr)
+    assert ast.unparse(very_late_record.value.args[1]) == (
+        VERY_LATE_OWNER_EXPRESSION
     )
 
 

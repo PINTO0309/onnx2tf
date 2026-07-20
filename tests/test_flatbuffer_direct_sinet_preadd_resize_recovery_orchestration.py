@@ -33,8 +33,11 @@ PHASE_PATH = (
 )
 SINET_PREADD_RESIZE = "_run_sinet_preadd_resize_recovery_sequence"
 SINET_TERMINAL = "_run_sinet_terminal_layout_recovery_sequence"
-VERY_LATE_COMPOSITE_OWNER = "run_very_late_sinet_recovery_tail_cleanup"
-VERY_LATE_COMPOSITE_TARGET = "_very_late_sinet_recovery_tail_results"
+VERY_LATE_PHASE_ID = "cleanup.very_late.residual_affine_prelu"
+VERY_LATE_OWNER_EXPRESSION = (
+    "run_very_late_sinet_residual_affine_prelu_cleanup("
+    "sinet_terminal_layout_recovery_context)[1]"
+)
 TERMINAL_PHASE_ID = "shape_topology.terminal.indexed_convergence"
 TERMINAL_OWNER_EXPRESSION = (
     "run_terminal_sinet_singleton_reshape_convergence_cleanup("
@@ -322,20 +325,21 @@ def test_sinet_preadd_resize_recovery_preserves_all_outer_boundaries() -> None:
     assert _phase_id(lowerer.body[terminal_index - 1]) == (
         "cleanup.terminal.dequant_hardsigmoid_bridge"
     )
-    very_late_composite = next(
+    very_late_record = next(
         statement
         for statement in lowerer.body
-        if isinstance(statement, ast.Assign)
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == VERY_LATE_COMPOSITE_TARGET
+        if _phase_id(statement) == VERY_LATE_PHASE_ID
     )
-    very_late_index = lowerer.body.index(very_late_composite)
-    assert _direct_call_name(very_late_composite) == VERY_LATE_COMPOSITE_OWNER
+    very_late_index = lowerer.body.index(very_late_record)
+    assert isinstance(very_late_record, ast.Expr)
+    assert ast.unparse(very_late_record.value.args[1]) == (
+        VERY_LATE_OWNER_EXPRESSION
+    )
     assert _phase_id(lowerer.body[very_late_index - 1]) == (
         "shape_topology.terminal.indexed_convergence"
     )
     assert _phase_id(lowerer.body[very_late_index + 1]) == (
-        "cleanup.very_late.residual_affine_prelu"
+        "cleanup.very_late.residual_affine_fanout"
     )
 
 
@@ -491,20 +495,21 @@ def test_sinet_preadd_resize_propagates_and_retains_ordered_results(
     assert _phase_id(lowerer.body[terminal_index - 1]) == (
         "cleanup.terminal.dequant_hardsigmoid_bridge"
     )
-    very_late_composite = next(
+    very_late_record = next(
         statement
         for statement in lowerer.body
-        if isinstance(statement, ast.Assign)
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == VERY_LATE_COMPOSITE_TARGET
+        if _phase_id(statement) == VERY_LATE_PHASE_ID
     )
-    very_late_index = lowerer.body.index(very_late_composite)
-    assert _direct_call_name(very_late_composite) == VERY_LATE_COMPOSITE_OWNER
+    very_late_index = lowerer.body.index(very_late_record)
+    assert isinstance(very_late_record, ast.Expr)
+    assert ast.unparse(very_late_record.value.args[1]) == (
+        VERY_LATE_OWNER_EXPRESSION
+    )
     assert _phase_id(lowerer.body[very_late_index - 1]) == (
         "shape_topology.terminal.indexed_convergence"
     )
     assert _phase_id(lowerer.body[very_late_index + 1]) == (
-        "cleanup.very_late.residual_affine_prelu"
+        "cleanup.very_late.residual_affine_fanout"
     )
 
     terminal_context_assignment = next(

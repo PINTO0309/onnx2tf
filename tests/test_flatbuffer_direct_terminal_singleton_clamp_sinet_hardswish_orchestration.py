@@ -54,7 +54,11 @@ INDEXED_OWNER_EXPRESSION = (
     "run_terminal_sinet_singleton_reshape_convergence_cleanup("
     "sinet_terminal_layout_recovery_context)[1]"
 )
-SUCCESSOR_RESULT_TARGET = "_very_late_sinet_recovery_tail_results"
+VERY_LATE_PHASE_ID = "cleanup.very_late.residual_affine_prelu"
+VERY_LATE_OWNER_EXPRESSION = (
+    "run_very_late_sinet_residual_affine_prelu_cleanup("
+    "sinet_terminal_layout_recovery_context)[1]"
+)
 
 SINGLETON_SCHEMA = (
     (
@@ -224,9 +228,11 @@ def test_terminal_singleton_clamp_sinet_hardswish_current_contract() -> None:
     indexed_call = _phase_call(indexed_record)
     assert indexed_call is not None
     assert ast.unparse(indexed_call.args[1]) == INDEXED_OWNER_EXPRESSION
-    assert _single_target(lowerer.body[predecessor_index + 5]) == (
-        SUCCESSOR_RESULT_TARGET
-    )
+    very_late_record = lowerer.body[predecessor_index + 5]
+    assert _phase_id(very_late_record) == VERY_LATE_PHASE_ID
+    very_late_call = _phase_call(very_late_record)
+    assert very_late_call is not None
+    assert ast.unparse(very_late_call.args[1]) == VERY_LATE_OWNER_EXPRESSION
     assert not any(
         isinstance(node, ast.Name)
         and node.id == CURRENT_RESULT_TARGET
@@ -324,9 +330,11 @@ def test_terminal_singleton_clamp_sinet_hardswish_has_one_context_owner() -> Non
     indexed_call = _phase_call(indexed_record)
     assert indexed_call is not None
     assert ast.unparse(indexed_call.args[1]) == INDEXED_OWNER_EXPRESSION
-    assert _single_target(lowerer.body[predecessor_index + 5]) == (
-        SUCCESSOR_RESULT_TARGET
-    )
+    very_late_record = lowerer.body[predecessor_index + 5]
+    assert _phase_id(very_late_record) == VERY_LATE_PHASE_ID
+    very_late_call = _phase_call(very_late_record)
+    assert very_late_call is not None
+    assert ast.unparse(very_late_call.args[1]) == VERY_LATE_OWNER_EXPRESSION
     assert not any(
         isinstance(node, ast.Name) and node.id == CURRENT_RESULT_TARGET
         for node in ast.walk(lowerer)

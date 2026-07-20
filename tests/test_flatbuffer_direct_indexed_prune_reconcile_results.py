@@ -51,7 +51,10 @@ VERY_LATE_PHASE_IDS = (
     "cleanup.very_late.prune_reconcile",
 )
 VERY_LATE_OWNER_EXPRESSIONS = (
-    "_optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(model_ir)",
+    (
+        "run_very_late_sinet_residual_affine_prelu_cleanup("
+        "sinet_terminal_layout_recovery_context)[1]"
+    ),
     (
         "_optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains("
         "model_ir)"
@@ -394,8 +397,8 @@ def test_very_late_residual_cleanup_uses_phase_result_store() -> None:
         VERY_LATE_OWNER_EXPRESSIONS
     )
     assert indices == list(range(indices[0], indices[0] + 3))
-    assert _single_target(lowerer.body[indices[0] - 1]) == (
-        "_very_late_sinet_recovery_tail_results"
+    assert _phase_id(lowerer.body[indices[0] - 1]) == (
+        "shape_topology.terminal.indexed_convergence"
     )
     assert _single_target(lowerer.body[indices[-1] + 1]) == (
         "_post_cleanup_sinet_preadd_resize_results"

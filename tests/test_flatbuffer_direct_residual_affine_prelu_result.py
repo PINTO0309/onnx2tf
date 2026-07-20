@@ -29,10 +29,23 @@ OWNER_PATH = (
     / "passes"
     / "residual_affine_prelu_layout.py"
 )
+ORCHESTRATION_OWNER_PATH = (
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "passes"
+    / "very_late_sinet_residual_affine_prelu_orchestration.py"
+)
 DIRECT_OWNER = "_optimize_transpose_pre_add_mul_add_prelu_nhwc_chains"
 PUBLIC_OWNER = "optimize_transpose_pre_add_mul_add_prelu_nhwc_chains"
+ORCHESTRATION_OWNER = "run_very_late_sinet_residual_affine_prelu_cleanup"
 RESULT_TARGET = "_very_late_residual_affine_prelu_stats"
-PREDECESSOR_TARGET = "_very_late_sinet_recovery_tail_results"
+PREDECESSOR_PHASE_ID = "shape_topology.terminal.indexed_convergence"
+PHASE_ID = "cleanup.very_late.residual_affine_prelu"
+OWNER_EXPRESSION = (
+    "run_very_late_sinet_residual_affine_prelu_cleanup("
+    "sinet_terminal_layout_recovery_context)[1]"
+)
 SUCCESSOR = "_optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains"
 RESULT_KEY = "optimized_transpose_pre_add_mul_add_prelu_nhwc_chains"
 
@@ -95,12 +108,12 @@ def _lowerer() -> ast.FunctionDef:
     return _functions(LOWERER_PATH)["lower_onnx_to_ir"]
 
 
-def _direct_location() -> tuple[ast.FunctionDef, int]:
+def _phase_location() -> tuple[ast.FunctionDef, int]:
     lowerer = _lowerer()
     return lowerer, next(
         index
         for index, statement in enumerate(lowerer.body)
-        if _call_name(statement) == DIRECT_OWNER
+        if _phase_id(statement) == PHASE_ID
     )
 
 
@@ -167,28 +180,41 @@ def test_residual_affine_prelu_schema_cleanup_and_routes_are_explicit() -> None:
 
 
 def test_residual_affine_prelu_direct_boundary_is_explicit() -> None:
-    lowerer, index = _direct_location()
+    lowerer, index = _phase_location()
     invocation = lowerer.body[index]
-    assert _phase_id(invocation) == "cleanup.very_late.residual_affine_prelu"
-    call = _statement_call(invocation)
-    assert call is not None
-    assert [ast.unparse(argument) for argument in call.args] == ["model_ir"]
-    assert call.keywords == []
-    assert _single_target(lowerer.body[index - 1]) == PREDECESSOR_TARGET
+    assert _phase_id(invocation) == PHASE_ID
+    assert isinstance(invocation, ast.Expr)
+    assert isinstance(invocation.value, ast.Call)
+    assert ast.unparse(invocation.value.args[1]) == OWNER_EXPRESSION
+    assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
     assert _call_name(lowerer.body[index + 1]) == SUCCESSOR
     assert sum(
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == DIRECT_OWNER
         for node in ast.walk(lowerer)
-    ) == 1
+    ) == 0
+
+    orchestration_owner = _functions(ORCHESTRATION_OWNER_PATH)[
+        ORCHESTRATION_OWNER
+    ]
+    production_calls = [
+        node
+        for node in ast.walk(orchestration_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == PUBLIC_OWNER
+    ]
+    assert len(production_calls) == 1
+    assert [
+        ast.unparse(argument) for argument in production_calls[0].args
+    ] == ["context.pass_context.model_ir"]
+    assert production_calls[0].keywords == []
 
 
 def test_residual_affine_prelu_direct_result_is_retained_for_observation() -> None:
-    lowerer, index = _direct_location()
-    assert _phase_id(lowerer.body[index]) == (
-        "cleanup.very_late.residual_affine_prelu"
-    )
+    lowerer, index = _phase_location()
+    assert _phase_id(lowerer.body[index]) == PHASE_ID
     assert not any(
         isinstance(node, ast.Name)
         and node.id == RESULT_TARGET

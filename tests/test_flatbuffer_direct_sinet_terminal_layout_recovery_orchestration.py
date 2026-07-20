@@ -33,8 +33,11 @@ SINET_PREADD_RESIZE = "_run_sinet_preadd_resize_recovery_sequence"
 SINET_TERMINAL = "_run_sinet_terminal_layout_recovery_sequence"
 COMPOSITE_OWNER = "run_terminal_singleton_clamp_sinet_hardswish_cleanup"
 COMPOSITE_TARGET = "_terminal_singleton_clamp_sinet_hardswish_results"
-VERY_LATE_COMPOSITE_OWNER = "run_very_late_sinet_recovery_tail_cleanup"
-VERY_LATE_COMPOSITE_TARGET = "_very_late_sinet_recovery_tail_results"
+VERY_LATE_PHASE_ID = "cleanup.very_late.residual_affine_prelu"
+VERY_LATE_OWNER_EXPRESSION = (
+    "run_very_late_sinet_residual_affine_prelu_cleanup("
+    "sinet_terminal_layout_recovery_context)[1]"
+)
 
 
 def _noop_recovery() -> None:
@@ -218,24 +221,21 @@ def test_sinet_terminal_layout_recovery_invocations_remain_zero_argument() -> No
 
 def test_sinet_terminal_layout_recovery_preserves_all_outer_boundaries() -> None:
     lowerer, _ = _lowerer_and_helper()
-    very_late_composite = next(
+    very_late_record = next(
         statement
         for statement in lowerer.body
-        if isinstance(statement, ast.Assign)
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == VERY_LATE_COMPOSITE_TARGET
+        if _phase_id(statement) == VERY_LATE_PHASE_ID
     )
-    very_late_composite_index = lowerer.body.index(very_late_composite)
-    assert _direct_call_name(very_late_composite) == VERY_LATE_COMPOSITE_OWNER
-    assert [ast.unparse(argument) for argument in very_late_composite.value.args] == [
-        "sinet_terminal_layout_recovery_context"
-    ]
-    assert very_late_composite.value.keywords == []
-    assert _phase_id(lowerer.body[very_late_composite_index - 1]) == (
+    very_late_index = lowerer.body.index(very_late_record)
+    assert isinstance(very_late_record, ast.Expr)
+    assert ast.unparse(very_late_record.value.args[1]) == (
+        VERY_LATE_OWNER_EXPRESSION
+    )
+    assert _phase_id(lowerer.body[very_late_index - 1]) == (
         "shape_topology.terminal.indexed_convergence"
     )
-    assert _phase_id(lowerer.body[very_late_composite_index + 1]) == (
-        "cleanup.very_late.residual_affine_prelu"
+    assert _phase_id(lowerer.body[very_late_index + 1]) == (
+        "cleanup.very_late.residual_affine_fanout"
     )
     assert not any(
         isinstance(node, ast.Name)
@@ -385,20 +385,21 @@ def test_sinet_terminal_layout_propagates_and_retains_ordered_results(
         key=lambda statement: statement.lineno,
     )
     assert direct_results == []
-    very_late_composite = next(
+    very_late_record = next(
         statement
         for statement in lowerer.body
-        if isinstance(statement, ast.Assign)
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == VERY_LATE_COMPOSITE_TARGET
+        if _phase_id(statement) == VERY_LATE_PHASE_ID
     )
-    very_late_index = lowerer.body.index(very_late_composite)
-    assert _direct_call_name(very_late_composite) == VERY_LATE_COMPOSITE_OWNER
+    very_late_index = lowerer.body.index(very_late_record)
+    assert isinstance(very_late_record, ast.Expr)
+    assert ast.unparse(very_late_record.value.args[1]) == (
+        VERY_LATE_OWNER_EXPRESSION
+    )
     assert _phase_id(lowerer.body[very_late_index - 1]) == (
         "shape_topology.terminal.indexed_convergence"
     )
     assert _phase_id(lowerer.body[very_late_index + 1]) == (
-        "cleanup.very_late.residual_affine_prelu"
+        "cleanup.very_late.residual_affine_fanout"
     )
     composite = next(
         statement

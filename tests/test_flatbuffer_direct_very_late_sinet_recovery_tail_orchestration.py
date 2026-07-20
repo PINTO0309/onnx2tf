@@ -39,9 +39,13 @@ RESULT_TARGETS = (
     "_very_late_sinet_layout_recovery_results",
     "_very_late_sinet_preadd_resize_results",
 )
-COMPOSITE_TARGET = "_very_late_sinet_recovery_tail_results"
+CURRENT_TARGET = "_very_late_sinet_recovery_tail_results"
 PREDECESSOR_PHASE_ID = "shape_topology.terminal.indexed_convergence"
 SUCCESSOR_PHASE_ID = "cleanup.very_late.residual_affine_prelu"
+SUCCESSOR_OWNER_EXPRESSION = (
+    "run_very_late_sinet_residual_affine_prelu_cleanup("
+    "sinet_terminal_layout_recovery_context)[1]"
+)
 
 
 def _functions(path: Path) -> dict[str, ast.FunctionDef]:
@@ -90,21 +94,23 @@ def _phase_id(statement: ast.stmt) -> str | None:
 
 def test_very_late_sinet_recovery_tail_current_boundary_and_schema() -> None:
     lowerer = _lowerer()
-    assignment = next(
+    record = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == COMPOSITE_TARGET
+        if _phase_id(statement) == SUCCESSOR_PHASE_ID
     )
-    index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == OWNER
-    call = _call(assignment)
+    index = lowerer.body.index(record)
+    call = _call(record)
     assert call is not None
-    assert [ast.unparse(argument) for argument in call.args] == [
-        "sinet_terminal_layout_recovery_context"
-    ]
-    assert call.keywords == []
     assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
-    assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
+    assert ast.unparse(call.args[1]) == SUCCESSOR_OWNER_EXPRESSION
+    assert _phase_id(lowerer.body[index + 1]) == (
+        "cleanup.very_late.residual_affine_fanout"
+    )
+    assert not any(
+        isinstance(node, ast.Name) and node.id == CURRENT_TARGET
+        for node in ast.walk(lowerer)
+    )
     assert not any(
         isinstance(node, ast.Name)
         and isinstance(node.ctx, ast.Load)
@@ -183,21 +189,23 @@ def test_very_late_sinet_recovery_tail_has_one_context_owner() -> None:
     assert all(call.keywords == [] for call in calls)
 
     lowerer = _lowerer()
-    assignment = next(
+    record = next(
         statement
         for statement in lowerer.body
-        if _single_target(statement) == COMPOSITE_TARGET
+        if _phase_id(statement) == SUCCESSOR_PHASE_ID
     )
-    index = lowerer.body.index(assignment)
-    assert _call_name(assignment) == OWNER
-    call = _call(assignment)
+    index = lowerer.body.index(record)
+    call = _call(record)
     assert call is not None
-    assert [ast.unparse(argument) for argument in call.args] == [
-        "sinet_terminal_layout_recovery_context"
-    ]
-    assert call.keywords == []
     assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
-    assert _phase_id(lowerer.body[index + 1]) == SUCCESSOR_PHASE_ID
+    assert ast.unparse(call.args[1]) == SUCCESSOR_OWNER_EXPRESSION
+    assert _phase_id(lowerer.body[index + 1]) == (
+        "cleanup.very_late.residual_affine_fanout"
+    )
+    assert not any(
+        isinstance(node, ast.Name) and node.id == CURRENT_TARGET
+        for node in ast.walk(lowerer)
+    )
     assert not any(
         isinstance(node, ast.Name) and node.id in RESULT_TARGETS
         for node in ast.walk(lowerer)

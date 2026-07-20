@@ -3001,18 +3001,20 @@ def test_lowerer_sinet_preadd_resize_recovery_has_one_ordered_owner() -> None:
         "cleanup.terminal.dequant_hardsigmoid_bridge"
     )
 
-    very_late_composite = next(
+    very_late_record = next(
         statement
         for statement in lowerer.body
-        if isinstance(statement, ast.Assign)
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_very_late_sinet_recovery_tail_results"
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Attribute)
+        and ast.unparse(statement.value.func) == "session.record_phase_result"
+        and ast.literal_eval(statement.value.args[0])
+        == "cleanup.very_late.residual_affine_prelu"
     )
-    very_late_index = lowerer.body.index(very_late_composite)
-    assert isinstance(very_late_composite.value, ast.Call)
-    assert isinstance(very_late_composite.value.func, ast.Name)
-    assert very_late_composite.value.func.id == (
-        "run_very_late_sinet_recovery_tail_cleanup"
+    very_late_index = lowerer.body.index(very_late_record)
+    assert ast.unparse(very_late_record.value.args[1]) == (
+        "run_very_late_sinet_residual_affine_prelu_cleanup("
+        "sinet_terminal_layout_recovery_context)[1]"
     )
     very_late_predecessor = lowerer.body[very_late_index - 1]
     assert isinstance(very_late_predecessor, ast.Expr)
@@ -3021,7 +3023,12 @@ def test_lowerer_sinet_preadd_resize_recovery_has_one_ordered_owner() -> None:
         "shape_topology.terminal.indexed_convergence"
     )
     assert _phase_aware_call(lowerer.body[very_late_index + 1])[1] == (
-        "cleanup.very_late.residual_affine_prelu"
+        "cleanup.very_late.residual_affine_fanout"
+    )
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id == "_very_late_sinet_recovery_tail_results"
+        for node in ast.walk(lowerer)
     )
 
     all_invocations = [
@@ -3080,23 +3087,21 @@ def test_lowerer_sinet_terminal_layout_recovery_has_one_ordered_owner() -> None:
     ]
     assert direct_invocations == []
 
-    very_late_composite = next(
+    very_late_record = next(
         statement
         for statement in lowerer.body
-        if isinstance(statement, ast.Assign)
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == "_very_late_sinet_recovery_tail_results"
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Attribute)
+        and ast.unparse(statement.value.func) == "session.record_phase_result"
+        and ast.literal_eval(statement.value.args[0])
+        == "cleanup.very_late.residual_affine_prelu"
     )
-    very_late_index = lowerer.body.index(very_late_composite)
-    assert isinstance(very_late_composite.value, ast.Call)
-    assert isinstance(very_late_composite.value.func, ast.Name)
-    assert very_late_composite.value.func.id == (
-        "run_very_late_sinet_recovery_tail_cleanup"
+    very_late_index = lowerer.body.index(very_late_record)
+    assert ast.unparse(very_late_record.value.args[1]) == (
+        "run_very_late_sinet_residual_affine_prelu_cleanup("
+        "sinet_terminal_layout_recovery_context)[1]"
     )
-    assert [
-        ast.unparse(argument) for argument in very_late_composite.value.args
-    ] == ["sinet_terminal_layout_recovery_context"]
-    assert very_late_composite.value.keywords == []
     very_late_predecessor = lowerer.body[very_late_index - 1]
     assert isinstance(very_late_predecessor, ast.Expr)
     assert isinstance(very_late_predecessor.value, ast.Call)
@@ -3104,7 +3109,12 @@ def test_lowerer_sinet_terminal_layout_recovery_has_one_ordered_owner() -> None:
         "shape_topology.terminal.indexed_convergence"
     )
     assert _phase_aware_call(lowerer.body[very_late_index + 1])[1] == (
-        "cleanup.very_late.residual_affine_prelu"
+        "cleanup.very_late.residual_affine_fanout"
+    )
+    assert not any(
+        isinstance(node, ast.Name)
+        and node.id == "_very_late_sinet_recovery_tail_results"
+        for node in ast.walk(lowerer)
     )
     composite = next(
         statement
@@ -3720,13 +3730,15 @@ def test_lowerer_indexed_shape_convergence_has_one_owner() -> None:
     assert ast.literal_eval(previous.value.args[0]) == (
         "cleanup.terminal.dequant_hardsigmoid_bridge"
     )
-    assert isinstance(following, ast.Assign)
-    assert len(following.targets) == 1
-    assert isinstance(following.targets[0], ast.Name)
-    assert following.targets[0].id == "_very_late_sinet_recovery_tail_results"
+    assert isinstance(following, ast.Expr)
     assert isinstance(following.value, ast.Call)
-    assert isinstance(following.value.func, ast.Name)
-    assert following.value.func.id == "run_very_late_sinet_recovery_tail_cleanup"
+    assert ast.literal_eval(following.value.args[0]) == (
+        "cleanup.very_late.residual_affine_prelu"
+    )
+    assert ast.unparse(following.value.args[1]) == (
+        "run_very_late_sinet_residual_affine_prelu_cleanup("
+        "sinet_terminal_layout_recovery_context)[1]"
+    )
 
 
 def test_dynamic_reshape_resolution_has_one_module_owner() -> None:
@@ -19355,7 +19367,39 @@ def test_residual_affine_prelu_optimizer_has_one_module_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == wrapper_name
     ]
-    assert len(production_calls) + _orchestrated_pass_count(wrapper_name) == 3
+    orchestration_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "very_late_sinet_residual_affine_prelu_orchestration.py"
+    )
+    orchestration_tree = ast.parse(
+        orchestration_path.read_text(encoding="utf-8")
+    )
+    orchestration_owner = next(
+        node
+        for node in orchestration_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name
+        == "run_very_late_sinet_residual_affine_prelu_cleanup"
+    )
+    orchestration_calls = [
+        node
+        for node in ast.walk(orchestration_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == owner_name
+    ]
+    assert production_calls == []
+    assert len(orchestration_calls) == 1
+    assert [
+        ast.unparse(argument) for argument in orchestration_calls[0].args
+    ] == ["context.pass_context.model_ir"]
+    assert orchestration_calls[0].keywords == []
+    assert (
+        len(orchestration_calls) + _orchestrated_pass_count(wrapper_name) == 3
+    )
 
 
 def test_residual_affine_fanout_optimizer_has_one_module_owner() -> None:

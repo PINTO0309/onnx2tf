@@ -42,8 +42,11 @@ CURRENT_TARGET = "_terminal_sinet_singleton_reshape_results"
 CURRENT_INDEXED_WRAPPER = "_run_indexed_shape_convergence_cleanup"
 PHASE_ID = "shape_topology.terminal.indexed_convergence"
 PREDECESSOR_PHASE_ID = "cleanup.terminal.dequant_hardsigmoid_bridge"
-SUCCESSOR_OWNER = "run_very_late_sinet_recovery_tail_cleanup"
-SUCCESSOR_TARGET = "_very_late_sinet_recovery_tail_results"
+SUCCESSOR_PHASE_ID = "cleanup.very_late.residual_affine_prelu"
+SUCCESSOR_OWNER_EXPRESSION = (
+    "run_very_late_sinet_residual_affine_prelu_cleanup("
+    "sinet_terminal_layout_recovery_context)[1]"
+)
 FUTURE_OWNER_EXPRESSION = (
     "run_terminal_sinet_singleton_reshape_convergence_cleanup("
     "sinet_terminal_layout_recovery_context)[1]"
@@ -66,20 +69,6 @@ def _call(statement: ast.stmt) -> ast.Call | None:
     if not isinstance(statement, (ast.Assign, ast.Expr)):
         return None
     return statement.value if isinstance(statement.value, ast.Call) else None
-
-
-def _call_name(statement: ast.stmt) -> str | None:
-    call = _call(statement)
-    if call is None or not isinstance(call.func, ast.Name):
-        return None
-    return call.func.id
-
-
-def _single_target(statement: ast.stmt) -> str | None:
-    if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
-        return None
-    target = statement.targets[0]
-    return target.id if isinstance(target, ast.Name) else None
 
 
 def _phase_id(statement: ast.stmt) -> str | None:
@@ -117,14 +106,10 @@ def test_terminal_sinet_singleton_reshape_convergence_current_contract() -> None
     assert record_call is not None
     assert ast.unparse(record_call.args[1]) == FUTURE_OWNER_EXPRESSION
 
-    assert _single_target(successor) == SUCCESSOR_TARGET
-    assert _call_name(successor) == SUCCESSOR_OWNER
+    assert _phase_id(successor) == SUCCESSOR_PHASE_ID
     successor_call = _call(successor)
     assert successor_call is not None
-    assert [ast.unparse(argument) for argument in successor_call.args] == [
-        "sinet_terminal_layout_recovery_context"
-    ]
-    assert successor_call.keywords == []
+    assert ast.unparse(successor_call.args[1]) == SUCCESSOR_OWNER_EXPRESSION
     assert not any(
         isinstance(node, ast.Name) and node.id == CURRENT_TARGET
         for node in ast.walk(lowerer)
@@ -213,8 +198,11 @@ def test_terminal_sinet_singleton_reshape_convergence_has_one_context_owner() ->
     assert record_call is not None
     assert ast.unparse(record_call.args[1]) == FUTURE_OWNER_EXPRESSION
     assert _phase_id(lowerer.body[index - 1]) == PREDECESSOR_PHASE_ID
-    assert _single_target(lowerer.body[index + 1]) == SUCCESSOR_TARGET
-    assert _call_name(lowerer.body[index + 1]) == SUCCESSOR_OWNER
+    successor = lowerer.body[index + 1]
+    assert _phase_id(successor) == SUCCESSOR_PHASE_ID
+    successor_call = _call(successor)
+    assert successor_call is not None
+    assert ast.unparse(successor_call.args[1]) == SUCCESSOR_OWNER_EXPRESSION
     assert not any(
         isinstance(node, ast.Name) and node.id == CURRENT_TARGET
         for node in ast.walk(lowerer)

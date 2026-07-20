@@ -176,8 +176,13 @@ def test_top_level_indexed_shape_convergence_uses_phase_result_store() -> None:
     assert _phase_id(lowerer.body[index - 1]) == (
         "cleanup.terminal.dequant_hardsigmoid_bridge"
     )
-    assert _single_target(lowerer.body[index + 1]) == (
-        "_very_late_sinet_recovery_tail_results"
+    very_late_record = lowerer.body[index + 1]
+    assert _phase_id(very_late_record) == (
+        "cleanup.very_late.residual_affine_prelu"
+    )
+    assert ast.unparse(very_late_record.value.args[1]) == (
+        "run_very_late_sinet_residual_affine_prelu_cleanup("
+        "sinet_terminal_layout_recovery_context)[1]"
     )
     assert not any(
         isinstance(node, ast.Name)
