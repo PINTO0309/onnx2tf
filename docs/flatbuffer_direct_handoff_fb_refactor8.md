@@ -7690,3 +7690,42 @@ callback identities, complete child schemas, and independent routes before
 changing production. Continue to run all `uv` validation sequentially, then
 commit and push each complete unit. Do not create, update, reopen, or otherwise
 modify a pull request.
+
+## Post-cleanup SiNet/CSP-attention characterization checkpoint
+
+The refreshed inventory contains 29 raw and 27 managed unconsumed lowerer
+results after excluding exactly the two retained layout-pass-set-1 recovery
+prefix observations. The selected boundary starts with
+`_post_cleanup_sinet_preadd_resize_results` and ends with the immediately
+following recorded `cleanup.post_cleanup.csp_attention` pass. The recorded
+very-late prune/reconcile predecessor and recorded SA/PA MirrorPad successor
+remain outside the boundary.
+
+The future `run_post_cleanup_sinet_csp_attention_cleanup()` owner receives the
+existing shared `ModelIRPassContext`. It must call
+`run_sinet_preadd_resize_recovery(context)` first, then call
+`_optimize_transpose_csp_attention_nhwc_chains()` with `context.model_ir` and
+`layout_state=context.layout_state`, and return both complete raw results. The
+lowerer must supply returned element `[1]` directly to the unchanged CSP phase
+record. The six-child SiNet schema, one-key CSP schema, existing lowerer
+wrappers, nested terminal-SiNet callback route, and phase neighbors are fixed
+by characterization tests.
+
+Focused sequential validation reports `3 passed, 1 xfailed`; the fixed 9-file
+affected suite reports `293 passed, 1 xfailed`. The sole expected failure
+requires the intentionally absent future owner. Production is unchanged, the
+raw/managed inventory remains 29/27, and the phase store remains exactly 128
+calls, 128 unique IDs, and 128 owner expressions. Ruff, bytecode compilation,
+and whitespace checks pass. No real-model conversion was repeated for this
+characterization.
+
+At resume, implement only the characterized two-child owner. Replace the
+post-cleanup SiNet assignment and current CSP owner expression with
+`run_post_cleanup_sinet_csp_attention_cleanup(`
+`shared_model_ir_pass_context)[1]`, preserve both recorded neighboring phases,
+retain the child owners and compatibility wrappers, and add runtime
+order/context/model/layout/result-identity coverage. Capture the fixed affected
+suite before updating stale structure assertions, then run affected and
+standard gates sequentially under `uv`, confirm the expected 28/26 inventory,
+and commit and push the complete implementation. Do not create, update,
+reopen, or otherwise modify a pull request.

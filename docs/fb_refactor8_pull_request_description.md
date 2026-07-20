@@ -2164,3 +2164,17 @@ assertions were made owner-aware, focused `5`, affected `361`, and standard
 `92 / 55 / 196 / 2 / 11` sequential tests pass. Static checks pass, the
 raw/managed unconsumed inventory decreases from 30/28 to 29/27, and the phase
 store remains exactly 128 calls, 128 unique IDs, and 128 owner expressions.
+
+The next characterization freezes the unconsumed post-cleanup SiNet
+pre-add/resize recovery together with its immediately following recorded CSP
+attention pass. The future owner will reuse their existing shared
+`ModelIRPassContext`, run the six-step SiNet recovery first, and forward the
+same model and `LayoutState` to the CSP owner. The lowerer will record returned
+element `[1]` at the unchanged phase position; very-late prune/reconcile and
+SA/PA MirrorPad remain the direct neighboring phases.
+
+Production is unchanged. Focused and fixed 9-file affected sequential
+characterization report `3 passed, 1 xfailed` and
+`293 passed, 1 xfailed`; only the deliberately absent future owner is xfailed.
+Static checks pass, the raw/managed inventory remains 29/27, and the phase
+store remains exactly 128 calls, 128 unique IDs, and 128 owner expressions.

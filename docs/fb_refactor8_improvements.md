@@ -7637,3 +7637,30 @@ recovery-prefix observations. The removed target has zero stores, the new
 owner expression occurs once, and the phase store remains exactly 128 calls,
 128 unique IDs, and 128 owner expressions. No real-model conversion was
 repeated for this ownership-only extraction.
+
+## Characterize post-cleanup SiNet/CSP-attention cleanup
+
+The managed 27-result inventory next selects the unconsumed post-cleanup SiNet
+pre-add/resize result and its immediately following recorded CSP-attention
+pass. Both operations already share the same `ModelIRPassContext`. A future
+`run_post_cleanup_sinet_csp_attention_cleanup()` owner can therefore call
+`run_sinet_preadd_resize_recovery(context)` first, then call the existing CSP
+attention implementation with `context.model_ir` and
+`context.layout_state`. The lowerer can record returned element `[1]` directly
+without retaining the observation-only SiNet result.
+
+The boundary keeps the recorded `cleanup.very_late.prune_reconcile` phase as
+its immediate predecessor and the recorded
+`cleanup.post_cleanup.sa_pa_mirrorpad` phase as its immediate successor. The
+strict contract fixes the current zero-argument compatibility route, all six
+ordered SiNet child schemas, the CSP one-key schema, exact context/model/layout
+forwarding, the retained lowerer wrappers, and the absence of result-driven
+control flow.
+
+Production remains unchanged pending the two-child context owner. Focused and
+fixed affected sequential characterization report `3 passed, 1 xfailed` and
+`293 passed, 1 xfailed` across 9 files; the sole expected failure requires the
+intentionally absent future owner. The raw/managed inventory remains 29/27 and
+the phase store remains exactly 128 calls, 128 unique IDs, and 128 owner
+expressions. Ruff, bytecode compilation, and whitespace checks pass. No
+real-model conversion was repeated for this characterization.
