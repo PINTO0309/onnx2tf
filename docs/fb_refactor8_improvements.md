@@ -7825,3 +7825,30 @@ owner expression occurs once, and the phase store remains exactly 128 calls,
 128 unique IDs, and 128 owner expressions. Public interfaces, artifacts,
 dependencies, and TensorFlow isolation are unchanged. No real-model
 conversion was repeated for this ownership-only extraction.
+
+## Characterize final input/dynamic and static-shape cleanup
+
+The managed 24-result inventory next selects the unconsumed final
+input/dynamic composite and its immediately following recorded very-late final
+static-shape reconciliation. Both operations already consume the same
+`ModelIR` through the shared `ModelIRPassContext`. A future
+`run_final_input_dynamic_shape_cleanup()` owner can therefore execute the
+existing ten-child nested input/dynamic composite first, then call the public
+static-shape reconciler with `include_mutation_count=True`, and return both
+complete raw results without retaining the observation-only composite local.
+
+The boundary keeps `_advance_post_progress()` as its immediate predecessor and
+the unsupported-Split fallback assignment as its immediate successor. The
+conditional post-Split static-shape reconciliation remains a separate later
+route. Characterization fixes both nested final-input schemas, the two-counter
+shape schema, exact context/model/option forwarding, the lowerer compatibility
+wrapper, the existing final-input owner, and the independent post-Split route.
+
+Production remains unchanged pending the two-child owner. Focused and fixed
+11-file affected sequential characterization report `3 passed, 1 xfailed` and
+`306 passed, 1 xfailed`; the sole expected failure requires the intentionally
+absent future owner. Standalone phase-store validation reports `2 passed`.
+Ruff, bytecode compilation, and whitespace checks pass. The raw/managed
+inventory remains 26/24, and the store remains exactly 128 calls, 128 unique
+IDs, and 128 owner expressions. No real-model conversion was repeated for
+this characterization.

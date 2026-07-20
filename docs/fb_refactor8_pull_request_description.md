@@ -2262,3 +2262,20 @@ owner-aware updates, focused `5`, affected `347`, and standard
 `92 / 55 / 196 / 2 / 11` sequential tests pass. Static checks pass, the
 raw/managed inventory decreases from 27/25 to 26/24, and the phase store
 remains exactly 128 calls, 128 unique IDs, and 128 owner expressions.
+
+The next characterization freezes the unconsumed final input/dynamic
+composite together with its immediately following recorded very-late final
+static-shape reconciliation. The future owner will receive the existing shared
+`ModelIRPassContext`, run the nested input/dynamic composite first, then call
+the public static-shape reconciler with the same model and
+`include_mutation_count=True`. The lowerer will record returned element `[1]`
+at the unchanged phase position; progress advancement and unsupported-Split
+fallback remain the direct outer boundaries, while conditional post-Split
+reconciliation remains independent.
+
+Production is unchanged. Focused and fixed 11-file affected sequential
+characterization report `3 passed, 1 xfailed` and
+`306 passed, 1 xfailed`; only the deliberately absent future owner is xfailed.
+Standalone phase-store validation reports `2 passed`. Static checks pass, the
+raw/managed inventory remains 26/24, and the store remains exactly 128 calls,
+128 unique IDs, and 128 owner expressions.

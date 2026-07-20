@@ -7961,3 +7961,47 @@ callback identities, complete child schemas, and independent routes before
 changing production. Continue to run all `uv` validation sequentially, then
 commit and push each complete unit. Do not create, update, reopen, or otherwise
 modify a pull request.
+
+## Final input/dynamic static-shape characterization checkpoint
+
+The refreshed inventory contains 26 raw and 24 managed unconsumed lowerer
+results after excluding exactly
+`_layout_pass_set_1_initial_attention_recovery_results` and
+`_layout_pass_set_1_post_binary_attention_recovery_results`. The selected
+boundary starts with `_final_input_dynamic_results` and ends with the
+immediately following recorded
+`shape_reconciliation.primary.very_late_final` pass.
+`_advance_post_progress()` is the direct predecessor, and the
+`split_fallback_stats` assignment is the direct successor.
+
+The future `run_final_input_dynamic_shape_cleanup()` owner receives the
+existing shared `ModelIRPassContext`. It must call
+`run_final_input_dynamic_cleanup(context)` first, then call
+`reconcile_static_tensor_shapes()` with `context.model_ir` and
+`include_mutation_count=True`, and return both complete raw results. The lowerer
+must supply returned element `[1]` directly to the unchanged very-late final
+shape phase record. The two nested input/dynamic schemas, the complete two-
+counter shape schema, the existing final-input owner, the lowerer compatibility
+wrapper, and the conditional post-Split reconciliation route are fixed by
+characterization tests.
+
+Focused sequential validation reports `3 passed, 1 xfailed`; the fixed
+11-file affected suite reports `306 passed, 1 xfailed`. The sole expected
+failure requires the intentionally absent future owner. Standalone phase-store
+validation reports `2 passed`. Production is unchanged, the raw/managed
+inventory remains 26/24, and the phase store remains exactly 128 calls, 128
+unique IDs, and 128 owner expressions. Ruff, bytecode compilation, and
+whitespace checks pass. No real-model conversion was repeated for this
+characterization.
+
+At resume, implement only the characterized two-child owner. Replace the final
+input/dynamic assignment and current very-late final shape owner expression
+with `run_final_input_dynamic_shape_cleanup(`
+`shared_model_ir_pass_context)[1]`, preserve progress advancement and the
+Split-fallback assignment, retain the lowerer shape wrapper and existing
+final-input owner, and keep post-Split reconciliation independent. Add runtime
+order/context/model/option/result-identity coverage. Capture the fixed affected
+suite before updating stale structural assertions, then run affected and
+standard gates sequentially under `uv`, confirm the expected 25/23 inventory,
+and commit and push the complete implementation. Do not create, update,
+reopen, or otherwise modify a pull request.
