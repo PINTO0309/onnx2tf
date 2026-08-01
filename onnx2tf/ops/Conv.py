@@ -280,6 +280,10 @@ def make_node(
         print(error_msg)
         assert False, error_msg
 
+    # Refresh after the NCHW->NHWC workaround above: the depthwise test below reads
+    # input_tensor_shape[-1], so a stale shape turns depthwise convs into grouped convs.
+    input_tensor_shape = input_tensor.shape
+
     # DepthwiseConv2D
     #   1. rank=4
     #   2. group>1
