@@ -237,6 +237,7 @@ def make_node(
     # Check auto_pad nonexistent or NOTSET first
     pad_mode = 'VALID'
     padded = False
+    unpadded_input_tensor = input_tensor
 
     # for onnx pads that diff on the side of axes
     # for example [3,1] or [3,3,3,1]
@@ -687,6 +688,10 @@ def make_node(
             tf_op_type = tf.nn.depthwise_conv2d
             error_check_tf_op_type = 'depth_conv_nobias'
 
+    def apply_explicit_padding(x):
+        # The transposition search below runs on unpadded data, so the explicit padding is re-applied afterwards.
+        return get_padding_as_op(x=x, pads=pads) if padded else x
+
     # Automatic correction of accuracy degradation
     min_abs_err = sys.maxsize
     min_abs_err_perm_1: List[int] = [idx for idx in range(input_tensor_rank)]
@@ -701,7 +706,9 @@ def make_node(
             # Search for the axis with the smallest error
             for tensor_1_candidate_for_transposition in tensor_1_candidate_for_transpositions:
                 try:
-                    target_validation_data = validation_data.transpose(tensor_1_candidate_for_transposition)
+                    target_validation_data = np.asarray(
+                        apply_explicit_padding(validation_data.transpose(tensor_1_candidate_for_transposition))
+                    )
                     # Build TF dummy model
                     input = tf_keras.Input(
                         shape=target_validation_data.shape[1:],
@@ -866,7 +873,7 @@ def make_node(
                 except Exception as ex:
                     pass
 
-        input_tensor = tf.transpose(a=input_tensor, perm=min_abs_err_perm_1)
+        input_tensor = apply_explicit_padding(tf.transpose(a=unpadded_input_tensor, perm=min_abs_err_perm_1))
         if error_check_tf_op_type == 'conv_bias':
             tf_layers_dict[graph_node_output.name]['tf_node'] = \
                 conv_bias(
